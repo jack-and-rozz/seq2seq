@@ -13,7 +13,7 @@ from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 
 #from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 #import tensorflow.contrib.legacy_seq2seq as seq2seq
-import seq2seq
+from seq2seq import RNNEncoder, RNNDecoder
 
 from utils import common
 from utils import dataset as data_utils
@@ -21,17 +21,19 @@ dtype=tf.float32
 
 class Baseline(object):
   def __init__(self, FLAGS, buckets, forward_only=False):
-    self.read_flags(FLAGS)
-    self.buckets = buckets
-    self.cell = self.setup_cells(forward_only)
-    with vs.variable_scope("EncoderCell"):
-      self.cell = self.setup_cells(forward_only)
-    with vs.variable_scope("DecoderCell"):
-      self.cell2 = self.setup_cells(forward_only)
+    encoder = RNNEncoder()
+    decoder = RNNDecoder()
+    #self.read_flags(FLAGS)
+    #self.buckets = buckets
+    # self.cell = self.setup_cells(forward_only)
+    # with vs.variable_scope("EncoderCell"):
+    #   self.cell = self.setup_cells(forward_only)
+    # with vs.variable_scope("DecoderCell"):
+    #   self.cell2 = self.setup_cells(forward_only)
 
-    self.output_projection, self.softmax_loss_function = self.projection_and_sampled_loss()
-    self.setup_seq2seq(forward_only)
-    self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
+    # self.output_projection, self.softmax_loss_function = self.projection_and_sampled_loss()
+    # self.setup_seq2seq(forward_only)
+    #self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
     pass
   def read_flags(self, FLAGS):
     self.keep_prob = FLAGS.keep_prob
@@ -82,16 +84,11 @@ class Baseline(object):
     return output_projection, softmax_loss_function
 
   def setup_cells(self, forward_only, state_is_tuple=True, reuse=None):
-    def single_cell():
-      cell = getattr(rnn_cell, self.cell_type)(self.hidden_size, reuse=tf.get_variable_scope().reuse) 
-      print tf.get_variable_scope().name, tf.get_variable_scope().reuse
-      if self.keep_prob < 1.0 and not forward_only:
-        cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
-      return cell
-    cell = single_cell()
+    cell = getattr(rnn_cell, self.cell_type)(self.hidden_size, reuse=tf.get_variable_scope().reuse) 
+    if self.keep_prob < 1.0 and not forward_only:
+      cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
     if self.num_layers > 1:
-      #cell = rnn_cell.MultiRNNCell([cell] * self.num_layers) # legacy style
-      cell = rnn_cell.MultiRNNCell([single_cell() for _ in xrange(self.num_layers)])
+      cell = rnn_cell.MultiRNNCell([cell for _ in xrange(self.num_layers)])
     return cell
 
   def setup_seq2seq(self, forward_only):
