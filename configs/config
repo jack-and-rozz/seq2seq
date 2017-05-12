@@ -1,0 +1,2 @@
+seq2seq_type=embedding_rnn_seq2seq
+cell_type=BasicRNNCell

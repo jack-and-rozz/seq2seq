@@ -70,6 +70,8 @@ def create_dir():
     os.makedirs(FLAGS.checkpoint_path + '/checkpoints')
   if not os.path.exists(FLAGS.checkpoint_path + '/tests'):
     os.makedirs(FLAGS.checkpoint_path + '/tests')
+  if not os.path.exists(FLAGS.checkpoint_path + '/variables'):
+    os.makedirs(FLAGS.checkpoint_path + '/variables')
 
 def save_config():
   flags_dir = FLAGS.__dict__['__flags']
@@ -80,24 +82,25 @@ def save_config():
 
 
 
-
+@common.timewatch()
 def create_model(sess, reuse=None):
   #initializer = tf.random_uniform_initializer(-FLAGS.init_scale,
   #                                            FLAGS.init_scale)
   #with tf.variable_scope("Model", reuse=reuse, initializer=initializer):
   #  m = TaskManager(mode, FLAGS, sess, vocab, logger)
   m = getattr(models, FLAGS.model_type)(FLAGS, BUCKETS)
-  return m
   ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_path + '/checkpoints')
   saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
   if ckpt and gfile.Exists(ckpt.model_checkpoint_path + '.index'):
     logger.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
-    with open(FLAGS.checkpoint_path + '/variables', 'w') as f:
-      f.write('\n'.join([v.name for v in tf.global_variables()]) + '\n')
     saver.restore(sess, ckpt.model_checkpoint_path)
   else:
     logger.info("Created model with fresh parameters.")
     tf.global_variables_initializer().run()
+    print '\n'.join([v.name for v in tf.global_variables()])
+    with open(FLAGS.checkpoint_path + '/variables/variables.list', 'w') as f:
+      f.write('\n'.join([v.name for v in tf.global_variables()]) + '\n')
+
   return m
 
 
@@ -110,6 +113,7 @@ def train(sess):
                        FLAGS.target_lang, FLAGS.target_vocab_size)
   #train = ASPECDataset(FLAGS.source_data_dir, FLAGS.target_data_dir, 
   #                     FLAGS.train_data, s_vocab, t_vocab)
+  logger.info("Reading dataset")
   train = dev = test = ASPECDataset(FLAGS.source_data_dir, FLAGS.processed_data_dir, 
                                     FLAGS.test_data, s_vocab, t_vocab)
   dataset = common.dotDict({'train': train, 'dev': dev, 'test' : test})

@@ -1,99 +1,66 @@
-# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ==============================================================================
-
-"""Sequence-to-sequence model with an attention mechanism."""
-
+# coding: utf-8
 from __future__ import absolute_import
 from __future__ import division
-from __future__ import print_function
 
-import random
-
+import random, sys, os, math
 import numpy as np
+
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
+#import tensorflow.contrib.rnn as rnn
+from tensorflow.python.ops import variable_scope as vs
+from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 
+#from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
+#import tensorflow.contrib.legacy_seq2seq as seq2seq
+import seq2seq
+
+from utils import common
 from utils import dataset as data_utils
-
+dtype=tf.float32
 
 class Baseline(object):
-  """Sequence-to-sequence model with attention and for multiple buckets.
+  def __init__(self, FLAGS, buckets, forward_only=False):
+    self.read_flags(FLAGS)
+    self.buckets = buckets
+    self.cell = self.setup_cells(forward_only)
+    with vs.variable_scope("EncoderCell"):
+      self.cell = self.setup_cells(forward_only)
+    with vs.variable_scope("DecoderCell"):
+      self.cell2 = self.setup_cells(forward_only)
 
-  This class implements a multi-layer recurrent neural network as encoder,
-  and an attention-based decoder. This is the same as the model described in
-  this paper: http://arxiv.org/abs/1412.7449 - please look there for details,
-  or into the seq2seq library for complete model implementation.
-  This class also allows to use GRU cells in addition to LSTM cells, and
-  sampled softmax to handle large output vocabulary size. A single-layer
-  version of this model, but with bi-directional encoder, was presented in
-    http://arxiv.org/abs/1409.0473
-  and sampled softmax is described in Section 3 of the following paper.
-    http://arxiv.org/abs/1412.2007
-  """
-
-  def __init__(self, FLAGS, buckets,
-               use_lstm=False,
-               forward_only=False,
-               dtype=tf.float32):
-    """Create the model.
-
-    Args:
-      source_vocab_size: size of the source vocabulary.
-      target_vocab_size: size of the target vocabulary.
-      buckets: a list of pairs (I, O), where I specifies maximum input length
-        that will be processed in that bucket, and O specifies maximum output
-        length. Training instances that have inputs longer than I or outputs
-        longer than O will be pushed to the next bucket and padded accordingly.
-        We assume that the list is sorted, e.g., [(2, 4), (8, 16)].
-      size: number of units in each layer of the model.
-      num_layers: number of layers in the model.
-      max_gradient_norm: gradients will be clipped to maximally this norm.
-      batch_size: the size of the batches used during training;
-        the model construction is independent of batch_size, so it can be
-        changed after initialization if this is convenient, e.g., for decoding.
-      learning_rate: learning rate to start with.
-      learning_rate_decay_factor: decay learning rate by this much when needed.
-      use_lstm: if true, we use LSTM cells instead of GRU cells.
-      num_samples: number of samples for sampled softmax.
-      forward_only: if set, we do not construct the backward pass in the model.
-      dtype: the data type to use to store internal variables.
-    """
-    num_samples = FLAGS.num_samples
-    hidden_size = FLAGS.hidden_size
-    num_layers = FLAGS.hidden_size
-    max_gradient_norm = FLAGS.max_gradient_norm
-    batch_size = FLAGS.batch_size
+    self.output_projection, self.softmax_loss_function = self.projection_and_sampled_loss()
+    self.setup_seq2seq(forward_only)
+    self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
+    pass
+  def read_flags(self, FLAGS):
+    self.keep_prob = FLAGS.keep_prob
+    self.hidden_size = FLAGS.hidden_size
+    self.learning_rate = tf.Variable(float(FLAGS.learning_rate), trainable=False, name='learning_rate')
+    self.global_step = tf.Variable(0, trainable=False, name='global_step')
+    self.max_gradient_norm = FLAGS.max_gradient_norm
+    self.num_samples = FLAGS.num_samples
+    self.num_layers = FLAGS.num_layers
+    self.max_to_keep = FLAGS.max_to_keep
+    self.embedding_size = FLAGS.embedding_size
     self.source_vocab_size = FLAGS.source_vocab_size
     self.target_vocab_size = FLAGS.target_vocab_size
-    self.buckets = buckets
-    self.batch_size = batch_size
-    self.learning_rate = tf.Variable(
-        float(FLAGS.learning_rate), trainable=False, dtype=dtype)
-    #self.learning_rate_decay_op = self.learning_rate.assign(
-    #    self.learning_rate * learning_rate_decay_factor)
-    self.global_step = tf.Variable(0, trainable=False, name='global_step')
+    
+    self.seq2seq_type = FLAGS.seq2seq_type
+    self.cell_type = FLAGS.cell_type
 
+
+  def projection_and_sampled_loss(self):
     # If we use sampled softmax, we need an output projection.
     output_projection = None
     softmax_loss_function = None
-    # Sampled softmax only makes sense if we sample less than vocabulary size.
-    if num_samples > 0 and num_samples < self.target_vocab_size:
-      w_t = tf.get_variable("proj_w", [self.target_vocab_size, hidden_size], dtype=dtype)
+
+    if self.num_samples > 0 and self.num_samples < self.source_vocab_size:
+      w_t = tf.get_variable("proj_w", [self.target_vocab_size, self.hidden_size], dtype=dtype)
       w = tf.transpose(w_t)
       b = tf.get_variable("proj_b", [self.target_vocab_size], dtype=dtype)
       output_projection = (w, b)
+    
 
       def sampled_loss(labels, logits):
         labels = tf.reshape(labels, [-1, 1])
@@ -108,34 +75,43 @@ class Baseline(object):
                 biases=local_b,
                 labels=labels,
                 inputs=local_inputs,
-                num_sampled=num_samples,
+                num_sampled=self.num_samples,
                 num_classes=self.target_vocab_size),
             dtype)
       softmax_loss_function = sampled_loss
+    return output_projection, softmax_loss_function
 
-    # Create the internal multi-layer cell for our RNN.
+  def setup_cells(self, forward_only, state_is_tuple=True, reuse=None):
     def single_cell():
-      return tf.contrib.rnn.GRUCell(hidden_size)
-    if use_lstm:
-      def single_cell():
-        return tf.contrib.rnn.BasicLSTMCell(hidden_size)
+      cell = getattr(rnn_cell, self.cell_type)(self.hidden_size, reuse=tf.get_variable_scope().reuse) 
+      print tf.get_variable_scope().name, tf.get_variable_scope().reuse
+      if self.keep_prob < 1.0 and not forward_only:
+        cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
+      return cell
     cell = single_cell()
-    if num_layers > 1:
-      cell = tf.contrib.rnn.MultiRNNCell([single_cell() for _ in range(num_layers)])
+    if self.num_layers > 1:
+      #cell = rnn_cell.MultiRNNCell([cell] * self.num_layers) # legacy style
+      cell = rnn_cell.MultiRNNCell([single_cell() for _ in xrange(self.num_layers)])
+    return cell
 
-    # The seq2seq function: we use embedding for the input and attention.
+  def setup_seq2seq(self, forward_only):
+    buckets = self.buckets
+    softmax_loss_function = self.softmax_loss_function
+    output_projection = self.output_projection
     def seq2seq_f(encoder_inputs, decoder_inputs, do_decode):
-      return tf.contrib.legacy_seq2seq.embedding_attention_seq2seq(
-          encoder_inputs,
-          decoder_inputs,
-          cell,
-          num_encoder_symbols=source_vocab_size,
-          num_decoder_symbols=target_vocab_size,
-          embedding_size=hidden_size,
-          output_projection=output_projection,
-          feed_previous=do_decode,
-          dtype=dtype)
-
+      return getattr(seq2seq, self.seq2seq_type)(
+        encoder_inputs,
+        decoder_inputs,
+        self.cell,
+        self.cell2,
+        num_encoder_symbols=self.source_vocab_size,
+        num_decoder_symbols=self.target_vocab_size,
+        embedding_size=self.embedding_size,
+        output_projection=self.output_projection,
+        feed_previous=do_decode,
+        dtype=dtype,
+        scope='Seq2Seq'
+      )
     # Feeds for inputs.
     self.encoder_inputs = []
     self.decoder_inputs = []
@@ -155,7 +131,7 @@ class Baseline(object):
 
     # Training outputs and losses.
     if forward_only:
-      self.outputs, self.losses = tf.contrib.legacy_seq2seq.model_with_buckets(
+      self.outputs, self.losses = seq2seq.model_with_buckets(
           self.encoder_inputs, self.decoder_inputs, targets,
           self.target_weights, buckets, lambda x, y: seq2seq_f(x, y, True),
           softmax_loss_function=softmax_loss_function)
@@ -167,27 +143,25 @@ class Baseline(object):
               for output in self.outputs[b]
           ]
     else:
-      self.outputs, self.losses = tf.contrib.legacy_seq2seq.model_with_buckets(
+      self.outputs, self.losses = seq2seq.model_with_buckets(
           self.encoder_inputs, self.decoder_inputs, targets,
           self.target_weights, buckets,
           lambda x, y: seq2seq_f(x, y, False),
-          softmax_loss_function=softmax_loss_function)
+          softmax_loss_function=self.softmax_loss_function)
 
     # Gradients and SGD update operation for training the model.
     params = tf.trainable_variables()
     if not forward_only:
       self.gradient_norms = []
       self.updates = []
-      opt = tf.train.GradientDescentOptimizer(self.learning_rate)
+      opt = tf.train.AdamOptimizer(self.learning_rate)
       for b in xrange(len(buckets)):
         gradients = tf.gradients(self.losses[b], params)
         clipped_gradients, norm = tf.clip_by_global_norm(gradients,
-                                                         max_gradient_norm)
+                                                         self.max_gradient_norm)
         self.gradient_norms.append(norm)
         self.updates.append(opt.apply_gradients(
             zip(clipped_gradients, params), global_step=self.global_step))
-
-    self.saver = tf.train.Saver(tf.global_variables())
 
   def step(self, session, encoder_inputs, decoder_inputs, target_weights,
            bucket_id, forward_only):
@@ -250,21 +224,6 @@ class Baseline(object):
       return None, outputs[0], outputs[1:]  # No gradient norm, loss, outputs.
 
   def get_batch(self, data, bucket_id):
-    """Get a random batch of data from the specified bucket, prepare for step.
-
-    To feed data in step(..) it must be a list of batch-major vectors, while
-    data here contains single length-major cases. So the main logic of this
-    function is to re-index data cases to be in the proper format for feeding.
-
-    Args:
-      data: a tuple of size len(self.buckets) in which each element contains
-        lists of pairs of input and output data that we use to create a batch.
-      bucket_id: integer, which bucket to get the batch for.
-
-    Returns:
-      The triple (encoder_inputs, decoder_inputs, target_weights) for
-      the constructed batch that has the proper format to call step(...) later.
-    """
     encoder_size, decoder_size = self.buckets[bucket_id]
     encoder_inputs, decoder_inputs = [], []
 
