@@ -1,0 +1,153 @@
+# coding: utf-8
+from __future__ import absolute_import
+from __future__ import division
+
+import random, sys, os, math
+import numpy as np
+
+from six.moves import xrange  # pylint: disable=redefined-builtin
+import tensorflow as tf
+#import tensorflow.contrib.rnn as rnn
+import tensorflow.contrib.rnn as rnn_cell
+#from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
+
+#import tensorflow.contrib.legacy_seq2seq as seq2seq
+import seq2seq
+from utils import common
+
+dtype=tf.float32
+class Baseline(object):
+  def __init__(self, FLAGS, buckets, forward_only=False):
+    self.read_flags(FLAGS)
+    self.buckets = buckets
+    self.cell = self.setup_cells(forward_only)
+    self.output_projection, self.softmax_loss_function = self.projection_and_sampled_loss()
+    self.setup_seq2seq(forward_only)
+    self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
+    pass
+  def read_flags(self, FLAGS):
+    self.keep_prob = FLAGS.keep_prob
+    self.hidden_size = FLAGS.hidden_size
+    self.learning_rate = tf.Variable(float(FLAGS.learning_rate), trainable=False, name='learning_rate')
+    self.global_step = tf.Variable(0, trainable=False, name='global_step')
+    self.max_gradient_norm = FLAGS.max_gradient_norm
+    self.num_samples = FLAGS.num_samples
+    self.num_layers = FLAGS.num_layers
+    self.max_to_keep = FLAGS.max_to_keep
+    self.embedding_size = FLAGS.embedding_size
+    self.in_vocab_size = FLAGS.in_vocab_size
+    self.out_vocab_size = FLAGS.out_vocab_size
+    
+    self.seq2seq_type = FLAGS.seq2seq_type
+    self.cell_type = FLAGS.cell_type
+
+
+  def projection_and_sampled_loss(self):
+    # If we use sampled softmax, we need an output projection.
+    output_projection = None
+    softmax_loss_function = None
+
+    if self.num_samples > 0 and self.num_samples < self.in_vocab_size:
+      w_t = tf.get_variable("proj_w", [self.out_vocab_size, self.hidden_size], dtype=dtype)
+      w = tf.transpose(w_t)
+      b = tf.get_variable("proj_b", [self.out_vocab_size], dtype=dtype)
+      output_projection = (w, b)
+    
+
+      def sampled_loss(labels, logits):
+        labels = tf.reshape(labels, [-1, 1])
+        # We need to compute the sampled_softmax_loss using 32bit floats to
+        # avoid numerical instabilities.
+        local_w_t = tf.cast(w_t, tf.float32)
+        local_b = tf.cast(b, tf.float32)
+        local_inputs = tf.cast(logits, tf.float32)
+        return tf.cast(
+            tf.nn.sampled_softmax_loss(
+                weights=local_w_t,
+                biases=local_b,
+                labels=labels,
+                inputs=local_inputs,
+                num_sampled=self.num_samples,
+                num_classes=self.out_vocab_size),
+            dtype)
+      softmax_loss_function = sampled_loss
+    return output_projection, softmax_loss_function
+
+  def setup_cells(self, forward_only, state_is_tuple=True):
+    def single_cell():
+      cell = getattr(rnn_cell, self.cell_type)(self.hidden_size) 
+      if self.keep_prob < 1.0 and not forward_only:
+        cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
+      return cell
+    cell = single_cell()
+    if self.num_layers > 1:
+      #cell = rnn_cell.MultiRNNCell([cell] * self.num_layers) # legacy style
+      cell = rnn_cell.MultiRNNCell([single_cell() for _ in xrange(self.num_layers)])
+    return cell
+#ValueError: Attempt to reuse RNNCell <tensorflow.contrib.rnn.python.ops.core_rnn_cell_impl.GRUCell object at 0x7fc298380350> with a different variable scope than its first use.  First use of cell was with scope 'embedding_attention_seq2seq/embedding_attention_decoder/attention_decoder/gru_cell', this attempt is with scope 'embedding_attention_seq2seq/rnn/gru_cell'.  Please create a new instance of the cell if you would like it to use a different set of weights.  If before you were using: MultiRNNCell([GRUCell(...)] * num_layers), change to: MultiRNNCell([GRUCell(...) for _ in range(num_layers)]).  If before you were using the same cell instance as both the forward and reverse cell of a bidirectional RNN, simply create two instances (one for forward, one for reverse).  In May 2017, we will start transitioning this cell's behavior to use existing stored weights, if any, when it is called with scope=None (which can lead to silent model degradation, so this error will remain until then.)
+
+  def setup_seq2seq(self, forward_only):
+    buckets = self.buckets
+    softmax_loss_function = self.softmax_loss_function
+    output_projection = self.output_projection
+    def seq2seq_f(encoder_inputs, decoder_inputs, do_decode):
+      return getattr(seq2seq, self.seq2seq_type)(
+        encoder_inputs,
+        decoder_inputs,
+        self.cell,
+        num_encoder_symbols=self.in_vocab_size,
+        num_decoder_symbols=self.out_vocab_size,
+        embedding_size=self.embedding_size,
+        output_projection=self.output_projection,
+        feed_previous=do_decode,
+        dtype=dtype)
+    # Feeds for inputs.
+    self.encoder_inputs = []
+    self.decoder_inputs = []
+    self.target_weights = []
+    for i in xrange(buckets[-1][0]):  # Last bucket is the biggest one.
+      self.encoder_inputs.append(tf.placeholder(tf.int32, shape=[None],
+                                                name="encoder{0}".format(i)))
+    for i in xrange(buckets[-1][1] + 1):
+      self.decoder_inputs.append(tf.placeholder(tf.int32, shape=[None],
+                                                name="decoder{0}".format(i)))
+      self.target_weights.append(tf.placeholder(dtype, shape=[None],
+                                                name="weight{0}".format(i)))
+
+    # Our targets are decoder inputs shifted by one.
+    targets = [self.decoder_inputs[i + 1]
+               for i in xrange(len(self.decoder_inputs) - 1)]
+
+    # Training outputs and losses.
+    if forward_only:
+      self.outputs, self.losses = seq2seq.model_with_buckets(
+          self.encoder_inputs, self.decoder_inputs, targets,
+          self.target_weights, buckets, lambda x, y: seq2seq_f(x, y, True),
+          softmax_loss_function=softmax_loss_function)
+      # If we use output projection, we need to project outputs for decoding.
+      if output_projection is not None:
+        for b in xrange(len(buckets)):
+          self.outputs[b] = [
+              tf.matmul(output, output_projection[0]) + output_projection[1]
+              for output in self.outputs[b]
+          ]
+    else:
+      self.outputs, self.losses = seq2seq.model_with_buckets(
+          self.encoder_inputs, self.decoder_inputs, targets,
+          self.target_weights, buckets,
+          lambda x, y: seq2seq_f(x, y, False),
+          softmax_loss_function=self.softmax_loss_function)
+
+    # Gradients and SGD update operation for training the model.
+    params = tf.trainable_variables()
+    if not forward_only:
+      self.gradient_norms = []
+      self.updates = []
+      opt = tf.train.AdamOptimizer(self.learning_rate)
+      for b in xrange(len(buckets)):
+        gradients = tf.gradients(self.losses[b], params)
+        clipped_gradients, norm = tf.clip_by_global_norm(gradients,
+                                                         self.max_gradient_norm)
+        self.gradient_norms.append(norm)
+        self.updates.append(opt.apply_gradients(
+            zip(clipped_gradients, params), global_step=self.global_step))
