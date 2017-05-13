@@ -2,7 +2,7 @@
 from __future__ import absolute_import
 from __future__ import division
 
-import random, sys, os, math
+import random, sys, os, math, copy
 import numpy as np
 
 from six.moves import xrange  # pylint: disable=redefined-builtin
@@ -13,7 +13,7 @@ from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 
 #from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 #import tensorflow.contrib.legacy_seq2seq as seq2seq
-import seq2seq
+from seq2seq import RNNEncoder, BidirectionalRNNEncoder, RNNDecoder, BasicSeq2Seq
 
 from utils import common
 from utils import dataset as data_utils
@@ -21,18 +21,56 @@ dtype=tf.float32
 
 class Baseline(object):
   def __init__(self, FLAGS, buckets, forward_only=False):
-    self.read_flags(FLAGS)
     self.buckets = buckets
-    self.cell = self.setup_cells(forward_only)
-    with vs.variable_scope("EncoderCell"):
-      self.cell = self.setup_cells(forward_only)
-    with vs.variable_scope("DecoderCell"):
-      self.cell2 = self.setup_cells(forward_only)
+    self.read_flags(FLAGS)
+    self.setup_placeholders()
+    cell = self.setup_cell(forward_only)
+    encoder = BidirectionalRNNEncoder(
+    #encoder = RNNEncoder(
+      cell,
+      FLAGS.source_vocab_size, 
+      FLAGS.embedding_size
+    )
+    # different cells must be constructed independently or copied after tf1.1 when they are used in different scopes.
+    decoder = RNNDecoder(
+      copy.deepcopy(cell), 
+      FLAGS.target_vocab_size, 
+      FLAGS.embedding_size
+    )
+    self.seq2seq = BasicSeq2Seq(encoder, decoder, FLAGS.num_samples)
+    outputs, losses = self.seq2seq(self.encoder_inputs, self.decoder_inputs,
+                                   self.targets, self.target_weights, 
+                                   self.buckets)
 
-    self.output_projection, self.softmax_loss_function = self.projection_and_sampled_loss()
-    self.setup_seq2seq(forward_only)
-    self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
-    pass
+  def setup_placeholders(self):
+    # Feeds for inputs.
+    self.encoder_inputs = []
+    self.decoder_inputs = []
+    self.target_weights = []
+    for i in xrange(self.buckets[-1][0]):  # Last bucket is the biggest one.
+      self.encoder_inputs.append(tf.placeholder(tf.int32, shape=[None],
+                                                name="encoder{0}".format(i)))
+    for i in xrange(self.buckets[-1][1] + 1):
+      self.decoder_inputs.append(tf.placeholder(tf.int32, shape=[None],
+                                                name="decoder{0}".format(i)))
+      self.target_weights.append(tf.placeholder(dtype, shape=[None],
+                                                name="weight{0}".format(i)))
+
+    # Our targets are decoder inputs shifted by one.
+    self.targets = [self.decoder_inputs[i + 1]
+                    for i in xrange(len(self.decoder_inputs) - 1)]
+    
+
+
+
+  def setup_cell(self, forward_only):
+    cell = getattr(rnn_cell, self.cell_type)(self.hidden_size, reuse=tf.get_variable_scope().reuse) 
+    if self.keep_prob < 1.0 and not forward_only:
+      cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
+    if self.num_layers > 1:
+      cell = rnn_cell.MultiRNNCell([cell for _ in xrange(self.num_layers)])
+    return cell
+
   def read_flags(self, FLAGS):
     self.keep_prob = FLAGS.keep_prob
     self.hidden_size = FLAGS.hidden_size
@@ -45,54 +83,8 @@ class Baseline(object):
     self.embedding_size = FLAGS.embedding_size
     self.source_vocab_size = FLAGS.source_vocab_size
     self.target_vocab_size = FLAGS.target_vocab_size
-    
     self.seq2seq_type = FLAGS.seq2seq_type
     self.cell_type = FLAGS.cell_type
-
-
-  def projection_and_sampled_loss(self):
-    # If we use sampled softmax, we need an output projection.
-    output_projection = None
-    softmax_loss_function = None
-
-    if self.num_samples > 0 and self.num_samples < self.source_vocab_size:
-      w_t = tf.get_variable("proj_w", [self.target_vocab_size, self.hidden_size], dtype=dtype)
-      w = tf.transpose(w_t)
-      b = tf.get_variable("proj_b", [self.target_vocab_size], dtype=dtype)
-      output_projection = (w, b)
-    
-
-      def sampled_loss(labels, logits):
-        labels = tf.reshape(labels, [-1, 1])
-        # We need to compute the sampled_softmax_loss using 32bit floats to
-        # avoid numerical instabilities.
-        local_w_t = tf.cast(w_t, tf.float32)
-        local_b = tf.cast(b, tf.float32)
-        local_inputs = tf.cast(logits, tf.float32)
-        return tf.cast(
-            tf.nn.sampled_softmax_loss(
-                weights=local_w_t,
-                biases=local_b,
-                labels=labels,
-                inputs=local_inputs,
-                num_sampled=self.num_samples,
-                num_classes=self.target_vocab_size),
-            dtype)
-      softmax_loss_function = sampled_loss
-    return output_projection, softmax_loss_function
-
-  def setup_cells(self, forward_only, state_is_tuple=True, reuse=None):
-    def single_cell():
-      cell = getattr(rnn_cell, self.cell_type)(self.hidden_size, reuse=tf.get_variable_scope().reuse) 
-      print tf.get_variable_scope().name, tf.get_variable_scope().reuse
-      if self.keep_prob < 1.0 and not forward_only:
-        cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
-      return cell
-    cell = single_cell()
-    if self.num_layers > 1:
-      #cell = rnn_cell.MultiRNNCell([cell] * self.num_layers) # legacy style
-      cell = rnn_cell.MultiRNNCell([single_cell() for _ in xrange(self.num_layers)])
-    return cell
 
   def setup_seq2seq(self, forward_only):
     buckets = self.buckets

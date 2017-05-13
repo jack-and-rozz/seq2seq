@@ -56,7 +56,7 @@ tf.app.flags.DEFINE_string("mode", "train", "")
 tf.app.flags.DEFINE_string("log_file", "train.log", "")
 tf.app.flags.DEFINE_string('checkpoint_path', 'models/local/tmp', 'Directory to put the training data.')
 
-BUCKETS = [(i, i) for i in xrange(10, 120, 10)]
+BUCKETS = [(i, i) for i in xrange(10, 21, 10)]
 print BUCKETS
 FLAGS = tf.app.flags.FLAGS
 TMP_FLAGS = ['mode', 'log_file', 'checkpoint_path']
@@ -81,23 +81,22 @@ def save_config():
         f.write('%s=%s\n' % (k, str(v)))
 
 
-
 @common.timewatch()
 def create_model(sess, reuse=None):
   #initializer = tf.random_uniform_initializer(-FLAGS.init_scale,
   #                                            FLAGS.init_scale)
-  #with tf.variable_scope("Model", reuse=reuse, initializer=initializer):
-  #  m = TaskManager(mode, FLAGS, sess, vocab, logger)
-  m = getattr(models, FLAGS.model_type)(FLAGS, BUCKETS)
+  with tf.variable_scope("Model", reuse=reuse):
+    m = getattr(models, FLAGS.model_type)(FLAGS, BUCKETS)
   ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_path + '/checkpoints')
   saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
   if ckpt and gfile.Exists(ckpt.model_checkpoint_path + '.index'):
-    logger.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
+    if reuse==None:
+      logger.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
     saver.restore(sess, ckpt.model_checkpoint_path)
   else:
-    logger.info("Created model with fresh parameters.")
+    if reuse==None:
+      logger.info("Created model with fresh parameters.")
     tf.global_variables_initializer().run()
-    print '\n'.join([v.name for v in tf.global_variables()])
     with open(FLAGS.checkpoint_path + '/variables/variables.list', 'w') as f:
       f.write('\n'.join([v.name for v in tf.global_variables()]) + '\n')
 
@@ -117,7 +116,9 @@ def train(sess):
   train = dev = test = ASPECDataset(FLAGS.source_data_dir, FLAGS.processed_data_dir, 
                                     FLAGS.test_data, s_vocab, t_vocab)
   dataset = common.dotDict({'train': train, 'dev': dev, 'test' : test})
-  model = create_model(sess)
+  
+  train_model = create_model(sess)
+  test_model = create_model(sess, reuse=True)
   pass
 
 def main(_):
