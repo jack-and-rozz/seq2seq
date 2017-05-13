@@ -155,10 +155,11 @@ class RNNEncoder(Encoder):
     return outputs, state
 
 class RNNDecoder(Decoder):
-  def __init__(self, cell, vocab_size, embedding_size, scope=None):
+  def __init__(self, cell, vocab_size, embedding_size, 
+               scope=None, embedding=None):
     with variable_scope.variable_scope(scope or "Decoder") as scope:
       self.cell = cell
-      self.embedding = initialize_embedding(vocab_size, embedding_size)
+      self.embedding = initialize_embedding(vocab_size, embedding_size) if not embedding else embedding
 
   def __call__(self, inputs, state, loop_function=None, scope=None):
     embedded = [embedding_ops.embedding_lookup(
@@ -216,5 +217,11 @@ class BidirectionalRNNEncoder(RNNEncoder):
       sequence_length=self.sequence_length,
       scope=scope, dtype=dtype)
     state = array_ops.concat([state_fw, state_bw], 1)
+    print state, state.shape
+    exit(1)
+    #transform_w = 
+    #w_t = tf.get_variable("proj_w", [target_vocab_size, hidden_size])
+    #w = tf.transpose(w_t)
+    #b = tf.get_variable("proj_b", [target_vocab_size])
     return outputs, state
 
