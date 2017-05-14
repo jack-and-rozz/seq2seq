@@ -89,15 +89,6 @@ def model_with_buckets(encoder_inputs, decoder_inputs, targets, weights,
             softmax_loss_function=softmax_loss_function))
   return outputs, losses
 
-def initialize_embedding(vocab_size, embedding_size):
-  sqrt3 = math.sqrt(3)  # Uniform(-sqrt(3), sqrt(3)) has variance=1.
-  initializer = init_ops.random_uniform_initializer(-sqrt3, sqrt3)
-  embedding = variable_scope.get_variable(
-    "embedding", [vocab_size, embedding_size],
-    initializer=initializer)
-  return embedding
-
-
 def projection_and_sampled_loss(target_vocab_size, hidden_size, num_samples):
   # If we use sampled softmax, we need an output projection.
   output_projection = None
@@ -138,11 +129,11 @@ class Decoder(object):
 
 
 class RNNEncoder(Encoder):
-  def __init__(self, cell, vocab_size, embedding_size, 
+  def __init__(self, cell, embedding 
                scope=None, sequence_length=None, activation=math_ops.tanh):
     with variable_scope.variable_scope(scope or "rnn_encoder") as scope:
       self.cell = cell
-      self.embedding = initialize_embedding(vocab_size, embedding_size)
+      self.embedding = embedding
       self.sequence_length = sequence_length
       self.activation = activation
   @property
@@ -164,8 +155,7 @@ class RNNEncoder(Encoder):
     return outputs, state
 
 class RNNDecoder(Decoder):
-  def __init__(self, cell, vocab_size, embedding_size, 
-               scope=None, embedding=None):
+  def __init__(self, cell, embedding, scope=None):
     with variable_scope.variable_scope(scope or "rnn_decoder") as scope:
       self.cell = cell
       self.embedding = initialize_embedding(vocab_size, embedding_size) if not embedding else embedding

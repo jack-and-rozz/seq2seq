@@ -26,25 +26,32 @@ class Baseline(object):
     self.setup_placeholders()
     cell = self.setup_cell(forward_only)
     #encoder = BidirectionalRNNEncoder(
-    encoder = RNNEncoder(
-      cell,
-      FLAGS.source_vocab_size, 
-      FLAGS.embedding_size,
-      scope="Encoder"
-    )
-    # different cells must be constructed independently or copied after tf1.1 when they are used in different scopes.
-    decoder = RNNDecoder(
-      copy.deepcopy(cell), 
-      FLAGS.target_vocab_size, 
-      FLAGS.embedding_size,
-      scope="Decoder"
-    )
+    with variable_scope.variable_scope("Encoder") as encoder_scope:
+      encoder_embedding = self.initialize_embedding(FLAGS.source_vocab_size,
+                                                    FLAGS.embedding_size)
+      encoder = RNNEncoder(cell, encoder_embedding,
+                           scope=encoder_scope)
+
+    with variable_scope.variable_scope("Decoder") as decoder_scope:
+      decoder_embedding = self.initialize_embedding(FLAGS.target_vocab_size,
+                                                    FLAGS.embedding_size)
+      decoder = RNNDecoder(copy.deepcopy(cell), decoder_embedding, 
+                           scope=decoder_scope)
     self.seq2seq = BasicSeq2Seq(encoder, decoder, FLAGS.num_samples)
     self.outputs, self.losses = self.seq2seq(
       self.encoder_inputs, self.decoder_inputs,
       self.targets, self.target_weights, self.buckets)
     if not forward_only:
       self.updates = self.setup_updates(self.losses)
+
+  def initialize_embedding(self, vocab_size, embedding_size, scope=None):
+    with variable_scope.variable_scope(scope):
+      sqrt3 = math.sqrt(3)  # Uniform(-sqrt(3), sqrt(3)) has variance=1.
+      initializer = init_ops.random_uniform_initializer(-sqrt3, sqrt3)
+      embedding = variable_scope.get_variable(
+        "embedding", [vocab_size, embedding_size],
+        initializer=initializer)
+      return embedding
 
   def setup_updates(self, losses):
     params = tf.trainable_variables()
