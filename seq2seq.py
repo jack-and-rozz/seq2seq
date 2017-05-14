@@ -139,44 +139,88 @@ class Decoder(object):
 
 class RNNEncoder(Encoder):
   def __init__(self, cell, vocab_size, embedding_size, 
-               scope=None, sequence_length=None):
-    with variable_scope.variable_scope(scope or "Encoder") as scope:
+               scope=None, sequence_length=None, activation=math_ops.tanh):
+    with variable_scope.variable_scope(scope or "rnn_encoder") as scope:
       self.cell = cell
       self.embedding = initialize_embedding(vocab_size, embedding_size)
-      self.sequence_length=sequence_length
+      self.sequence_length = sequence_length
+      self.activation = activation
+  @property
+  def state_size(self):
+    return self.cell.state_size
+
+  @property
+  def output_size(self):
+    return self.cell.output_size
 
   def __call__(self, inputs, scope=None, dtype=np.float32,):
-    embedded = [embedding_ops.embedding_lookup(
-      self.embedding, inp) for inp in inputs]
-    outputs, state = core_rnn.static_rnn(
-      self.cell, embedded,
-      sequence_length=self.sequence_length,
-      scope=scope, dtype=dtype)
+    with variable_scope.variable_scope(scope or "rnn_encoder") as scope:
+      embedded = [embedding_ops.embedding_lookup(self.embedding, inp)
+                  for inp in inputs]
+      outputs, state = core_rnn.static_rnn(
+        self.cell, embedded,
+        sequence_length=self.sequence_length,
+        scope=scope, dtype=dtype)
     return outputs, state
 
 class RNNDecoder(Decoder):
   def __init__(self, cell, vocab_size, embedding_size, 
                scope=None, embedding=None):
-    with variable_scope.variable_scope(scope or "Decoder") as scope:
+    with variable_scope.variable_scope(scope or "rnn_decoder") as scope:
       self.cell = cell
       self.embedding = initialize_embedding(vocab_size, embedding_size) if not embedding else embedding
 
+  @property
+  def state_size(self):
+    return self.cell.state_size
+
+  @property
+  def output_size(self):
+    return self.cell.output_size
+
   def __call__(self, inputs, state, loop_function=None, scope=None):
-    embedded = [embedding_ops.embedding_lookup(
-      self.embedding, inp) for inp in inputs]
-    outputs = []
-    prev = None
-    for i, inp in enumerate(embedded):
-      if loop_function is not None and prev is not None:
-        with variable_scope.variable_scope("loop_function", reuse=True):
-          inp = loop_function(prev, i)
-      if i > 0:
-        variable_scope.get_variable_scope().reuse_variables()
-      output, state = self.cell(inp, state)
-      outputs.append(output)
-      if loop_function is not None:
-        prev = output
+    with variable_scope.variable_scope(scope or "rnn_decoder") as scope:
+      embedded = [embedding_ops.embedding_lookup(
+        self.embedding, inp) for inp in inputs]
+      outputs = []
+      prev = None
+      for i, inp in enumerate(embedded):
+        if loop_function is not None and prev is not None:
+          with variable_scope.variable_scope("loop_function", reuse=True):
+            inp = loop_function(prev, i)
+        if i > 0:
+          variable_scope.get_variable_scope().reuse_variables()
+        output, state = self.cell(inp, state)
+        outputs.append(output)
+        if loop_function is not None:
+          prev = output
     return outputs, state
+
+class BidirectionalRNNEncoder(RNNEncoder):
+  def __init__(self, cell, vocab_size, embedding_size, 
+               scope=None, sequence_length=None, activation=math_ops.tanh):
+    with variable_scope.variable_scope(scope or "bidirectional_rnn_encoder"):
+      self.cell = self.cell_fw = cell
+      self.cell_bw = copy.deepcopy(cell)
+      self.embedding = initialize_embedding(vocab_size, embedding_size)
+      self.sequence_length = sequence_length
+      self.activation = activation
+
+  def __call__(self, inputs, scope=None, dtype=np.float32):
+    with variable_scope.variable_scope(scope or "bidirectional_rnn_encoder"):
+      embedded = [embedding_ops.embedding_lookup(
+        self.embedding, inp) for inp in inputs]
+      outputs, state_fw, state_bw = core_rnn.static_bidirectional_rnn(
+        self.cell_fw, self.cell_bw, embedded,
+        sequence_length=self.sequence_length,
+        scope=scope, dtype=dtype)
+      state = array_ops.concat([state_fw, state_bw], 1)
+      hsize = self.state_size
+      w = tf.get_variable("proj_w", [hsize * 2, hsize])
+      b = tf.get_variable("proj_b", [hsize])
+      state = self.activation(
+        tf.nn.xw_plus_b(array_ops.concat([state_fw, state_bw], 1), w, b))
+      return outputs, state
 
 class BasicSeq2Seq(object):
   def __init__(self, encoder, decoder, num_samples, feed_previous=False):
@@ -190,8 +234,6 @@ class BasicSeq2Seq(object):
   def seq2seq(self, encoder_inputs, decoder_inputs):
     with variable_scope.variable_scope("Encoder") as scope:
       encoder_outputs, encoder_state = self.encoder(encoder_inputs, scope=scope)
-    print encoder_state
-    exit(1)
     with variable_scope.variable_scope("Decoder") as scope:
       decoder_outputs, decoder_state = self.decoder(
         decoder_inputs, encoder_state, scope=scope,
@@ -207,21 +249,4 @@ class BasicSeq2Seq(object):
       encoder_inputs, decoder_inputs, targets, weights, buckets,
       self.seq2seq, per_example_loss=True)
     return outputs, losses
-
-class BidirectionalRNNEncoder(RNNEncoder):
-  def __call__(self, inputs, scope=None, dtype=np.float32):
-    embedded = [embedding_ops.embedding_lookup(
-      self.embedding, inp) for inp in inputs]
-    outputs, state_fw, state_bw = core_rnn.static_bidirectional_rnn(
-      self.cell, copy.deepcopy(self.cell), embedded,
-      sequence_length=self.sequence_length,
-      scope=scope, dtype=dtype)
-    state = array_ops.concat([state_fw, state_bw], 1)
-    print state, state.shape
-    exit(1)
-    #transform_w = 
-    #w_t = tf.get_variable("proj_w", [target_vocab_size, hidden_size])
-    #w = tf.transpose(w_t)
-    #b = tf.get_variable("proj_b", [target_vocab_size])
-    return outputs, state
 
