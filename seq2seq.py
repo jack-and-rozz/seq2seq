@@ -24,6 +24,7 @@ from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import init_ops
+from tensorflow.python.util import nest
 from tensorflow.contrib.legacy_seq2seq import sequence_loss, sequence_loss_by_example, rnn_decoder #, model_with_buckets
 # TODO(ebrevdo): Remove once _linear is fully deprecated.
 #linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access
@@ -46,7 +47,7 @@ def _extract_argmax_and_embed(embedding,
 
   def loop_function(prev, _):
     if output_projection is not None:
-      prev = nn_ops.xw_plus_b(prev, output_projection[0], output_projection[1])
+      prev = tf.nn.xw_plus_b(prev, output_projection[0], output_projection[1])
     prev_symbol = math_ops.argmax(prev, 1)
     # Note that gradients will not propagate through the second parameter of
     # embedding_lookup.
@@ -73,8 +74,8 @@ def model_with_buckets(encoder_inputs, decoder_inputs, targets, weights,
                      "bucket (%d)." % (len(weights), buckets[-1][1]))
 
   all_inputs = encoder_inputs + decoder_inputs + targets + weights
-  losses = []
   outputs = []
+  losses = []
   with ops.name_scope(name, "model_with_buckets", all_inputs):
     for j, bucket in enumerate(buckets):
       with variable_scope.variable_scope(
@@ -145,10 +146,20 @@ class RNNEncoder(Encoder):
   def output_size(self):
     return self.cell.output_size
 
-  def __call__(self, inputs, scope=None, dtype=np.float32,):
+  def __call__(self, inputs, scope=None, dtype=tf.float32,):
     with variable_scope.variable_scope(scope or "rnn_encoder") as scope:
       embedded = [embedding_ops.embedding_lookup(self.embedding, inp)
                   for inp in inputs]
+      # outputs = []
+      # batch_size = 200 #embedded[0].get_shape().with_rank_at_least(2)[0]
+      # state = self.cell.zero_state(batch_size, tf.float32)
+      # with tf.variable_scope(scope or "rnn"):
+      #   for time_step in range(len(embedded)):
+      #     if time_step > 0: tf.get_variable_scope().reuse_variables()
+      #     #(cell_output, state) = cell(sources[:, time_step, :], state)
+      #     (cell_output, state) = self.cell(embedded[time_step], state)
+      #     outputs.append(cell_output)
+      #outputsが全部同じになる。なんかstatic_rnnバグってる？
       outputs, state = core_rnn.static_rnn(
         self.cell, embedded,
         sequence_length=self.sequence_length,
@@ -204,11 +215,21 @@ class BidirectionalRNNEncoder(RNNEncoder):
         self.cell_fw, self.cell_bw, embedded,
         sequence_length=self.sequence_length,
         scope=scope, dtype=dtype)
-      hsize = self.state_size
-      w = tf.get_variable("proj_w", [hsize * 2, hsize])
-      b = tf.get_variable("proj_b", [hsize])
-      state = self.activation(
-        tf.nn.xw_plus_b(array_ops.concat([state_fw, state_bw], 1), w, b))
+
+      def merge_state(size, s_fw, s_bw):
+        w = tf.get_variable("proj_w", [size * 2, size])
+        b = tf.get_variable("proj_b", [size])
+        states = self.activation(
+          tf.nn.xw_plus_b(array_ops.concat([s_fw, s_bw], 1), w, b))
+        return states
+      if nest.is_sequence(self.state_size):
+        state = []
+        for i, (size, s_fw, s_bw) in enumerate(
+            zip(self.state_size, state_fw, state_bw)):
+          with variable_scope.variable_scope("cell_%d" % (i)):
+            state.append(merge_state(size, s_fw, s_bw))
+      else:
+        state = merge_state(self.state_size, state_fw, state_bw)
       return outputs, state
 
 class BasicSeq2Seq(object):
@@ -238,5 +259,13 @@ class BasicSeq2Seq(object):
       encoder_inputs, decoder_inputs, targets, weights, buckets,
       self.seq2seq, per_example_loss=per_example_loss, 
       softmax_loss_function=self.loss)
-    return outputs, losses
+
+    
+    def to_logits(outputs):
+      return [tf.nn.xw_plus_b(output, self.projection[0], self.projection[1])
+              for output in outputs]
+
+
+    logits = [to_logits(o) for o in outputs] if self.projection is not None else outputs
+    return logits, losses
 
