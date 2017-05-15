@@ -63,15 +63,21 @@ TMP_FLAGS = ['mode', 'log_file', 'checkpoint_path']
 log_file = FLAGS.log_file if FLAGS.log_file else None
 logger = common.logManager(handler=FileHandler(log_file)) if log_file else common.logManager()
 
+CHECKPOINTS_PATH = '/checkpoints'
+TESTS_PATH = '/tests'
+VARIABLES_PATH = '/variables'
+SUMMARIES_PATH = '/summaries'
 def create_dir():
   if not os.path.exists(FLAGS.checkpoint_path):
     os.makedirs(FLAGS.checkpoint_path)
-  if not os.path.exists(FLAGS.checkpoint_path + '/checkpoints'):
-    os.makedirs(FLAGS.checkpoint_path + '/checkpoints')
-  if not os.path.exists(FLAGS.checkpoint_path + '/tests'):
-    os.makedirs(FLAGS.checkpoint_path + '/tests')
-  if not os.path.exists(FLAGS.checkpoint_path + '/variables'):
-    os.makedirs(FLAGS.checkpoint_path + '/variables')
+  if not os.path.exists(FLAGS.checkpoint_path + CHECKPOINTS_PATH):
+    os.makedirs(FLAGS.checkpoint_path + CHECKPOINTS_PATH)
+  if not os.path.exists(FLAGS.checkpoint_path + TESTS_PATH):
+    os.makedirs(FLAGS.checkpoint_path + TESTS_PATH)
+  if not os.path.exists(FLAGS.checkpoint_path + VARIABLES_PATH):
+    os.makedirs(FLAGS.checkpoint_path + VARIABLES_PATH)
+  if not os.path.exists(FLAGS.checkpoint_path + SUMMARIES_PATH):
+    os.makedirs(FLAGS.checkpoint_path + SUMMARIES_PATH)
 
 def save_config():
   flags_dir = FLAGS.__dict__['__flags']
@@ -113,12 +119,22 @@ def train(sess):
   #train = ASPECDataset(FLAGS.source_data_dir, FLAGS.target_data_dir, 
   #                     FLAGS.train_data, s_vocab, t_vocab)
   logger.info("Reading dataset")
-  train = dev = test = ASPECDataset(FLAGS.source_data_dir, FLAGS.processed_data_dir, 
-                                    FLAGS.test_data, s_vocab, t_vocab)
+  train = dev = test = ASPECDataset(
+    FLAGS.source_data_dir, FLAGS.processed_data_dir, 
+    FLAGS.test_data, s_vocab, t_vocab)
   dataset = common.dotDict({'train': train, 'dev': dev, 'test' : test})
-  
-  train_model = create_model(sess)
-  test_model = create_model(sess, reuse=True)
+  with tf.name_scope('train'):
+    mtrain = create_model(sess)
+  summary_writer = tf.summary.FileWriter(
+    FLAGS.checkpoint_path + SUMMARIES_PATH, sess.graph) 
+  exit(1)
+  for i, raw_batch in enumerate(test.get_batch(FLAGS.batch_size)):
+    batch = test.padding_and_format(raw_batch, BUCKETS)
+    mtrain.step(sess, batch)
+    exit(1)
+  exit(1)
+  with tf.name_scope('dev'):
+    mtest = create_model(sess, reuse=True)
   pass
 
 def main(_):

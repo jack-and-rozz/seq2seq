@@ -1,2 +1,5 @@
 seq2seq_type=embedding_rnn_seq2seq
+batch_size=30
+hidden_size=50
+embedding_size=50
 #cell_type=BasicRNNCell

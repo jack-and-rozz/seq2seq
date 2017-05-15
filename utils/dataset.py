@@ -3,7 +3,7 @@ from __future__ import absolute_import
 from __future__ import division
 #from __future__ import print_function
 
-import gzip, os, re, tarfile, json, sys, collections, types, commands
+import gzip, os, re, tarfile, json, sys, collections, types, commands, itertools
 import MeCab
 import numpy as np
 import mojimoji
@@ -114,24 +114,7 @@ class ASPECDataset(object):
     t_data = self.initialize_data(source_dir, target_dir, filename, t_vocab)
     self.data = sorted([(i, s, t) for i,(s,t) in enumerate(zip(s_data, t_data))], 
                        key=lambda x: len(x[1]))
-    #self.data = [(i, s, t) for i,(s,t) in enumerate(zip(s_data, t_data))]
-    print "Corpus Statistics"
-    lens = [len(d[1]) for d in self.data]
-    lent = [len(d[2]) for d in self.data]
-    print 'Source: (min, max, ave) = (%d, %d, %.2f)' % (min(lens), max(lens), sum(lens)/len(lens))
-    print 'Target: (min, max, ave) = (%d, %d, %.2f)' % (min(lent), max(lent), sum(lent)/len(lent))
-    
-    print "Corpus Example"
-    for i, s, t in self.data[:3]:
-      print '<%d>' %i
-      print " ".join(self.s_vocab.to_tokens(s))
-      print " ".join(self.t_vocab.to_tokens(t))
-     
 
-  def get_batch(self, batch_size):
-    pass
-
-  #@common.timewatch()
   def initialize_data(self, source_dir, target_dir, filename, vocab):
     source_path = os.path.join(source_dir, filename) + '.%s' % vocab.lang
     processed_path = os.path.join(target_dir, filename) + '.%s.Wids%d' % (vocab.lang, vocab.size)
@@ -145,3 +128,83 @@ class ASPECDataset(object):
       with open(processed_path, 'w') as f:
         f.write('\n'.join([' '.join([str(x) for x in l]) for l in data]))
     return data
+
+  def stat(self):
+    print "Corpus Statistics"
+    lens = [len(d[1]) for d in self.data]
+    lent = [len(d[2]) for d in self.data]
+    print 'Source: (min, max, ave) = (%d, %d, %.2f)' % (min(lens), max(lens), sum(lens)/len(lens))
+    print 'Target: (min, max, ave) = (%d, %d, %.2f)' % (min(lent), max(lent), sum(lent)/len(lent))
+
+
+  def get_batch(self, batch_size):
+    for i, d in itertools.groupby(enumerate(self.data), 
+                                     lambda x: x[0] // batch_size):
+      raw_batch = tuple(x[1] for x in d)
+      yield raw_batch
+
+
+  def padding_and_format(self, data, buckets, do_reverse=False, 
+                         use_sequence_length=True):
+    '''
+    Caution:  if both do_reverse and use_sequence_length are True at the same time, many PAD_IDs and only a small part of a sentence are read.
+    '''
+    batch_size = len(data)
+    max_s = max([len(x[1]) for x in data])
+    max_t = max([len(x[2]) for x in data])
+    bucket_id = min([i for i, (s, t) in enumerate(buckets) 
+                   if max_s <= s and max_t <= s-2])
+    encoder_size, decoder_size = buckets[bucket_id]
+    encoder_inputs, decoder_inputs, encoder_sequence_length = [], [], []
+    for _, encoder_input, decoder_input in data:
+      encoder_sequence_length.append(len(encoder_input))
+      # Encoder inputs are padded and then reversed if do_reverse=True.
+      encoder_pad = [PAD_ID] * (encoder_size - len(encoder_input))
+      encoder_input = encoder_input + encoder_pad
+      if do_reverse:
+        encoder_input = list(reversed(encoder_input))
+      encoder_inputs.append(encoder_input)
+
+      # Decoder inputs get an extra "GO" and "EOSsymbol, and are padded then.
+      decoder_pad_size = decoder_size - len(decoder_input) - 2
+      decoder_inputs.append([GO_ID] + decoder_input + [EOS_ID] +
+                            [PAD_ID] * decoder_pad_size)
+
+    # Now we create batch-major vectors from the data selected above.
+    batch_encoder_inputs, batch_decoder_inputs, batch_weights = [], [], []
+
+    # Batch encoder inputs are just re-indexed encoder_inputs.
+    for length_idx in xrange(encoder_size):
+      batch_encoder_inputs.append(
+          np.array([encoder_inputs[batch_idx][length_idx]
+                    for batch_idx in xrange(batch_size)], dtype=np.int32))
+
+    # Batch decoder inputs are re-indexed decoder_inputs, we create weights.
+    for length_idx in xrange(decoder_size):
+      batch_decoder_inputs.append(
+          np.array([decoder_inputs[batch_idx][length_idx]
+                    for batch_idx in xrange(batch_size)], dtype=np.int32))
+
+      # Create target_weights to be 0 for targets that are padding.
+      batch_weight = np.ones(batch_size, dtype=np.float32)
+      for batch_idx in xrange(batch_size):
+        # We set weight to 0 if the corresponding target is a PAD symbol.
+        # The corresponding target is decoder_input shifted by 1 forward.
+        if length_idx < decoder_size - 1:
+          target = decoder_inputs[batch_idx][length_idx + 1]
+        if length_idx == decoder_size - 1 or target == PAD_ID:
+          batch_weight[batch_idx] = 0.0
+      batch_weights.append(batch_weight)
+    if not use_sequence_length:
+      encoder_sequence_length = None 
+    batch = common.dotDict({
+      'encoder_inputs' : batch_encoder_inputs,
+      'decoder_inputs' : batch_decoder_inputs,
+      'target_weights' : batch_weights,
+      'sequence_length' : encoder_sequence_length,
+      'bucket_id': bucket_id,
+      'size' : batch_size,
+    })
+    return batch
+    #return batch_encoder_inputs, batch_decoder_inputs, batch_weights, encoder_sequence_length
+

@@ -24,7 +24,7 @@ from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import init_ops
-from tensorflow.contrib.legacy_seq2seq import sequence_loss, sequence_loss_by_example, rnn_decoder, model_with_buckets
+from tensorflow.contrib.legacy_seq2seq import sequence_loss, sequence_loss_by_example, rnn_decoder #, model_with_buckets
 # TODO(ebrevdo): Remove once _linear is fully deprecated.
 #linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access
 
@@ -104,6 +104,7 @@ def projection_and_sampled_loss(target_vocab_size, hidden_size, num_samples):
       labels = tf.reshape(labels, [-1, 1])
       # We need to compute the sampled_softmax_loss using 32bit floats to
       # avoid numerical instabilities.
+      dtype=tf.float32
       local_w_t = tf.cast(w_t, tf.float32)
       local_b = tf.cast(b, tf.float32)
       local_inputs = tf.cast(logits, tf.float32)
@@ -129,13 +130,13 @@ class Decoder(object):
 
 
 class RNNEncoder(Encoder):
-  def __init__(self, cell, embedding 
-               scope=None, sequence_length=None, activation=math_ops.tanh):
+  def __init__(self, cell, embedding, sequence_length=None,
+               scope=None, activation=math_ops.tanh):
     with variable_scope.variable_scope(scope or "rnn_encoder") as scope:
       self.cell = cell
       self.embedding = embedding
-      self.sequence_length = sequence_length
       self.activation = activation
+      self.sequence_length = sequence_length
   @property
   def state_size(self):
     return self.cell.state_size
@@ -158,8 +159,7 @@ class RNNDecoder(Decoder):
   def __init__(self, cell, embedding, scope=None):
     with variable_scope.variable_scope(scope or "rnn_decoder") as scope:
       self.cell = cell
-      self.embedding = initialize_embedding(vocab_size, embedding_size) if not embedding else embedding
-
+      self.embedding=embedding
   @property
   def state_size(self):
     return self.cell.state_size
@@ -187,14 +187,14 @@ class RNNDecoder(Decoder):
     return outputs, state
 
 class BidirectionalRNNEncoder(RNNEncoder):
-  def __init__(self, cell, vocab_size, embedding_size, 
-               scope=None, sequence_length=None, activation=math_ops.tanh):
+  def __init__(self, cell, embedding, sequence_length=None,
+               scope=None, activation=math_ops.tanh):
     with variable_scope.variable_scope(scope or "bidirectional_rnn_encoder"):
       self.cell = self.cell_fw = cell
       self.cell_bw = copy.deepcopy(cell)
-      self.embedding = initialize_embedding(vocab_size, embedding_size)
-      self.sequence_length = sequence_length
+      self.embedding = embedding
       self.activation = activation
+      self.sequence_length=sequence_length
 
   def __call__(self, inputs, scope=None, dtype=np.float32):
     with variable_scope.variable_scope(scope or "bidirectional_rnn_encoder"):
@@ -204,7 +204,6 @@ class BidirectionalRNNEncoder(RNNEncoder):
         self.cell_fw, self.cell_bw, embedded,
         sequence_length=self.sequence_length,
         scope=scope, dtype=dtype)
-      state = array_ops.concat([state_fw, state_bw], 1)
       hsize = self.state_size
       w = tf.get_variable("proj_w", [hsize * 2, hsize])
       b = tf.get_variable("proj_b", [hsize])
@@ -218,25 +217,26 @@ class BasicSeq2Seq(object):
     self.decoder = decoder
     self.projection, self.loss = projection_and_sampled_loss(
       decoder.embedding.shape[0], decoder.cell.output_size, num_samples)
-    self.loop_function=_extract_argmax_and_embed(
-      self.decoder.embedding, self.projection) if feed_previous else None
+    self.loop_function = None
+    if feed_previous:
+      self.loop_function = _extract_argmax_and_embed(
+        self.decoder.embedding, output_projection=self.projection)
 
   def seq2seq(self, encoder_inputs, decoder_inputs):
     with variable_scope.variable_scope("Encoder") as scope:
-      encoder_outputs, encoder_state = self.encoder(encoder_inputs, scope=scope)
+      encoder_outputs, encoder_state = self.encoder(
+        encoder_inputs, scope=scope)
     with variable_scope.variable_scope("Decoder") as scope:
       decoder_outputs, decoder_state = self.decoder(
         decoder_inputs, encoder_state, scope=scope,
         loop_function=self.loop_function)
     return decoder_outputs, decoder_state
 
-  def __call__(self, encoder_inputs,
-               decoder_inputs,
-               targets,
-               weights,
-               buckets):
+  def __call__(self, encoder_inputs, decoder_inputs, targets, weights,
+               buckets, per_example_loss=False):
     outputs, losses = model_with_buckets(
       encoder_inputs, decoder_inputs, targets, weights, buckets,
-      self.seq2seq, per_example_loss=True)
+      self.seq2seq, per_example_loss=per_example_loss, 
+      softmax_loss_function=self.loss)
     return outputs, losses
 
