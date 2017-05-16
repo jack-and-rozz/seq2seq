@@ -63,8 +63,6 @@ tf.app.flags.DEFINE_integer("num_gpus", 1, "")
 
 
 FLAGS = tf.app.flags.FLAGS
-BUCKETS = [(i, i) for i in xrange(10, FLAGS.max_sequence_length+1, 10)]
-print BUCKETS
 TMP_FLAGS = ['mode', 'log_file', 'checkpoint_path', 'num_gpus']
 log_file = FLAGS.log_file if FLAGS.log_file else None
 logger = common.logManager(handler=FileHandler(log_file)) if log_file else common.logManager()
@@ -97,7 +95,7 @@ def save_config():
 def create_model(sess, forward_only, do_update, reuse=None):
   with tf.variable_scope("Model", reuse=reuse):
     model_type = getattr(models, FLAGS.model_type)
-    m = model_type(FLAGS, BUCKETS, forward_only, do_update)
+    m = model_type(FLAGS, forward_only, do_update)
   ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_path + '/checkpoints')
   saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
   if ckpt and gfile.Exists(ckpt.model_checkpoint_path + '.index'):
@@ -122,7 +120,7 @@ def decode(sess):
                        FLAGS.target_lang, FLAGS.target_vocab_size)
   test = ASPECDataset(
     FLAGS.source_data_dir, FLAGS.processed_data_dir, 
-    FLAGS.test_data, s_vocab, t_vocab, buckets=BUCKETS)
+    FLAGS.test_data, s_vocab, t_vocab)
   logger.info("Number of tests: %d " % test.size)
 
   mtest = create_model(sess, True, False)
@@ -152,13 +150,14 @@ def train(sess):
   train = ASPECDataset(
     FLAGS.source_data_dir, FLAGS.processed_data_dir, 
     FLAGS.train_data, s_vocab, t_vocab, 
-    buckets=BUCKETS, max_rows=FLAGS.max_train_rows)
+    max_sequence_length=FLAGS.max_sequence_length,
+    max_rows=FLAGS.max_train_rows)
   dev = ASPECDataset(
     FLAGS.source_data_dir, FLAGS.processed_data_dir, 
-    FLAGS.dev_data, s_vocab, t_vocab, buckets=BUCKETS)
+    FLAGS.dev_data, s_vocab, t_vocab)
   test = ASPECDataset(
     FLAGS.source_data_dir, FLAGS.processed_data_dir, 
-    FLAGS.test_data, s_vocab, t_vocab, buckets=BUCKETS)
+    FLAGS.test_data, s_vocab, t_vocab)
   logger.info("(train dev test) = (%d %d %d)" % (train.size, dev.size, test.size))
 
   with tf.name_scope('train'):
@@ -168,10 +167,10 @@ def train(sess):
   with tf.name_scope('dev'):
     mvalid = create_model(sess, False, False, reuse=True)
   
-  def run_batch(m, data):
+  def run_batch(m, data, do_shuffle=False):
     start_time = time.time()
     loss = 0.0
-    for i, raw_batch in enumerate(data.get_batch(FLAGS.batch_size)):
+    for i, raw_batch in enumerate(data.get_batch(FLAGS.batch_size, do_shuffle=do_shuffle)):
       step_loss = m.step(sess, raw_batch)
       loss += step_loss 
       print i, step_loss
@@ -182,7 +181,7 @@ def train(sess):
 
   for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
     logger.info("Epoch %d: Start training." % epoch)
-    epoch_time, step_time, train_ppx = run_batch(mtrain, train)
+    epoch_time, step_time, train_ppx = run_batch(mtrain, train, do_shuffle=True)
     logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, ppx %.4f" % (epoch, epoch_time, step_time, train_ppx))
     epoch_time, step_time, valid_ppx = run_batch(mvalid, dev)
     logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, ppx %.4f" % (epoch, epoch_time, step_time, valid_ppx))

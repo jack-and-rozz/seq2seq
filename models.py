@@ -9,8 +9,9 @@ from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 #import tensorflow.contrib.rnn as rnn
 from tensorflow.python.ops import variable_scope
-from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 from tensorflow.python.ops import init_ops
+from tensorflow.python.ops import math_ops
+from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 
 #from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 #import tensorflow.contrib.legacy_seq2seq as seq2seq
@@ -21,8 +22,7 @@ from utils.dataset import PAD_ID, GO_ID, EOS_ID, UNK_ID, padding_and_format
 dtype=tf.float32
 
 class Baseline(object):
-  def __init__(self, FLAGS, buckets, forward_only, do_update):
-    self.buckets = buckets
+  def __init__(self, FLAGS, forward_only, do_update):
     self.forward_only=forward_only
     self.do_update = do_update
     self.read_flags(FLAGS)
@@ -44,11 +44,12 @@ class Baseline(object):
         copy.deepcopy(cell), decoder_embedding, scope=decoder_scope)
     self.seq2seq = getattr(seq2seq, FLAGS.seq2seq_type)(
       encoder, decoder, FLAGS.num_samples, feed_previous=forward_only)
+    # The last tokens in decoder_inputs are not to set each length of placeholders to be same.
     self.logits, self.losses = self.seq2seq(
-      self.encoder_inputs, self.decoder_inputs,
-      self.targets, self.target_weights, self.buckets)
+      self.encoder_inputs, self.decoder_inputs[:-1],
+      self.targets, self.target_weights[:-1])
     if do_update:
-      self.gradients, self.updates = self.setup_updates(self.losses)
+      self.updates = self.setup_updates(self.losses)
     self.saver = tf.train.Saver(tf.global_variables())
 
   def initialize_embedding(self, vocab_size, embedding_size):
@@ -59,35 +60,30 @@ class Baseline(object):
       initializer=initializer)
     return embedding
 
-  def setup_updates(self, losses):
+  def setup_updates(self, loss):
     params = tf.trainable_variables()
     gradients = []
     updates = []
     opt = tf.train.AdamOptimizer(self.learning_rate)
-
-    for loss in losses:
-      bucket_gradients = tf.gradients(loss, params)
-      clipped_gradients, norm = tf.clip_by_global_norm(bucket_gradients,
-                                                       self.max_gradient_norm)
-      gradients.append(clipped_gradients)
-      updates.append(opt.apply_gradients(
-        zip(clipped_gradients, params), global_step=self.global_step))
-    return gradients, updates
+    gradients = tf.gradients(loss, params)
+    clipped_gradients, norm = tf.clip_by_global_norm(gradients,
+                                                     self.max_gradient_norm)
+    updates = opt.apply_gradients(zip(clipped_gradients, params), global_step=self.global_step)
+    return updates
 
   def setup_placeholders(self, use_sequence_length=True):
     # Feeds for inputs.
     self.encoder_inputs = []
     self.decoder_inputs = []
     self.target_weights = []
-    for i in xrange(self.buckets[-1][0]):  # Last bucket is the biggest one.
+    for i in xrange(self.max_sequence_length):
       self.encoder_inputs.append(tf.placeholder(tf.int32, shape=[None],
                                                 name="encoder{0}".format(i)))
-    for i in xrange(self.buckets[-1][1] + 1):
+    for i in xrange(self.max_sequence_length + 1):
       self.decoder_inputs.append(tf.placeholder(tf.int32, shape=[None],
                                                 name="decoder{0}".format(i)))
       self.target_weights.append(tf.placeholder(dtype, shape=[None],
                                                 name="weight{0}".format(i)))
-
     # Our targets are decoder inputs shifted by one.
     self.targets = [self.decoder_inputs[i + 1]
                     for i in xrange(len(self.decoder_inputs) - 1)]
@@ -107,6 +103,7 @@ class Baseline(object):
     self.keep_prob = FLAGS.keep_prob
     self.hidden_size = FLAGS.hidden_size
     self.max_gradient_norm = FLAGS.max_gradient_norm
+    self.max_sequence_length = FLAGS.max_sequence_length
     self.num_samples = FLAGS.num_samples
     self.num_layers = FLAGS.num_layers
     self.max_to_keep = FLAGS.max_to_keep
@@ -134,7 +131,7 @@ class Baseline(object):
   def get_input_feed(self, batch):
     input_feed = {}
     batch_size = batch.encoder_inputs
-    encoder_size, decoder_size = self.buckets[batch.bucket_id]
+    encoder_size = decoder_size = self.max_sequence_length
     for l in xrange(encoder_size):
       input_feed[self.encoder_inputs[l].name] = batch.encoder_inputs[l]
     for l in xrange(decoder_size):
@@ -145,34 +142,30 @@ class Baseline(object):
 
     # Since our targets are decoder inputs shifted by one, we need one more.
     last_target = self.decoder_inputs[decoder_size].name
-    input_feed[last_target] = np.zeros([batch.size], dtype=np.int32)
+    input_feed[last_target] = np.zeros([batch.batch_size], dtype=np.int32)
     return input_feed 
 
   def step(self, sess, raw_batch):
-    batch = padding_and_format(raw_batch, self.buckets, 
+    batch = padding_and_format(raw_batch, self.max_sequence_length,
                                use_sequence_length=self.use_sequence_length)
-    bucket_id = batch.bucket_id
     input_feed = self.get_input_feed(batch)
-    output_feed = [self.losses[bucket_id]]
+    output_feed = [self.losses]
     if self.do_update:
-      output_feed.append(self.updates[bucket_id])
+      output_feed.append(self.updates)
     outputs = sess.run(output_feed, input_feed)
     return outputs[0]
 
 
   def decode(self, sess, raw_batch):
-    batch = padding_and_format(raw_batch, self.buckets, 
+    batch = padding_and_format(raw_batch, self.max_sequence_length,
                                use_sequence_length=self.use_sequence_length)
-    bucket_id = batch.bucket_id
-    decoder_size = self.buckets[bucket_id][1]
     input_feed = self.get_input_feed(batch)
-    output_feed = [self.losses[bucket_id]]  # Loss for this batch.
-    for l in xrange(decoder_size):  # Output logits.
-      output_feed.append(self.logits[bucket_id][l])
+    output_feed = [self.losses]  # Loss for this batch.
+    for l in xrange(self.max_sequence_length):  # Output logits.
+      output_feed.append(self.logits[l])
     outputs = sess.run(output_feed, input_feed)
     losses = outputs[0]
     logits = outputs[1:]
-    
     print len(logits)
     print len(logits[0])
     print len(logits[0][0])

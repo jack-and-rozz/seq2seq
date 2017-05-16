@@ -166,9 +166,8 @@ class RNNEncoder(Encoder):
       #   self.cell, embedded,
       #   sequence_length=self.sequence_length,
       #   scope=scope, dtype=dtype)
-      embedded = tf.stack(embedded, axis=1)
       outputs, state = rnn.dynamic_rnn(
-        self.cell, embedded,
+        self.cell, tf.stack(embedded, axis=1),
         sequence_length=self.sequence_length,
         scope=scope, dtype=dtype)
     return outputs, state
@@ -186,12 +185,13 @@ class RNNDecoder(Decoder):
   def output_size(self):
     return self.cell.output_size
 
-  def __call__(self, inputs, state, loop_function=None, scope=None):
+  def __call__(self, inputs, init_state, loop_function=None, scope=None):
     with variable_scope.variable_scope(scope or "rnn_decoder") as scope:
       embedded = [embedding_ops.embedding_lookup(
         self.embedding, inp) for inp in inputs]
       outputs = []
       prev = None
+      state = init_state
       for i, inp in enumerate(embedded):
         if loop_function is not None and prev is not None:
           with variable_scope.variable_scope("loop_function", reuse=True):
@@ -214,12 +214,12 @@ class BidirectionalRNNEncoder(RNNEncoder):
       self.activation = activation
       self.sequence_length=sequence_length
 
-  def __call__(self, inputs, scope=None, dtype=np.float32):
+  def __call__(self, inputs, scope=None, dtype=tf.float32):
     with variable_scope.variable_scope(scope or "bidirectional_rnn_encoder"):
       embedded = [embedding_ops.embedding_lookup(
         self.embedding, inp) for inp in inputs]
-      outputs, state_fw, state_bw = core_rnn.static_bidirectional_rnn(
-        self.cell_fw, self.cell_bw, embedded,
+      outputs, (state_fw, state_bw) = rnn.bidirectional_dynamic_rnn(
+        self.cell_fw, self.cell_bw, tf.stack(embedded, axis=1),
         sequence_length=self.sequence_length,
         scope=scope, dtype=dtype)
 
@@ -261,19 +261,15 @@ class BasicSeq2Seq(object):
     return decoder_outputs, decoder_state
 
   def __call__(self, encoder_inputs, decoder_inputs, targets, weights,
-               buckets, per_example_loss=False):
-    outputs, losses = model_with_buckets(
-      encoder_inputs, decoder_inputs, targets, weights, buckets,
-      self.seq2seq, per_example_loss=per_example_loss, 
-      softmax_loss_function=self.loss)
-
-    
+               per_example_loss=False):
+    outputs, _ = self.seq2seq(encoder_inputs, decoder_inputs)
     def to_logits(outputs):
       return [tf.nn.xw_plus_b(output, self.projection[0], self.projection[1])
               for output in outputs]
+    logits = to_logits(outputs) if self.projection is not None else outputs
 
-
-    logits = [to_logits(o) for o in outputs] if self.projection is not None else outputs
-    return outputs, losses
+    loss_func = sequence_loss_by_example if per_example_loss else sequence_loss
+    losses = loss_func(outputs, targets, weights,
+                       softmax_loss_function=self.loss)
     return logits, losses
 

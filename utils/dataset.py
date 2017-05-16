@@ -3,7 +3,8 @@ from __future__ import absolute_import
 from __future__ import division
 #from __future__ import print_function
 
-import gzip, os, re, tarfile, json, sys, collections, types, commands, itertools
+import gzip, os, re, tarfile, json, sys, collections, types, random, copy
+import commands, itertools
 import MeCab
 import numpy as np
 import mojimoji
@@ -46,18 +47,13 @@ def space_tokenizer(sent, normalize_digits=False):
   return sent.replace('\n', '').split()
 
 
-def padding_and_format(data, buckets, 
-                       use_sequence_length=True):
+def padding_and_format(data, max_sequence_length, use_sequence_length=True):
   '''
   Caution:  if both do_reverse and use_sequence_length are True at the same time, many PAD_IDs and only a small part of a sentence are read.
   '''
   do_reverse = not use_sequence_length
   batch_size = len(data)
-  max_s = max([len(x[1]) for x in data])
-  max_t = max([len(x[2]) for x in data])
-  bucket_id = min([i for i, (s, t) in enumerate(buckets) 
-                   if max_s <= s and max_t <= s-2])
-  encoder_size, decoder_size = buckets[bucket_id]
+  encoder_size, decoder_size = max_sequence_length, max_sequence_length
   encoder_inputs, decoder_inputs, encoder_sequence_length = [], [], []
   for _, encoder_input, decoder_input in data:
     encoder_sequence_length.append(len(encoder_input))
@@ -67,7 +63,7 @@ def padding_and_format(data, buckets,
     if do_reverse:
       encoder_input = list(reversed(encoder_input))
     encoder_inputs.append(encoder_input)
-    
+
     # Decoder inputs get an extra "GO" and "EOS" symbol, and are padded then.
     decoder_pad_size = decoder_size - len(decoder_input) - 2
     decoder_inputs.append([GO_ID] + decoder_input + [EOS_ID] +
@@ -105,8 +101,7 @@ def padding_and_format(data, buckets,
     'decoder_inputs' : batch_decoder_inputs,
     'target_weights' : batch_weights,
     'sequence_length' : encoder_sequence_length,
-    'bucket_id': bucket_id,
-    'size' : batch_size,
+    'batch_size' : batch_size,
   })
   return batch
 
@@ -173,20 +168,22 @@ class Vocabulary(object):
 
 class ASPECDataset(object):
   def __init__(self, source_dir, target_dir, filename, s_vocab, t_vocab,
-               buckets=None, max_rows=None):
+               max_sequence_length=None, max_rows=None):
     self.tokenizer = space_tokenizer
     self.s_vocab = s_vocab
     self.t_vocab = t_vocab
+
     s_data = self.initialize_data(source_dir, target_dir, filename, s_vocab,
                                   max_rows=max_rows)
     t_data = self.initialize_data(source_dir, target_dir, filename, t_vocab,
                                   max_rows=max_rows)
 
-    self.data = sorted([(i, s, t) for i,(s,t) in enumerate(zip(s_data, t_data))], 
-                       key=lambda x: len(x[1]))
-    if buckets:
-      self.data = [(i, s, t) for (i, s, t) in self.data 
-                   if len(s) <= buckets[-1][0] and len(t) <= buckets[-1][1] - 2]
+    #self.data = sorted([(i, s, t) for i,(s,t) in enumerate(zip(s_data, t_data))],key=lambda x: len(x[1]))
+    self.data = [(i, s, t) for i,(s,t) in enumerate(zip(s_data, t_data))]
+    if max_sequence_length:
+      self.data = [(i, s, t) for (i, s, t) in self.data
+                   if len(s) <= max_sequence_length and 
+                   len(t) <= max_sequence_length - 2]
     self.size = len(self.data)
 
   def initialize_data(self, source_dir, target_dir, filename, vocab, 
@@ -216,8 +213,12 @@ class ASPECDataset(object):
     print 'len-Target: (min, max, ave) = (%d, %d, %.2f)' % (min(lent), max(lent), sum(lent)/len(lent))
 
 
-  def get_batch(self, batch_size):
-    for i, d in itertools.groupby(enumerate(self.data), 
+  def get_batch(self, batch_size, do_shuffle=False):
+    data = self.data
+    if do_shuffle:
+      data = copy.deepcopy(data)
+      random.shuffle(data)
+    for i, d in itertools.groupby(enumerate(data), 
                                      lambda x: x[0] // batch_size):
       raw_batch = tuple(x[1] for x in d)
       yield raw_batch

@@ -42,7 +42,7 @@ done;
 
 # get params from config
 
-params_arr=(checkpoint_path log_file mode num_layers in_vocab_size hidden_size embedding_size keep_prob  seq2seq_type encoder_type decoder_type cell_type batch_size max_epoch max_train_rows  max_sequence_length max_to_keep source_data_dir processed_data_dir vocab_data train_data dev_data test_data num_gpus) 
+params_arr=(checkpoint_path log_file mode num_layers source_vocab_size target_vocab_size num_samples hidden_size embedding_size keep_prob  seq2seq_type encoder_type decoder_type cell_type batch_size max_epoch max_train_rows  max_sequence_length max_to_keep source_data_dir processed_data_dir vocab_data train_data dev_data test_data num_gpus) 
 params=""
 for param in ${params_arr[@]}; do 
     if [ ! ${!param} = "" ]; then
