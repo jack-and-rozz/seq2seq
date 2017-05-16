@@ -16,6 +16,7 @@ from six.moves import zip  # pylint: disable=redefined-builtin
 # from tensorflow.python.util import nest
 
 import tensorflow as tf
+from tensorflow.python.ops import rnn
 from tensorflow.contrib.rnn.python.ops import core_rnn
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell
 from tensorflow.python.framework import ops
@@ -151,16 +152,22 @@ class RNNEncoder(Encoder):
       embedded = [embedding_ops.embedding_lookup(self.embedding, inp)
                   for inp in inputs]
       # outputs = []
-      # batch_size = 200 #embedded[0].get_shape().with_rank_at_least(2)[0]
+      # batch_size = 200 embedded[0].get_shape().with_rank_at_least(2)[0]
       # state = self.cell.zero_state(batch_size, tf.float32)
       # with tf.variable_scope(scope or "rnn"):
       #   for time_step in range(len(embedded)):
       #     if time_step > 0: tf.get_variable_scope().reuse_variables()
-      #     #(cell_output, state) = cell(sources[:, time_step, :], state)
+      #     (cell_output, state) = cell(sources[:, time_step, :], state)
       #     (cell_output, state) = self.cell(embedded[time_step], state)
       #     outputs.append(cell_output)
+
       #outputsが全部同じになる。なんかstatic_rnnバグってる？
-      outputs, state = core_rnn.static_rnn(
+      # outputs, state = core_rnn.static_rnn(
+      #   self.cell, embedded,
+      #   sequence_length=self.sequence_length,
+      #   scope=scope, dtype=dtype)
+      embedded = tf.stack(embedded, axis=1)
+      outputs, state = rnn.dynamic_rnn(
         self.cell, embedded,
         sequence_length=self.sequence_length,
         scope=scope, dtype=dtype)
@@ -267,5 +274,6 @@ class BasicSeq2Seq(object):
 
 
     logits = [to_logits(o) for o in outputs] if self.projection is not None else outputs
+    return outputs, losses
     return logits, losses
 
