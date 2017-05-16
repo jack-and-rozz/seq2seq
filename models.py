@@ -30,22 +30,22 @@ class Baseline(object):
       self.setup_placeholders(use_sequence_length=self.use_sequence_length)
     cell = self.setup_cell(do_update)
     with variable_scope.variable_scope("Encoder") as encoder_scope:
-      encoder_embedding = self.initialize_embedding(FLAGS.source_vocab_size,
-                                                    FLAGS.embedding_size)
+      self.encoder_embedding = self.initialize_embedding(FLAGS.source_vocab_size,
+                                                         FLAGS.embedding_size)
       encoder = getattr(seq2seq, FLAGS.encoder_type)(
-        cell, encoder_embedding,
+        cell, self.encoder_embedding,
         scope=encoder_scope, 
         sequence_length=self.sequence_length)
 
     with variable_scope.variable_scope("Decoder") as decoder_scope:
-      decoder_embedding = self.initialize_embedding(FLAGS.target_vocab_size,
+      self.decoder_embedding = self.initialize_embedding(FLAGS.target_vocab_size,
                                                     FLAGS.embedding_size)
       decoder = getattr(seq2seq, FLAGS.decoder_type)(
-        copy.deepcopy(cell), decoder_embedding, scope=decoder_scope)
+        copy.deepcopy(cell), self.decoder_embedding, scope=decoder_scope)
     self.seq2seq = getattr(seq2seq, FLAGS.seq2seq_type)(
       encoder, decoder, FLAGS.num_samples, feed_previous=forward_only)
     # The last tokens in decoder_inputs are not to set each length of placeholders to be same.
-    self.logits, self.losses = self.seq2seq(
+    self.logits, self.losses, self.e_states, self.d_states = self.seq2seq(
       self.encoder_inputs, self.decoder_inputs[:-1],
       self.targets, self.target_weights[:-1])
     if do_update:
@@ -138,7 +138,7 @@ class Baseline(object):
       input_feed[self.decoder_inputs[l].name] = batch.decoder_inputs[l]
       input_feed[self.target_weights[l].name] = batch.target_weights[l]
     if self.sequence_length != None: 
-      input_feed[self.sequence_length.name] = batch.target_weights[l]
+      input_feed[self.sequence_length.name] = batch.sequence_length
 
     # Since our targets are decoder inputs shifted by one, we need one more.
     last_target = self.decoder_inputs[decoder_size].name
@@ -160,17 +160,14 @@ class Baseline(object):
     batch = padding_and_format(raw_batch, self.max_sequence_length,
                                use_sequence_length=self.use_sequence_length)
     input_feed = self.get_input_feed(batch)
-    output_feed = [self.losses]  # Loss for this batch.
-    for l in xrange(self.max_sequence_length):  # Output logits.
+    output_feed = [self.losses, self.e_states, self.d_states]
+    for l in xrange(self.max_sequence_length):
       output_feed.append(self.logits[l])
     outputs = sess.run(output_feed, input_feed)
     losses = outputs[0]
-    logits = outputs[1:]
-    print len(logits)
-    print len(logits[0])
-    print len(logits[0][0])
-    print logits[0]
-    #exit(1)
+    e_states = outputs[1]
+    d_states = outputs[2]
+    logits = outputs[3:]
     def greedy_argmax(logit):
       ex_list = []
       output_ids = []

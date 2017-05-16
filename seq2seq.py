@@ -26,7 +26,7 @@ from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import init_ops
 from tensorflow.python.util import nest
-from tensorflow.contrib.legacy_seq2seq import sequence_loss, sequence_loss_by_example, rnn_decoder #, model_with_buckets
+from tensorflow.contrib.legacy_seq2seq import sequence_loss, sequence_loss_by_example, rnn_decoder, attention_decoder #, model_with_buckets
 # TODO(ebrevdo): Remove once _linear is fully deprecated.
 #linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access
 
@@ -151,57 +151,10 @@ class RNNEncoder(Encoder):
     with variable_scope.variable_scope(scope or "rnn_encoder") as scope:
       embedded = [embedding_ops.embedding_lookup(self.embedding, inp)
                   for inp in inputs]
-      # outputs = []
-      # batch_size = 200 embedded[0].get_shape().with_rank_at_least(2)[0]
-      # state = self.cell.zero_state(batch_size, tf.float32)
-      # with tf.variable_scope(scope or "rnn"):
-      #   for time_step in range(len(embedded)):
-      #     if time_step > 0: tf.get_variable_scope().reuse_variables()
-      #     (cell_output, state) = cell(sources[:, time_step, :], state)
-      #     (cell_output, state) = self.cell(embedded[time_step], state)
-      #     outputs.append(cell_output)
-
-      #outputsが全部同じになる。なんかstatic_rnnバグってる？
-      # outputs, state = core_rnn.static_rnn(
-      #   self.cell, embedded,
-      #   sequence_length=self.sequence_length,
-      #   scope=scope, dtype=dtype)
       outputs, state = rnn.dynamic_rnn(
         self.cell, tf.stack(embedded, axis=1),
         sequence_length=self.sequence_length,
         scope=scope, dtype=dtype)
-    return outputs, state
-
-class RNNDecoder(Decoder):
-  def __init__(self, cell, embedding, scope=None):
-    with variable_scope.variable_scope(scope or "rnn_decoder") as scope:
-      self.cell = cell
-      self.embedding=embedding
-  @property
-  def state_size(self):
-    return self.cell.state_size
-
-  @property
-  def output_size(self):
-    return self.cell.output_size
-
-  def __call__(self, inputs, init_state, loop_function=None, scope=None):
-    with variable_scope.variable_scope(scope or "rnn_decoder") as scope:
-      embedded = [embedding_ops.embedding_lookup(
-        self.embedding, inp) for inp in inputs]
-      outputs = []
-      prev = None
-      state = init_state
-      for i, inp in enumerate(embedded):
-        if loop_function is not None and prev is not None:
-          with variable_scope.variable_scope("loop_function", reuse=True):
-            inp = loop_function(prev, i)
-        if i > 0:
-          variable_scope.get_variable_scope().reuse_variables()
-        output, state = self.cell(inp, state)
-        outputs.append(output)
-        if loop_function is not None:
-          prev = output
     return outputs, state
 
 class BidirectionalRNNEncoder(RNNEncoder):
@@ -218,26 +171,74 @@ class BidirectionalRNNEncoder(RNNEncoder):
     with variable_scope.variable_scope(scope or "bidirectional_rnn_encoder"):
       embedded = [embedding_ops.embedding_lookup(
         self.embedding, inp) for inp in inputs]
-      outputs, (state_fw, state_bw) = rnn.bidirectional_dynamic_rnn(
+      outputs, states = rnn.bidirectional_dynamic_rnn(
         self.cell_fw, self.cell_bw, tf.stack(embedded, axis=1),
-        sequence_length=self.sequence_length,
+        sequence_length=self.sequence_length, time_major=False,
         scope=scope, dtype=dtype)
+      output_fw, output_bw = outputs
+      state_fw, state_bw = states
 
-      def merge_state(size, s_fw, s_bw):
+      def merge(size, s_fw, s_bw): # Linearly transform the fw and bw.
         w = tf.get_variable("proj_w", [size * 2, size])
         b = tf.get_variable("proj_b", [size])
         states = self.activation(
           tf.nn.xw_plus_b(array_ops.concat([s_fw, s_bw], 1), w, b))
         return states
+      merged_outputs = []
+      for i, (o_fw, o_bw) in enumerate(zip(tf.unstack(output_fw, axis=1), 
+                                           tf.unstack(output_bw, axis=1))):
+        reuse = True if i > 0 else None
+        with variable_scope.variable_scope("outputs", reuse=reuse):
+          merged_outputs.append(merge(self.output_size, o_fw, o_bw))
+      merged_outputs = tf.stack(merged_outputs, axis=1)
       if nest.is_sequence(self.state_size):
-        state = []
+        merged_state = []
         for i, (size, s_fw, s_bw) in enumerate(
             zip(self.state_size, state_fw, state_bw)):
-          with variable_scope.variable_scope("cell_%d" % (i)):
-            state.append(merge_state(size, s_fw, s_bw))
+          with variable_scope.variable_scope("state_%d" % (i)):
+            merged_state.append(merge(size, s_fw, s_bw))
       else:
-        state = merge_state(self.state_size, state_fw, state_bw)
-      return outputs, state
+        merged_state = merge(self.state_size, state_fw, state_bw)
+      return merged_outputs, merged_state
+
+class RNNDecoder(Decoder):
+  def __init__(self, cell, embedding, scope=None):
+    with variable_scope.variable_scope(scope or "rnn_decoder") as scope:
+      self.cell = cell
+      self.embedding = embedding
+  @property
+  def state_size(self):
+    return self.cell.state_size
+
+  @property
+  def output_size(self):
+    return self.cell.output_size
+
+  def __call__(self, inputs, init_state, encoder_outputs,
+               loop_function=None, scope=None):
+    with variable_scope.variable_scope(scope or "rnn_decoder") as scope:
+      embedded = [embedding_ops.embedding_lookup(
+        self.embedding, inp) for inp in inputs]
+      return rnn_decoder(embedded, init_state, self.cell,
+                         scope=scope, loop_function=loop_function)
+
+class AttentionDecoder(RNNDecoder):
+  def __init__(self, cell, embedding, num_heads=1, scope=None):
+    with variable_scope.variable_scope(scope or "attention_decoder") as scope:
+      self.cell = cell
+      self.embedding = embedding
+      self.num_heads = num_heads
+
+  def __call__(self, inputs, init_state, encoder_outputs,
+               loop_function=None, scope=None):
+    with variable_scope.variable_scope(scope or "attention_decoder") as scope:
+      embedded = [embedding_ops.embedding_lookup(
+        self.embedding, inp) for inp in inputs]
+      attention_states = encoder_outputs
+      return attention_decoder(embedded, init_state, attention_states, self.cell,
+                               num_heads=self.num_heads,
+                               scope=scope, loop_function=loop_function)
+
 
 class BasicSeq2Seq(object):
   def __init__(self, encoder, decoder, num_samples, feed_previous=False):
@@ -256,13 +257,14 @@ class BasicSeq2Seq(object):
         encoder_inputs, scope=scope)
     with variable_scope.variable_scope("Decoder") as scope:
       decoder_outputs, decoder_state = self.decoder(
-        decoder_inputs, encoder_state, scope=scope,
-        loop_function=self.loop_function)
-    return decoder_outputs, decoder_state
+        decoder_inputs, encoder_state, encoder_outputs,
+        scope=scope, loop_function=self.loop_function)
+    return decoder_outputs, decoder_state, encoder_state
 
   def __call__(self, encoder_inputs, decoder_inputs, targets, weights,
                per_example_loss=False):
-    outputs, _ = self.seq2seq(encoder_inputs, decoder_inputs)
+    outputs, decoder_states, encoder_states = self.seq2seq(encoder_inputs, 
+                                                           decoder_inputs)
     def to_logits(outputs):
       return [tf.nn.xw_plus_b(output, self.projection[0], self.projection[1])
               for output in outputs]
@@ -271,5 +273,5 @@ class BasicSeq2Seq(object):
     loss_func = sequence_loss_by_example if per_example_loss else sequence_loss
     losses = loss_func(outputs, targets, weights,
                        softmax_loss_function=self.loss)
-    return logits, losses
+    return logits, losses, encoder_states, decoder_states
 

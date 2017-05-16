@@ -24,7 +24,7 @@ tf.app.flags.DEFINE_string("dev_data", "dev", "")
 tf.app.flags.DEFINE_string("test_data", "test", "")
 tf.app.flags.DEFINE_string("source_lang", "ja", "")
 tf.app.flags.DEFINE_string("target_lang", "en", "")
-tf.app.flags.DEFINE_integer("max_train_rows", 10000000, "Maximum number of rows to be used as train data.")
+tf.app.flags.DEFINE_integer("max_train_rows", 2000000, "Maximum number of rows to be used as train data.")
 
 #
 tf.app.flags.DEFINE_string("model_type", "Baseline", "")
@@ -195,7 +195,7 @@ def main(_):
   tf_config = tf.ConfigProto(
     log_device_placement=False,
     gpu_options=tf.GPUOptions(
-      allow_growth=False # True->必要になったら確保, False->全部
+      allow_growth=True # True->必要になったら確保, False->全部
     )
   )
 
