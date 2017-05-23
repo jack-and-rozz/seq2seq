@@ -7,6 +7,47 @@ from itertools import chain
 from logging import getLogger, StreamHandler, FileHandler, Formatter, DEBUG, INFO, WARNING, ERROR, CRITICAL
 
 ############################################
+#        Dictionary
+############################################
+
+# dictionaryのkey:value入れ替え
+def invert_dict(dictionary):
+    return {v:k for k, v in dictionary.items()}
+
+# 辞書のvalueでソート。デフォルトは降順
+def sort_dict(dic, sort_type="DESC"):
+    counter = collections.Counter(dic)
+    if sort_type == "ASC":
+        count_pairs = sorted(counter.items(), key=lambda x: x[1])
+    elif sort_type == "DESC":
+        count_pairs = sorted(counter.items(), key=lambda x: -x[1])
+    key, value = list(zip(*count_pairs))
+    return (key, value)
+
+# funcは key, valueのタプルを引数に取り、同じく key, valueのタプルを返す関数
+def map_dict(func, _dict):
+    return dict([func(k,v) for k,v in _dict.items()]) 
+
+
+def split_dict():
+    pass
+class dotDict(dict):
+	__getattr__ = dict.__getitem__
+	__setattr__ = dict.__setitem__
+	__delattr__ = dict.__delitem__
+
+class rec_defaultdict(collections.defaultdict):
+    def __init__(self):
+        self.default_factory = type(self)
+
+def modulize(dictionary):
+    import imp
+    m = imp.new_module("")
+    m.__dict__.update(dictionary)
+    return m
+
+
+############################################
 #        Batching
 ############################################
 
@@ -132,54 +173,13 @@ def read_id(file_path):
 
 
 def read_mconfig(model_path, config_file = "config"):
-    res = {}
+    res = dotDict({})
     with open(model_path + '/' + config_file) as f:
         for l in f:
             m = re.search("(.+)=(.+)", l)
             if m :
                 res[m.group(1)] = m.group(2)
     return res
-
-############################################
-#        Dictionary
-############################################
-
-# dictionaryのkey:value入れ替え
-def invert_dict(dictionary):
-    return {v:k for k, v in dictionary.items()}
-
-# 辞書のvalueでソート。デフォルトは降順
-def sort_dict(dic, sort_type="DESC"):
-    counter = collections.Counter(dic)
-    if sort_type == "ASC":
-        count_pairs = sorted(counter.items(), key=lambda x: x[1])
-    elif sort_type == "DESC":
-        count_pairs = sorted(counter.items(), key=lambda x: -x[1])
-    key, value = list(zip(*count_pairs))
-    return (key, value)
-
-# funcは key, valueのタプルを引数に取り、同じく key, valueのタプルを返す関数
-def map_dict(func, _dict):
-    return dict([func(k,v) for k,v in _dict.items()]) 
-
-
-def split_dict():
-    pass
-
-class dotDict(dict):
-	__getattr__ = dict.__getitem__
-	__setattr__ = dict.__setitem__
-	__delattr__ = dict.__delitem__
-
-class rec_defaultdict(collections.defaultdict):
-    def __init__(self):
-        self.default_factory = type(self)
-
-def modulize(dictionary):
-    import imp
-    m = imp.new_module("")
-    m.__dict__.update(dictionary)
-    return m
 
 ############################################
 #        String

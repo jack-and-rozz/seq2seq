@@ -2,8 +2,10 @@ dataset
 models
 tmp
 tensorflow
+*.pyc
 .#*
 .fuse*
 .nfs*
 configs/*
 nohup.out
+tmp*

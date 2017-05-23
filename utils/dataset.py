@@ -41,9 +41,11 @@ def separate_numbers(sent):
   return re.sub(_DIGIT_RE, addspace, sent).replace('  ', ' ')
 
 
-def space_tokenizer(sent, normalize_digits=False):
-  sent = format_zen_han(sent)
-  sent = separate_numbers(sent)
+def space_tokenizer(sent, do_format_zen_han=True, do_separate_numbers=True):
+  if do_format_zen_han:
+    sent = format_zen_han(sent)
+  if do_separate_numbers:
+    sent = separate_numbers(sent)
   return sent.replace('\n', '').split()
 
 
@@ -185,6 +187,8 @@ class ASPECDataset(object):
                    if len(s) <= max_sequence_length and 
                    len(t) <= max_sequence_length - 2]
     self.size = len(self.data)
+    self.largest_bucket = [max([len(s)for (_, s, t) in self.data]),
+                           max([len(t)for (_, s, t) in self.data])+2]
 
   def initialize_data(self, source_dir, target_dir, filename, vocab, 
                       max_rows=None):

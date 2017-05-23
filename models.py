@@ -22,7 +22,8 @@ from utils.dataset import PAD_ID, GO_ID, EOS_ID, UNK_ID, padding_and_format
 dtype=tf.float32
 
 class Baseline(object):
-  def __init__(self, FLAGS, forward_only, do_update):
+  def __init__(self, FLAGS, max_sequence_length, forward_only, do_update):
+    self.max_sequence_length = max_sequence_length
     self.forward_only=forward_only
     self.do_update = do_update
     self.read_flags(FLAGS)
@@ -103,7 +104,6 @@ class Baseline(object):
     self.keep_prob = FLAGS.keep_prob
     self.hidden_size = FLAGS.hidden_size
     self.max_gradient_norm = FLAGS.max_gradient_norm
-    self.max_sequence_length = FLAGS.max_sequence_length
     self.num_samples = FLAGS.num_samples
     self.num_layers = FLAGS.num_layers
     self.max_to_keep = FLAGS.max_to_keep

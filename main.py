@@ -39,9 +39,9 @@ tf.app.flags.DEFINE_integer("hidden_size", 200, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("embedding_size", 200, "Size of each token embedding.")
 tf.app.flags.DEFINE_integer("source_vocab_size", 30000, "Vocabulary size.")
 tf.app.flags.DEFINE_integer("target_vocab_size", 30000, "Vocabulary size.")
-tf.app.flags.DEFINE_integer("max_to_keep", 1, "Number of checkpoints to be kept")
-tf.app.flags.DEFINE_integer("max_epoch", 20, "")
-tf.app.flags.DEFINE_integer("max_sequence_length", 120, "")
+tf.app.flags.DEFINE_integer("max_to_keep", 5, "Number of checkpoints to be kept")
+tf.app.flags.DEFINE_integer("max_epoch", 50, "")
+tf.app.flags.DEFINE_integer("max_sequence_length", 64, "")
 tf.app.flags.DEFINE_float("init_scale", 0.1, "")
 tf.app.flags.DEFINE_float("learning_rate", 1e-4, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
@@ -50,7 +50,7 @@ tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
 # for RNN LM
 tf.app.flags.DEFINE_string("cell_type", "GRUCell", "Cell type")
 tf.app.flags.DEFINE_string("seq2seq_type", "BasicSeq2Seq", "Cell type")
-tf.app.flags.DEFINE_string("encoder_type", "BidirectionalRNNEncoder", "")
+tf.app.flags.DEFINE_string("encoder_type", "RNNEncoder", "")
 tf.app.flags.DEFINE_string("decoder_type", "RNNDecoder", "")
 tf.app.flags.DEFINE_boolean("use_sequence_length", True, "If True, PAD_ID tokens are not input to RNN. (This option shouldn't be used when reversing encoder's inputs.)")
 tf.app.flags.DEFINE_integer("num_layers", 1, "Number of layers in the model.")
@@ -92,10 +92,10 @@ def save_config():
 
 
 @common.timewatch(logger)
-def create_model(sess, forward_only, do_update, reuse=None):
+def create_model(sess, max_sequence_length, forward_only, do_update, reuse=None):
   with tf.variable_scope("Model", reuse=reuse):
     model_type = getattr(models, FLAGS.model_type)
-    m = model_type(FLAGS, forward_only, do_update)
+    m = model_type(FLAGS, max_sequence_length, forward_only, do_update)
   ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_path + '/checkpoints')
   saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
   if ckpt and gfile.Exists(ckpt.model_checkpoint_path + '.index'):
@@ -111,7 +111,26 @@ def create_model(sess, forward_only, do_update, reuse=None):
 
   return m
 
-def decode(sess):
+def decode_interact(sess):
+  s_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.vocab_data,
+                       FLAGS.source_lang, FLAGS.source_vocab_size)
+  t_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.vocab_data,
+                       FLAGS.target_lang, FLAGS.target_vocab_size)
+  mtest = create_model(sess, FLAGS.max_sequence_length, True, False)
+  while True:
+    sys.stdout.write("> ",)
+    source = sys.stdin.readline()
+    source = source.split()
+    raw_batch = [(None, s_vocab.to_ids(source), [])]
+    _, outputs = mtest.decode(sess, raw_batch)
+    output = outputs[0]
+    if EOS_ID in output:
+      output = output[:output.index(EOS_ID)]
+    output = " " .join(t_vocab.to_tokens(output))
+    print (output)
+    
+
+def decode_test(sess):
   data_path = os.path.join(FLAGS.source_data_dir, FLAGS.vocab_data)
   vocab_path = os.path.join(FLAGS.processed_data_dir, FLAGS.vocab_data)
   s_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.vocab_data,
@@ -122,22 +141,43 @@ def decode(sess):
     FLAGS.source_data_dir, FLAGS.processed_data_dir, 
     FLAGS.test_data, s_vocab, t_vocab)
   logger.info("Number of tests: %d " % test.size)
-
-  mtest = create_model(sess, True, False)
+  max_sequence_length = max(test.largest_bucket)
+  mtest = create_model(sess, max_sequence_length, True, False)
+  sources = []
+  targets = []
+  results = []
   for i, raw_batch in enumerate(test.get_batch(FLAGS.batch_size)):
     _, outputs = mtest.decode(sess, raw_batch)
     for b, o in zip(raw_batch, outputs):
       idx, s, t = b
       if EOS_ID in o:
         o = o[:o.index(EOS_ID)]
-   
-      print "%d" % idx
-      print " ".join(s_vocab.to_tokens(s))
-      print " ".join(t_vocab.to_tokens(t))
-      print " ".join(t_vocab.to_tokens(o))
-      
+      source = " ".join(s_vocab.to_tokens(s))
+      target = " ".join(t_vocab.to_tokens(t))
+      result = " ".join(t_vocab.to_tokens(o))
+      sources.append(source)
+      targets.append(target)
+      results.append(result)
+      print "<%d>" % idx
+      print (source)
+      print (target)
+      print (result)
 
-  
+  # to check the words input as _UNK.
+  source_path = FLAGS.checkpoint_path + TESTS_PATH + '/%s.%s' % (FLAGS.test_data, FLAGS.source_lang)
+  target_path = FLAGS.checkpoint_path + TESTS_PATH + '/%s.%s' % (FLAGS.test_data, FLAGS.target_lang)
+  if not os.path.exists(source_path):
+    with open(source_path, 'w') as f:
+      f.write("\n".join(sources) + "\n")
+  if not os.path.exists(target_path):
+    with open(target_path, 'w') as f:
+      f.write("\n".join(targets) + "\n")
+
+  # write decoding results.
+  decode_path = FLAGS.checkpoint_path + TESTS_PATH + '/%s.%s.decode.ep%d' % (FLAGS.test_data, FLAGS.target_lang, mtest.epoch.eval())
+  with open(decode_path, 'w') as f:
+    f.write("\n".join(results) + "\n")
+
 def train(sess):
   data_path = os.path.join(FLAGS.source_data_dir, FLAGS.vocab_data)
   vocab_path = os.path.join(FLAGS.processed_data_dir, FLAGS.vocab_data)
@@ -161,11 +201,11 @@ def train(sess):
   logger.info("(train dev test) = (%d %d %d)" % (train.size, dev.size, test.size))
 
   with tf.name_scope('train'):
-    mtrain = create_model(sess, False, True)
+    mtrain = create_model(sess, FLAGS.max_sequence_length, False, True)
   summary_writer = tf.summary.FileWriter(
     FLAGS.checkpoint_path + SUMMARIES_PATH, sess.graph) 
   with tf.name_scope('dev'):
-    mvalid = create_model(sess, False, False, reuse=True)
+    mvalid = create_model(sess, FLAGS.max_sequence_length, False, False, reuse=True)
   
   def run_batch(m, data, do_shuffle=False):
     start_time = time.time()
@@ -209,7 +249,9 @@ def main(_):
       save_config()
       train(sess)
     elif FLAGS.mode == "decode":
-      decode(sess)
+      decode_test(sess)
+    elif FLAGS.mode == "decode_interact":
+      decode_interact(sess)
     else:
       sys.stderr.write("Unknown mode.\n")
       exit(1)
