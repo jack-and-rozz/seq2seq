@@ -4,7 +4,7 @@ from __future__ import division
 #from __future__ import print_function
 
 import MeCab
-import sys, io, os, codecs, time, itertools, math, random
+import sys, io, os, codecs, time, itertools, math, random, copy
 from logging import FileHandler
 import numpy as np
 import tensorflow as tf
@@ -94,10 +94,14 @@ def save_config():
 @common.timewatch(logger)
 def create_model(sess, max_sequence_length, forward_only, do_update, reuse=None):
   with tf.variable_scope("Model", reuse=reuse):
-    model_type = getattr(models, FLAGS.model_type)
-    m = model_type(FLAGS, max_sequence_length, forward_only, do_update)
+    if do_update and len(os.environ['CUDA_VISIBLE_DEVICES'].split(',')) > 1:
+      m = models.MultiGPUTrainWrapper(sess, FLAGS, max_sequence_length)
+    else:
+      model_type = getattr(models, FLAGS.model_type)
+      m = model_type(sess, FLAGS, max_sequence_length, forward_only, do_update)
   ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_path + '/checkpoints')
   saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
+  
   if ckpt and gfile.Exists(ckpt.model_checkpoint_path + '.index'):
     if reuse==None:
       logger.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
@@ -147,7 +151,7 @@ def decode_test(sess):
   targets = []
   results = []
   for i, raw_batch in enumerate(test.get_batch(FLAGS.batch_size)):
-    _, outputs = mtest.decode(sess, raw_batch)
+    _, outputs = mtest.decode(raw_batch)
     for b, o in zip(raw_batch, outputs):
       idx, s, t = b
       if EOS_ID in o:
@@ -202,31 +206,23 @@ def train(sess):
 
   with tf.name_scope('train'):
     mtrain = create_model(sess, FLAGS.max_sequence_length, False, True)
-  summary_writer = tf.summary.FileWriter(
-    FLAGS.checkpoint_path + SUMMARIES_PATH, sess.graph) 
-  with tf.name_scope('dev'):
-    mvalid = create_model(sess, FLAGS.max_sequence_length, False, False, reuse=True)
-  
-  def run_batch(m, data, do_shuffle=False):
-    start_time = time.time()
-    loss = 0.0
-    for i, raw_batch in enumerate(data.get_batch(FLAGS.batch_size, do_shuffle=do_shuffle)):
-      step_loss = m.step(sess, raw_batch)
-      loss += step_loss 
-      print i, step_loss
-    epoch_time = (time.time() - start_time)
-    step_time = epoch_time / (i+1)
-    ppx = math.exp(loss / (i+1))
-    return epoch_time, step_time, ppx
+    summary_writer = tf.summary.FileWriter(FLAGS.checkpoint_path + SUMMARIES_PATH,
+                                           sess.graph) 
 
+  #with tf.name_scope('dev'):
+  #  mvalid = create_model(sess, FLAGS.max_sequence_length, False, False, reuse=True)
   for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
     logger.info("Epoch %d: Start training." % epoch)
-    epoch_time, step_time, train_ppx = run_batch(mtrain, train, do_shuffle=True)
+    epoch_time, step_time, train_ppx = mtrain.run_batch(train, FLAGS.batch_size, 
+                                                        do_shuffle=True)
     logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, ppx %.4f" % (epoch, epoch_time, step_time, train_ppx))
-    epoch_time, step_time, valid_ppx = run_batch(mvalid, dev)
+    exit(1)
+
+    epoch_time, step_time, valid_ppx = mvalid.run_batch(dev, FLAGS.batch_size)
+
     logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, ppx %.4f" % (epoch, epoch_time, step_time, valid_ppx))
 
-    mtrain.add_epoch(sess)
+    mtrain.add_epoch()
     checkpoint_path = FLAGS.checkpoint_path + CHECKPOINTS_PATH + "/model.ckpt"
     mtrain.saver.save(sess, checkpoint_path, global_step=mtrain.epoch)
   pass
@@ -234,8 +230,9 @@ def train(sess):
 def main(_):
   tf_config = tf.ConfigProto(
     log_device_placement=False,
+    allow_soft_placement=True, # GPU上で実行できない演算を自動でCPUに
     gpu_options=tf.GPUOptions(
-      allow_growth=True # True->必要になったら確保, False->全部
+      allow_growth=True, # True->必要になったら確保, False->全部
     )
   )
 
@@ -258,4 +255,4 @@ def main(_):
 
 
 if __name__ == "__main__":
-    tf.app.run()
+  tf.app.run()

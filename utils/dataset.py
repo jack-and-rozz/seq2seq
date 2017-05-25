@@ -217,15 +217,15 @@ class ASPECDataset(object):
     print 'len-Target: (min, max, ave) = (%d, %d, %.2f)' % (min(lent), max(lent), sum(lent)/len(lent))
 
 
-  def get_batch(self, batch_size, do_shuffle=False):
+  def get_batch(self, batch_size, do_shuffle=False, n_batch=1):
     data = self.data
     if do_shuffle:
       data = copy.deepcopy(data)
       random.shuffle(data)
-    for i, d in itertools.groupby(enumerate(data), 
-                                     lambda x: x[0] // batch_size):
-      raw_batch = tuple(x[1] for x in d)
-      yield raw_batch
-
-
+    # Extract n_batch * batch_size lines from data
+    for i, d in itertools.groupby(enumerate(data), lambda x: x[0] // (batch_size*n_batch)):
+      raw_batch = [x[1] for x in d]
+      batch = [[x[1] for x in d2] for j, d2 in itertools.groupby(enumerate(raw_batch), lambda x: x[0] // (len(raw_batch) // n_batch))]
+      # Yield 'n_batch' batches which have 'batch_size' lines
+      yield batch if n_batch > 1 else batch[0]
 

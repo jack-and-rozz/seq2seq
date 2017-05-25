@@ -2,7 +2,7 @@
 from __future__ import absolute_import
 from __future__ import division
 
-import random, sys, os, math, copy
+import random, sys, os, math, copy, time
 import numpy as np
 
 from six.moves import xrange  # pylint: disable=redefined-builtin
@@ -20,9 +20,11 @@ import seq2seq
 from utils import common
 from utils.dataset import PAD_ID, GO_ID, EOS_ID, UNK_ID, padding_and_format
 dtype=tf.float32
+import models as seq2seq_models # import itself for reflection
 
 class Baseline(object):
-  def __init__(self, FLAGS, max_sequence_length, forward_only, do_update):
+  def __init__(self, sess, FLAGS, max_sequence_length, forward_only, do_update):
+    self.sess = sess
     self.max_sequence_length = max_sequence_length
     self.forward_only=forward_only
     self.do_update = do_update
@@ -45,12 +47,14 @@ class Baseline(object):
         copy.deepcopy(cell), self.decoder_embedding, scope=decoder_scope)
     self.seq2seq = getattr(seq2seq, FLAGS.seq2seq_type)(
       encoder, decoder, FLAGS.num_samples, feed_previous=forward_only)
+
     # The last tokens in decoder_inputs are not to set each length of placeholders to be same.
     self.logits, self.losses, self.e_states, self.d_states = self.seq2seq(
       self.encoder_inputs, self.decoder_inputs[:-1],
       self.targets, self.target_weights[:-1])
     if do_update:
-      self.updates = self.setup_updates(self.losses)
+      with tf.variable_scope(tf.get_variable_scope(), reuse=False):
+        self.updates = self.setup_updates(self.losses)
     self.saver = tf.train.Saver(tf.global_variables())
 
   def initialize_embedding(self, vocab_size, embedding_size):
@@ -66,10 +70,15 @@ class Baseline(object):
     gradients = []
     updates = []
     opt = tf.train.AdamOptimizer(self.learning_rate)
-    gradients = tf.gradients(loss, params)
-    clipped_gradients, norm = tf.clip_by_global_norm(gradients,
-                                                     self.max_gradient_norm)
-    updates = opt.apply_gradients(zip(clipped_gradients, params), global_step=self.global_step)
+    #gradients = tf.gradients(loss, params)
+    #clipped_gradients, norm = tf.clip_by_global_norm(gradients,
+    #                                                 self.max_gradient_norm)
+    gradients = [grad for grad, _ in opt.compute_gradients(loss)]
+    clipped_gradients, _ = tf.clip_by_global_norm(gradients, 
+                                                  self.max_gradient_norm)
+    self.grad_and_vars = [(g, v) for g, v in zip(clipped_gradients, params)]
+    updates = opt.apply_gradients(self.grad_and_vars, global_step=self.global_step)
+    #updates = opt.apply_gradients(zip(clipped_gradients, params), global_step=self.global_step)
     return updates
 
   def setup_placeholders(self, use_sequence_length=True):
@@ -92,7 +101,6 @@ class Baseline(object):
 
 
   def setup_cell(self, do_update):
-    
     cell = getattr(rnn_cell, self.cell_type)(self.hidden_size, reuse=tf.get_variable_scope().reuse) 
     if self.keep_prob < 1.0 and do_update:
       cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
@@ -125,10 +133,13 @@ class Baseline(object):
       "epoch", trainable=False, shape=[], dtype=tf.int32,
       initializer=tf.constant_initializer(0, dtype=tf.int32)) 
 
-  def add_epoch(self, sess):
+  def add_epoch(self):
+    sess = self.sess
     sess.run(tf.assign(self.epoch, tf.add(self.epoch, tf.constant(1, dtype=tf.int32))))
 
-  def get_input_feed(self, batch):
+  def get_input_feed(self, raw_batch):
+    batch = padding_and_format(raw_batch, self.max_sequence_length,
+                               use_sequence_length=self.use_sequence_length)
     input_feed = {}
     batch_size = batch.encoder_inputs
     encoder_size = decoder_size = self.max_sequence_length
@@ -145,18 +156,29 @@ class Baseline(object):
     input_feed[last_target] = np.zeros([batch.batch_size], dtype=np.int32)
     return input_feed 
 
-  def step(self, sess, raw_batch):
-    batch = padding_and_format(raw_batch, self.max_sequence_length,
-                               use_sequence_length=self.use_sequence_length)
-    input_feed = self.get_input_feed(batch)
+  def step(self, raw_batch):
+    sess = self.sess
+    input_feed = self.get_input_feed(raw_batch)
     output_feed = [self.losses]
     if self.do_update:
       output_feed.append(self.updates)
     outputs = sess.run(output_feed, input_feed)
     return outputs[0]
 
+  def run_batch(self, data, batch_size, do_shuffle=False):
+    start_time = time.time()
+    loss = 0.0
+    for i, raw_batch in enumerate(data.get_batch(batch_size, do_shuffle=do_shuffle)):
+      step_loss = self.step(raw_batch)
+      loss += step_loss 
+      print i, step_loss
+    epoch_time = (time.time() - start_time)
+    step_time = epoch_time / (i+1)
+    ppx = math.exp(loss / (i+1))
+    return epoch_time, step_time, ppx
 
-  def decode(self, sess, raw_batch):
+  def decode(self, raw_batch):
+    sess = self.sess
     batch = padding_and_format(raw_batch, self.max_sequence_length,
                                use_sequence_length=self.use_sequence_length)
     input_feed = self.get_input_feed(batch)
@@ -182,5 +204,84 @@ class Baseline(object):
 
 
 class MultiGPUTrainWrapper(object):
-  def __init__(self, model_type):
-    pass
+  def __init__(self, sess, FLAGS, max_sequence_length):
+    self.sess = sess
+    self.learning_rate = FLAGS.learning_rate
+    self.max_gradient_norm = FLAGS.max_gradient_norm
+    self.models = self.setup_models(sess, FLAGS, max_sequence_length)
+    self.global_step = self.models[0].global_step
+    self.epoch = self.models[0].epoch
+    with tf.device('/cpu:0'):
+      self.grad_and_vars = self.average_gradients([m.grad_and_vars for m in self.models])
+
+
+    #params = tf.trainable_variables()
+    opt = tf.train.AdamOptimizer(self.learning_rate)
+    self.updates = opt.apply_gradients(self.grad_and_vars, global_step=self.global_step)
+
+  def setup_models(self, sess, FLAGS, max_sequence_length):
+    if os.environ['CUDA_VISIBLE_DEVICES'] != '-1':
+      num_gpus = len(os.environ['CUDA_VISIBLE_DEVICES'].split(','))
+    else:
+      num_gpus = 0
+      raise ValueError("Set \'CUDA_VISIBLE_DEVICES\' to define which gpus to be used.")
+    models = []
+    for i in xrange(num_gpus):
+      with tf.device('/gpu:%d' % i):
+        with tf.name_scope('model_%d' % (i)) as scope:
+          if i > 0:
+            tf.get_variable_scope().reuse_variables()
+          model_type = getattr(seq2seq_models, FLAGS.model_type)
+          m = model_type(sess, FLAGS, max_sequence_length, False, True)
+          models.append(m)
+    return models
+
+  def average_gradients(self, tower_grads):
+    average_grads = []
+    for grad_and_vars in zip(*tower_grads):
+      # Note that each grad_and_vars looks like the following:
+      #   ((grad0_gpu0, var0_gpu0), ... , (grad0_gpuN, var0_gpuN))
+      grads = []
+      for g, _ in grad_and_vars:
+        # Add 0 dimension to the gradients to represent the tower.
+        expanded_g = tf.expand_dims(g, 0)
+
+        # Append on a 'tower' dimension which we will average over below.
+        grads.append(expanded_g)
+      # Average over the 'tower' dimension.
+      grad = tf.concat(axis=0, values=grads)
+      grad = tf.reduce_mean(grad, 0)
+
+      # Keep in mind that the Variables are redundant because they are shared
+      # across towers. So .. we will just return the first tower's pointer to
+      # the Variable.
+      v = grad_and_vars[0][1]
+      grad_and_var = (grad, v)
+      average_grads.append(grad_and_var)
+    return average_grads
+
+  def step(self, raw_batch):
+    sess = self.sess
+    for m in self.models:
+      input_feed = m.get_input_feed(raw_batch)
+      print input_feed.keys()
+    exit(1)
+    #input_feed = self.get_input_feed(batch)
+    output_feed = [self.losses]
+    if self.do_update:
+      output_feed.append(self.updates)
+    outputs = sess.run(output_feed, input_feed)
+    return outputs[0]
+
+  def run_batch(self, data, batch_size, do_shuffle=False):
+    start_time = time.time()
+    loss = 0.0
+    for i, raw_batch in enumerate(data.get_batch(batch_size, do_shuffle=do_shuffle)):
+      step_loss = self.step(raw_batch)
+      loss += step_loss 
+      print i, step_loss
+    epoch_time = (time.time() - start_time)
+    step_time = epoch_time / (i+1)
+    ppx = math.exp(loss / (i+1))
+    return epoch_time, step_time, ppx
+

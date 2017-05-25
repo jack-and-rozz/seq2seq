@@ -276,9 +276,3 @@ class BasicSeq2Seq(object):
     return logits, losses, encoder_states, decoder_states
 
 
-class MultiGPUTrainWrapper(object):
-  def __init__(self, model, num_gpus):
-    for i in xrange(num_gpus):
-      pass
-      #with tf.name_scope('tower_%d' % i):
-        
