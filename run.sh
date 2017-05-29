@@ -55,8 +55,8 @@ run(){
 	mkdir $checkpoint_path/logs
     fi
     now=$(date +'%Y%m%d%H%M')
-    #python -B main.py $params > $checkpoint_path/logs/$now.log 2>$checkpoint_path/logs/$now.err
-    python -B main.py $params
+    python -B main.py $params > $checkpoint_path/logs/$now.log 2>$checkpoint_path/logs/$now.err
+    #python -B main.py $params
     #python -m cProfile -o profile.stats main.py $params
     wait
 }

@@ -30,7 +30,7 @@ tf.app.flags.DEFINE_integer("max_train_rows", 2000000, "Maximum number of rows t
 tf.app.flags.DEFINE_string("model_type", "Baseline", "")
 
 # about hyperparameters
-tf.app.flags.DEFINE_float("keep_prob", 0.75,
+tf.app.flags.DEFINE_float("keep_prob", 0.5,
                           "the keeping probability of active neurons in dropout")
 tf.app.flags.DEFINE_integer("num_samples", 512, "")
 tf.app.flags.DEFINE_integer("batch_size", 200,
@@ -209,14 +209,13 @@ def train(sess):
     summary_writer = tf.summary.FileWriter(FLAGS.checkpoint_path + SUMMARIES_PATH,
                                            sess.graph) 
 
-  #with tf.name_scope('dev'):
-  #  mvalid = create_model(sess, FLAGS.max_sequence_length, False, False, reuse=True)
+  with tf.name_scope('dev'):
+    mvalid = create_model(sess, FLAGS.max_sequence_length, False, False, reuse=True)
   for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
     logger.info("Epoch %d: Start training." % epoch)
     epoch_time, step_time, train_ppx = mtrain.run_batch(train, FLAGS.batch_size, 
                                                         do_shuffle=True)
     logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, ppx %.4f" % (epoch, epoch_time, step_time, train_ppx))
-    exit(1)
 
     epoch_time, step_time, valid_ppx = mvalid.run_batch(dev, FLAGS.batch_size)
 
@@ -238,6 +237,8 @@ def main(_):
 
   with tf.Graph().as_default(), tf.Session(config=tf_config) as sess:
     # 乱数シードの設定はgraphの生成後、opsの生成前 (http://qiita.com/yuyakato/items/9a5d80e6c7c41e9a9d22)
+    # tf v1.1でlossが同一になるのを確認(2017/5/25)
+    random.seed(0)
     np.random.seed(0)
     tf.set_random_seed(0)
     create_dir()

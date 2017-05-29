@@ -6,4 +6,6 @@ embedding_size=500
 num_layers=2
 max_epoch=50
 max_sequence_length=160
+source_lang=en
+target_lang=ja
 #cell_type=BasicRNNCell

@@ -13,18 +13,23 @@ from tensorflow.python.ops import init_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 
-#from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
-#import tensorflow.contrib.legacy_seq2seq as seq2seq
+from tensorflow.python.client import timeline
+from tensorflow.python.platform import gfile
+
+
 #from seq2seq import RNNEncoder, BidirectionalRNNEncoder, RNNDecoder, BasicSeq2Seq
 import seq2seq
 from utils import common
-from utils.dataset import PAD_ID, GO_ID, EOS_ID, UNK_ID, padding_and_format
+from utils.dataset import PAD_ID, EOS_ID, UNK_ID, padding_and_format
 dtype=tf.float32
 import models as seq2seq_models # import itself for reflection
 
 class Baseline(object):
   def __init__(self, sess, FLAGS, max_sequence_length, forward_only, do_update):
     self.sess = sess
+    self.summary_dir = FLAGS.checkpoint_path + '/summaries'
+    #self.summary_writer = tf.summary.FileWriter(self.summary_dir, sess.graph)
+
     self.max_sequence_length = max_sequence_length
     self.forward_only=forward_only
     self.do_update = do_update
@@ -162,7 +167,17 @@ class Baseline(object):
     output_feed = [self.losses]
     if self.do_update:
       output_feed.append(self.updates)
-    outputs = sess.run(output_feed, input_feed)
+    if self.global_step.eval() == 500:
+       run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+       run_metadata = tf.RunMetadata()
+       outputs = sess.run(output_feed, input_feed,
+                          options=run_options,
+                          run_metadata=run_metadata)
+       tl = timeline.Timeline(run_metadata.step_stats)
+       with tf.gfile.Open(self.summary_dir+'/timeline.json', mode='w') as trace: 
+         trace.write(tl.generate_chrome_trace_format(show_memory=True))
+    else:
+      outputs = sess.run(output_feed, input_feed)
     return outputs[0]
 
   def run_batch(self, data, batch_size, do_shuffle=False):
@@ -171,7 +186,6 @@ class Baseline(object):
     for i, raw_batch in enumerate(data.get_batch(batch_size, do_shuffle=do_shuffle)):
       step_loss = self.step(raw_batch)
       loss += step_loss 
-      print i, step_loss
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)
     ppx = math.exp(loss / (i+1))
@@ -206,18 +220,23 @@ class Baseline(object):
 class MultiGPUTrainWrapper(object):
   def __init__(self, sess, FLAGS, max_sequence_length):
     self.sess = sess
+    self.summary_dir = FLAGS.checkpoint_path + '/summaries'
+
     self.learning_rate = FLAGS.learning_rate
     self.max_gradient_norm = FLAGS.max_gradient_norm
     self.models = self.setup_models(sess, FLAGS, max_sequence_length)
+    self.num_gpus = len(self.models)
     self.global_step = self.models[0].global_step
     self.epoch = self.models[0].epoch
+    self.add_epoch = self.models[0].add_epoch
     with tf.device('/cpu:0'):
+      self.losses = tf.add_n([m.losses for m in self.models]) / self.num_gpus
       self.grad_and_vars = self.average_gradients([m.grad_and_vars for m in self.models])
 
 
-    #params = tf.trainable_variables()
     opt = tf.train.AdamOptimizer(self.learning_rate)
     self.updates = opt.apply_gradients(self.grad_and_vars, global_step=self.global_step)
+    self.saver = tf.train.Saver(tf.global_variables())
 
   def setup_models(self, sess, FLAGS, max_sequence_length):
     if os.environ['CUDA_VISIBLE_DEVICES'] != '-1':
@@ -259,27 +278,36 @@ class MultiGPUTrainWrapper(object):
       grad_and_var = (grad, v)
       average_grads.append(grad_and_var)
     return average_grads
+  def get_input_feed(self, raw_batch):
+    input_feed = {}
+    for b, m in zip(raw_batch,self.models):
+      input_feed.update(m.get_input_feed(b))
+    return input_feed
 
   def step(self, raw_batch):
     sess = self.sess
-    for m in self.models:
-      input_feed = m.get_input_feed(raw_batch)
-      print input_feed.keys()
-    exit(1)
-    #input_feed = self.get_input_feed(batch)
-    output_feed = [self.losses]
-    if self.do_update:
-      output_feed.append(self.updates)
-    outputs = sess.run(output_feed, input_feed)
+    input_feed = self.get_input_feed(raw_batch)
+    output_feed = [self.losses, self.updates]
+
+    if self.global_step.eval() == 500:
+       run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+       run_metadata = tf.RunMetadata()
+       outputs = sess.run(output_feed, input_feed,
+                          options=run_options,
+                          run_metadata=run_metadata)
+       tl = timeline.Timeline(run_metadata.step_stats)
+       with tf.gfile.Open(self.summary_dir+'/timeline.json', mode='w') as trace: 
+         trace.write(tl.generate_chrome_trace_format(show_memory=True))
+    else:
+      outputs = sess.run(output_feed, input_feed)
     return outputs[0]
 
   def run_batch(self, data, batch_size, do_shuffle=False):
     start_time = time.time()
     loss = 0.0
-    for i, raw_batch in enumerate(data.get_batch(batch_size, do_shuffle=do_shuffle)):
+    for i, raw_batch in enumerate(data.get_batch(batch_size, do_shuffle=do_shuffle,n_batches=self.num_gpus)):
       step_loss = self.step(raw_batch)
       loss += step_loss 
-      print i, step_loss
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)
     ppx = math.exp(loss / (i+1))
