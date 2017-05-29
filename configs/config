@@ -1,2 +1,11 @@
-seq2seq_type=embedding_rnn_seq2seq
-cell_type=BasicRNNCell
+cell_type=GRUCell
+max_train_rows=2000000
+batch_size=500
+hidden_size=500
+embedding_size=500
+num_layers=2
+max_epoch=50
+max_sequence_length=160
+source_lang=en
+target_lang=ja
+#cell_type=BasicRNNCell

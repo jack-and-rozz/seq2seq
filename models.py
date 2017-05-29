@@ -2,44 +2,120 @@
 from __future__ import absolute_import
 from __future__ import division
 
-import random, sys, os, math
+import random, sys, os, math, copy, time
 import numpy as np
 
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 #import tensorflow.contrib.rnn as rnn
-from tensorflow.python.ops import variable_scope as vs
+from tensorflow.python.ops import variable_scope
+from tensorflow.python.ops import init_ops
+from tensorflow.python.ops import math_ops
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 
-#from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
-#import tensorflow.contrib.legacy_seq2seq as seq2seq
-from seq2seq import RNNEncoder, RNNDecoder
+from tensorflow.python.client import timeline
+from tensorflow.python.platform import gfile
 
+
+#from seq2seq import RNNEncoder, BidirectionalRNNEncoder, RNNDecoder, BasicSeq2Seq
+import seq2seq
 from utils import common
-from utils import dataset as data_utils
+from utils.dataset import PAD_ID, EOS_ID, UNK_ID, padding_and_format
 dtype=tf.float32
+import models as seq2seq_models # import itself for reflection
 
 class Baseline(object):
-  def __init__(self, FLAGS, buckets, forward_only=False):
-    encoder = RNNEncoder()
-    decoder = RNNDecoder()
-    #self.read_flags(FLAGS)
-    #self.buckets = buckets
-    # self.cell = self.setup_cells(forward_only)
-    # with vs.variable_scope("EncoderCell"):
-    #   self.cell = self.setup_cells(forward_only)
-    # with vs.variable_scope("DecoderCell"):
-    #   self.cell2 = self.setup_cells(forward_only)
+  def __init__(self, sess, FLAGS, max_sequence_length, forward_only, do_update):
+    self.sess = sess
+    self.summary_dir = FLAGS.checkpoint_path + '/summaries'
+    #self.summary_writer = tf.summary.FileWriter(self.summary_dir, sess.graph)
 
-    # self.output_projection, self.softmax_loss_function = self.projection_and_sampled_loss()
-    # self.setup_seq2seq(forward_only)
-    #self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
-    pass
+    self.max_sequence_length = max_sequence_length
+    self.forward_only=forward_only
+    self.do_update = do_update
+    self.read_flags(FLAGS)
+    with tf.name_scope('placeholders'):
+      self.setup_placeholders(use_sequence_length=self.use_sequence_length)
+    cell = self.setup_cell(do_update)
+    with variable_scope.variable_scope("Encoder") as encoder_scope:
+      self.encoder_embedding = self.initialize_embedding(FLAGS.source_vocab_size,
+                                                         FLAGS.embedding_size)
+      encoder = getattr(seq2seq, FLAGS.encoder_type)(
+        cell, self.encoder_embedding,
+        scope=encoder_scope, 
+        sequence_length=self.sequence_length)
+
+    with variable_scope.variable_scope("Decoder") as decoder_scope:
+      self.decoder_embedding = self.initialize_embedding(FLAGS.target_vocab_size,
+                                                    FLAGS.embedding_size)
+      decoder = getattr(seq2seq, FLAGS.decoder_type)(
+        copy.deepcopy(cell), self.decoder_embedding, scope=decoder_scope)
+    self.seq2seq = getattr(seq2seq, FLAGS.seq2seq_type)(
+      encoder, decoder, FLAGS.num_samples, feed_previous=forward_only)
+
+    # The last tokens in decoder_inputs are not to set each length of placeholders to be same.
+    self.logits, self.losses, self.e_states, self.d_states = self.seq2seq(
+      self.encoder_inputs, self.decoder_inputs[:-1],
+      self.targets, self.target_weights[:-1])
+    if do_update:
+      with tf.variable_scope(tf.get_variable_scope(), reuse=False):
+        self.updates = self.setup_updates(self.losses)
+    self.saver = tf.train.Saver(tf.global_variables())
+
+  def initialize_embedding(self, vocab_size, embedding_size):
+    sqrt3 = math.sqrt(3)  # Uniform(-sqrt(3), sqrt(3)) has variance=1.
+    initializer = init_ops.random_uniform_initializer(-sqrt3, sqrt3)
+    embedding = variable_scope.get_variable(
+      "embedding", [vocab_size, embedding_size],
+      initializer=initializer)
+    return embedding
+
+  def setup_updates(self, loss):
+    params = tf.trainable_variables()
+    gradients = []
+    updates = []
+    opt = tf.train.AdamOptimizer(self.learning_rate)
+    #gradients = tf.gradients(loss, params)
+    #clipped_gradients, norm = tf.clip_by_global_norm(gradients,
+    #                                                 self.max_gradient_norm)
+    gradients = [grad for grad, _ in opt.compute_gradients(loss)]
+    clipped_gradients, _ = tf.clip_by_global_norm(gradients, 
+                                                  self.max_gradient_norm)
+    self.grad_and_vars = [(g, v) for g, v in zip(clipped_gradients, params)]
+    updates = opt.apply_gradients(self.grad_and_vars, global_step=self.global_step)
+    #updates = opt.apply_gradients(zip(clipped_gradients, params), global_step=self.global_step)
+    return updates
+
+  def setup_placeholders(self, use_sequence_length=True):
+    # Feeds for inputs.
+    self.encoder_inputs = []
+    self.decoder_inputs = []
+    self.target_weights = []
+    for i in xrange(self.max_sequence_length):
+      self.encoder_inputs.append(tf.placeholder(tf.int32, shape=[None],
+                                                name="encoder{0}".format(i)))
+    for i in xrange(self.max_sequence_length + 1):
+      self.decoder_inputs.append(tf.placeholder(tf.int32, shape=[None],
+                                                name="decoder{0}".format(i)))
+      self.target_weights.append(tf.placeholder(dtype, shape=[None],
+                                                name="weight{0}".format(i)))
+    # Our targets are decoder inputs shifted by one.
+    self.targets = [self.decoder_inputs[i + 1]
+                    for i in xrange(len(self.decoder_inputs) - 1)]
+    self.sequence_length = tf.placeholder(tf.int32, shape=[None], name="sequence_length") if use_sequence_length else None
+
+
+  def setup_cell(self, do_update):
+    cell = getattr(rnn_cell, self.cell_type)(self.hidden_size, reuse=tf.get_variable_scope().reuse) 
+    if self.keep_prob < 1.0 and do_update:
+      cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
+    if self.num_layers > 1:
+      cell = rnn_cell.MultiRNNCell([copy.deepcopy(cell) for _ in xrange(self.num_layers)])
+    return cell
+
   def read_flags(self, FLAGS):
     self.keep_prob = FLAGS.keep_prob
     self.hidden_size = FLAGS.hidden_size
-    self.learning_rate = tf.Variable(float(FLAGS.learning_rate), trainable=False, name='learning_rate')
-    self.global_step = tf.Variable(0, trainable=False, name='global_step')
     self.max_gradient_norm = FLAGS.max_gradient_norm
     self.num_samples = FLAGS.num_samples
     self.num_layers = FLAGS.num_layers
@@ -47,220 +123,193 @@ class Baseline(object):
     self.embedding_size = FLAGS.embedding_size
     self.source_vocab_size = FLAGS.source_vocab_size
     self.target_vocab_size = FLAGS.target_vocab_size
-    
     self.seq2seq_type = FLAGS.seq2seq_type
     self.cell_type = FLAGS.cell_type
+    self.use_sequence_length=FLAGS.use_sequence_length
+    self.learning_rate = variable_scope.get_variable(
+      "learning_rate", trainable=False, shape=[],
+      initializer=tf.constant_initializer(float(FLAGS.learning_rate), 
+                                          dtype=tf.float32))
+    self.global_step = variable_scope.get_variable(
+      "global_step", trainable=False, shape=[],  dtype=tf.int32,
+      initializer=tf.constant_initializer(0, dtype=tf.int32)) 
 
+    self.epoch = variable_scope.get_variable(
+      "epoch", trainable=False, shape=[], dtype=tf.int32,
+      initializer=tf.constant_initializer(0, dtype=tf.int32)) 
 
-  def projection_and_sampled_loss(self):
-    # If we use sampled softmax, we need an output projection.
-    output_projection = None
-    softmax_loss_function = None
+  def add_epoch(self):
+    sess = self.sess
+    sess.run(tf.assign(self.epoch, tf.add(self.epoch, tf.constant(1, dtype=tf.int32))))
 
-    if self.num_samples > 0 and self.num_samples < self.source_vocab_size:
-      w_t = tf.get_variable("proj_w", [self.target_vocab_size, self.hidden_size], dtype=dtype)
-      w = tf.transpose(w_t)
-      b = tf.get_variable("proj_b", [self.target_vocab_size], dtype=dtype)
-      output_projection = (w, b)
-    
-
-      def sampled_loss(labels, logits):
-        labels = tf.reshape(labels, [-1, 1])
-        # We need to compute the sampled_softmax_loss using 32bit floats to
-        # avoid numerical instabilities.
-        local_w_t = tf.cast(w_t, tf.float32)
-        local_b = tf.cast(b, tf.float32)
-        local_inputs = tf.cast(logits, tf.float32)
-        return tf.cast(
-            tf.nn.sampled_softmax_loss(
-                weights=local_w_t,
-                biases=local_b,
-                labels=labels,
-                inputs=local_inputs,
-                num_sampled=self.num_samples,
-                num_classes=self.target_vocab_size),
-            dtype)
-      softmax_loss_function = sampled_loss
-    return output_projection, softmax_loss_function
-
-  def setup_cells(self, forward_only, state_is_tuple=True, reuse=None):
-    cell = getattr(rnn_cell, self.cell_type)(self.hidden_size, reuse=tf.get_variable_scope().reuse) 
-    if self.keep_prob < 1.0 and not forward_only:
-      cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
-    if self.num_layers > 1:
-      cell = rnn_cell.MultiRNNCell([cell for _ in xrange(self.num_layers)])
-    return cell
-
-  def setup_seq2seq(self, forward_only):
-    buckets = self.buckets
-    softmax_loss_function = self.softmax_loss_function
-    output_projection = self.output_projection
-    def seq2seq_f(encoder_inputs, decoder_inputs, do_decode):
-      return getattr(seq2seq, self.seq2seq_type)(
-        encoder_inputs,
-        decoder_inputs,
-        self.cell,
-        self.cell2,
-        num_encoder_symbols=self.source_vocab_size,
-        num_decoder_symbols=self.target_vocab_size,
-        embedding_size=self.embedding_size,
-        output_projection=self.output_projection,
-        feed_previous=do_decode,
-        dtype=dtype,
-        scope='Seq2Seq'
-      )
-    # Feeds for inputs.
-    self.encoder_inputs = []
-    self.decoder_inputs = []
-    self.target_weights = []
-    for i in xrange(buckets[-1][0]):  # Last bucket is the biggest one.
-      self.encoder_inputs.append(tf.placeholder(tf.int32, shape=[None],
-                                                name="encoder{0}".format(i)))
-    for i in xrange(buckets[-1][1] + 1):
-      self.decoder_inputs.append(tf.placeholder(tf.int32, shape=[None],
-                                                name="decoder{0}".format(i)))
-      self.target_weights.append(tf.placeholder(dtype, shape=[None],
-                                                name="weight{0}".format(i)))
-
-    # Our targets are decoder inputs shifted by one.
-    targets = [self.decoder_inputs[i + 1]
-               for i in xrange(len(self.decoder_inputs) - 1)]
-
-    # Training outputs and losses.
-    if forward_only:
-      self.outputs, self.losses = seq2seq.model_with_buckets(
-          self.encoder_inputs, self.decoder_inputs, targets,
-          self.target_weights, buckets, lambda x, y: seq2seq_f(x, y, True),
-          softmax_loss_function=softmax_loss_function)
-      # If we use output projection, we need to project outputs for decoding.
-      if output_projection is not None:
-        for b in xrange(len(buckets)):
-          self.outputs[b] = [
-              tf.matmul(output, output_projection[0]) + output_projection[1]
-              for output in self.outputs[b]
-          ]
-    else:
-      self.outputs, self.losses = seq2seq.model_with_buckets(
-          self.encoder_inputs, self.decoder_inputs, targets,
-          self.target_weights, buckets,
-          lambda x, y: seq2seq_f(x, y, False),
-          softmax_loss_function=self.softmax_loss_function)
-
-    # Gradients and SGD update operation for training the model.
-    params = tf.trainable_variables()
-    if not forward_only:
-      self.gradient_norms = []
-      self.updates = []
-      opt = tf.train.AdamOptimizer(self.learning_rate)
-      for b in xrange(len(buckets)):
-        gradients = tf.gradients(self.losses[b], params)
-        clipped_gradients, norm = tf.clip_by_global_norm(gradients,
-                                                         self.max_gradient_norm)
-        self.gradient_norms.append(norm)
-        self.updates.append(opt.apply_gradients(
-            zip(clipped_gradients, params), global_step=self.global_step))
-
-  def step(self, session, encoder_inputs, decoder_inputs, target_weights,
-           bucket_id, forward_only):
-    """Run a step of the model feeding the given inputs.
-
-    Args:
-      session: tensorflow session to use.
-      encoder_inputs: list of numpy int vectors to feed as encoder inputs.
-      decoder_inputs: list of numpy int vectors to feed as decoder inputs.
-      target_weights: list of numpy float vectors to feed as target weights.
-      bucket_id: which bucket of the model to use.
-      forward_only: whether to do the backward step or only forward.
-
-    Returns:
-      A triple consisting of gradient norm (or None if we did not do backward),
-      average perplexity, and the outputs.
-
-    Raises:
-      ValueError: if length of encoder_inputs, decoder_inputs, or
-        target_weights disagrees with bucket size for the specified bucket_id.
-    """
-    # Check if the sizes match.
-    encoder_size, decoder_size = self.buckets[bucket_id]
-    if len(encoder_inputs) != encoder_size:
-      raise ValueError("Encoder length must be equal to the one in bucket,"
-                       " %d != %d." % (len(encoder_inputs), encoder_size))
-    if len(decoder_inputs) != decoder_size:
-      raise ValueError("Decoder length must be equal to the one in bucket,"
-                       " %d != %d." % (len(decoder_inputs), decoder_size))
-    if len(target_weights) != decoder_size:
-      raise ValueError("Weights length must be equal to the one in bucket,"
-                       " %d != %d." % (len(target_weights), decoder_size))
-
-    # Input feed: encoder inputs, decoder inputs, target_weights, as provided.
+  def get_input_feed(self, raw_batch):
+    batch = padding_and_format(raw_batch, self.max_sequence_length,
+                               use_sequence_length=self.use_sequence_length)
     input_feed = {}
+    batch_size = batch.encoder_inputs
+    encoder_size = decoder_size = self.max_sequence_length
     for l in xrange(encoder_size):
-      input_feed[self.encoder_inputs[l].name] = encoder_inputs[l]
+      input_feed[self.encoder_inputs[l].name] = batch.encoder_inputs[l]
     for l in xrange(decoder_size):
-      input_feed[self.decoder_inputs[l].name] = decoder_inputs[l]
-      input_feed[self.target_weights[l].name] = target_weights[l]
+      input_feed[self.decoder_inputs[l].name] = batch.decoder_inputs[l]
+      input_feed[self.target_weights[l].name] = batch.target_weights[l]
+    if self.sequence_length != None: 
+      input_feed[self.sequence_length.name] = batch.sequence_length
 
     # Since our targets are decoder inputs shifted by one, we need one more.
     last_target = self.decoder_inputs[decoder_size].name
-    input_feed[last_target] = np.zeros([self.batch_size], dtype=np.int32)
+    input_feed[last_target] = np.zeros([batch.batch_size], dtype=np.int32)
+    return input_feed 
 
-    # Output feed: depends on whether we do a backward step or not.
-    if not forward_only:
-      output_feed = [self.updates[bucket_id],  # Update Op that does SGD.
-                     self.gradient_norms[bucket_id],  # Gradient norm.
-                     self.losses[bucket_id]]  # Loss for this batch.
+  def step(self, raw_batch):
+    sess = self.sess
+    input_feed = self.get_input_feed(raw_batch)
+    output_feed = [self.losses]
+    if self.do_update:
+      output_feed.append(self.updates)
+    if self.global_step.eval() == 500:
+       run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+       run_metadata = tf.RunMetadata()
+       outputs = sess.run(output_feed, input_feed,
+                          options=run_options,
+                          run_metadata=run_metadata)
+       tl = timeline.Timeline(run_metadata.step_stats)
+       with tf.gfile.Open(self.summary_dir+'/timeline.json', mode='w') as trace: 
+         trace.write(tl.generate_chrome_trace_format(show_memory=True))
     else:
-      output_feed = [self.losses[bucket_id]]  # Loss for this batch.
-      for l in xrange(decoder_size):  # Output logits.
-        output_feed.append(self.outputs[bucket_id][l])
+      outputs = sess.run(output_feed, input_feed)
+    return outputs[0]
 
-    outputs = session.run(output_feed, input_feed)
-    if not forward_only:
-      return outputs[1], outputs[2], None  # Gradient norm, loss, no outputs.
+  def run_batch(self, data, batch_size, do_shuffle=False):
+    start_time = time.time()
+    loss = 0.0
+    for i, raw_batch in enumerate(data.get_batch(batch_size, do_shuffle=do_shuffle)):
+      step_loss = self.step(raw_batch)
+      loss += step_loss 
+    epoch_time = (time.time() - start_time)
+    step_time = epoch_time / (i+1)
+    ppx = math.exp(loss / (i+1))
+    return epoch_time, step_time, ppx
+
+  def decode(self, raw_batch):
+    sess = self.sess
+    batch = padding_and_format(raw_batch, self.max_sequence_length,
+                               use_sequence_length=self.use_sequence_length)
+    input_feed = self.get_input_feed(batch)
+    output_feed = [self.losses, self.e_states, self.d_states]
+    for l in xrange(self.max_sequence_length):
+      output_feed.append(self.logits[l])
+    outputs = sess.run(output_feed, input_feed)
+    losses = outputs[0]
+    e_states = outputs[1]
+    d_states = outputs[2]
+    logits = outputs[3:]
+    def greedy_argmax(logit):
+      ex_list = []
+      output_ids = []
+      for l in logit:
+        _argsorted = np.argsort(-l)
+        _id = _argsorted[0] if not _argsorted[0] in ex_list else _argsorted[1]
+        output_ids.append(_id)
+      return output_ids
+    results = [greedy_argmax(logit) for logit in logits]
+    results = list(map(list, zip(*results))) # transpose to batch-major
+    return losses, results
+
+
+class MultiGPUTrainWrapper(object):
+  def __init__(self, sess, FLAGS, max_sequence_length):
+    self.sess = sess
+    self.summary_dir = FLAGS.checkpoint_path + '/summaries'
+
+    self.learning_rate = FLAGS.learning_rate
+    self.max_gradient_norm = FLAGS.max_gradient_norm
+    self.models = self.setup_models(sess, FLAGS, max_sequence_length)
+    self.num_gpus = len(self.models)
+    self.global_step = self.models[0].global_step
+    self.epoch = self.models[0].epoch
+    self.add_epoch = self.models[0].add_epoch
+    with tf.device('/cpu:0'):
+      self.losses = tf.add_n([m.losses for m in self.models]) / self.num_gpus
+      self.grad_and_vars = self.average_gradients([m.grad_and_vars for m in self.models])
+
+
+    opt = tf.train.AdamOptimizer(self.learning_rate)
+    self.updates = opt.apply_gradients(self.grad_and_vars, global_step=self.global_step)
+    self.saver = tf.train.Saver(tf.global_variables())
+
+  def setup_models(self, sess, FLAGS, max_sequence_length):
+    if os.environ['CUDA_VISIBLE_DEVICES'] != '-1':
+      num_gpus = len(os.environ['CUDA_VISIBLE_DEVICES'].split(','))
     else:
-      return None, outputs[0], outputs[1:]  # No gradient norm, loss, outputs.
+      num_gpus = 0
+      raise ValueError("Set \'CUDA_VISIBLE_DEVICES\' to define which gpus to be used.")
+    models = []
+    for i in xrange(num_gpus):
+      with tf.device('/gpu:%d' % i):
+        with tf.name_scope('model_%d' % (i)) as scope:
+          if i > 0:
+            tf.get_variable_scope().reuse_variables()
+          model_type = getattr(seq2seq_models, FLAGS.model_type)
+          m = model_type(sess, FLAGS, max_sequence_length, False, True)
+          models.append(m)
+    return models
 
-  def get_batch(self, data, bucket_id):
-    encoder_size, decoder_size = self.buckets[bucket_id]
-    encoder_inputs, decoder_inputs = [], []
+  def average_gradients(self, tower_grads):
+    average_grads = []
+    for grad_and_vars in zip(*tower_grads):
+      # Note that each grad_and_vars looks like the following:
+      #   ((grad0_gpu0, var0_gpu0), ... , (grad0_gpuN, var0_gpuN))
+      grads = []
+      for g, _ in grad_and_vars:
+        # Add 0 dimension to the gradients to represent the tower.
+        expanded_g = tf.expand_dims(g, 0)
 
-    # Get a random batch of encoder and decoder inputs from data,
-    # pad them if needed, reverse encoder inputs and add GO to decoder.
-    for _ in xrange(self.batch_size):
-      encoder_input, decoder_input = random.choice(data[bucket_id])
+        # Append on a 'tower' dimension which we will average over below.
+        grads.append(expanded_g)
+      # Average over the 'tower' dimension.
+      grad = tf.concat(axis=0, values=grads)
+      grad = tf.reduce_mean(grad, 0)
 
-      # Encoder inputs are padded and then reversed.
-      encoder_pad = [data_utils.PAD_ID] * (encoder_size - len(encoder_input))
-      encoder_inputs.append(list(reversed(encoder_input + encoder_pad)))
+      # Keep in mind that the Variables are redundant because they are shared
+      # across towers. So .. we will just return the first tower's pointer to
+      # the Variable.
+      v = grad_and_vars[0][1]
+      grad_and_var = (grad, v)
+      average_grads.append(grad_and_var)
+    return average_grads
+  def get_input_feed(self, raw_batch):
+    input_feed = {}
+    for b, m in zip(raw_batch,self.models):
+      input_feed.update(m.get_input_feed(b))
+    return input_feed
 
-      # Decoder inputs get an extra "GO" symbol, and are padded then.
-      decoder_pad_size = decoder_size - len(decoder_input) - 1
-      decoder_inputs.append([data_utils.GO_ID] + decoder_input +
-                            [data_utils.PAD_ID] * decoder_pad_size)
+  def step(self, raw_batch):
+    sess = self.sess
+    input_feed = self.get_input_feed(raw_batch)
+    output_feed = [self.losses, self.updates]
 
-    # Now we create batch-major vectors from the data selected above.
-    batch_encoder_inputs, batch_decoder_inputs, batch_weights = [], [], []
+    if self.global_step.eval() == 500:
+       run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+       run_metadata = tf.RunMetadata()
+       outputs = sess.run(output_feed, input_feed,
+                          options=run_options,
+                          run_metadata=run_metadata)
+       tl = timeline.Timeline(run_metadata.step_stats)
+       with tf.gfile.Open(self.summary_dir+'/timeline.json', mode='w') as trace: 
+         trace.write(tl.generate_chrome_trace_format(show_memory=True))
+    else:
+      outputs = sess.run(output_feed, input_feed)
+    return outputs[0]
 
-    # Batch encoder inputs are just re-indexed encoder_inputs.
-    for length_idx in xrange(encoder_size):
-      batch_encoder_inputs.append(
-          np.array([encoder_inputs[batch_idx][length_idx]
-                    for batch_idx in xrange(self.batch_size)], dtype=np.int32))
+  def run_batch(self, data, batch_size, do_shuffle=False):
+    start_time = time.time()
+    loss = 0.0
+    for i, raw_batch in enumerate(data.get_batch(batch_size, do_shuffle=do_shuffle,n_batches=self.num_gpus)):
+      step_loss = self.step(raw_batch)
+      loss += step_loss 
+    epoch_time = (time.time() - start_time)
+    step_time = epoch_time / (i+1)
+    ppx = math.exp(loss / (i+1))
+    return epoch_time, step_time, ppx
 
-    # Batch decoder inputs are re-indexed decoder_inputs, we create weights.
-    for length_idx in xrange(decoder_size):
-      batch_decoder_inputs.append(
-          np.array([decoder_inputs[batch_idx][length_idx]
-                    for batch_idx in xrange(self.batch_size)], dtype=np.int32))
-
-      # Create target_weights to be 0 for targets that are padding.
-      batch_weight = np.ones(self.batch_size, dtype=np.float32)
-      for batch_idx in xrange(self.batch_size):
-        # We set weight to 0 if the corresponding target is a PAD symbol.
-        # The corresponding target is decoder_input shifted by 1 forward.
-        if length_idx < decoder_size - 1:
-          target = decoder_inputs[batch_idx][length_idx + 1]
-        if length_idx == decoder_size - 1 or target == data_utils.PAD_ID:
-          batch_weight[batch_idx] = 0.0
-      batch_weights.append(batch_weight)
-    return batch_encoder_inputs, batch_decoder_inputs, batch_weights
