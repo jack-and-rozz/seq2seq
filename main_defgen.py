@@ -38,8 +38,8 @@ tf.app.flags.DEFINE_integer("batch_size", 200,
                             "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("hidden_size", 200, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("embedding_size", 200, "Size of each token embedding.")
-# tf.app.flags.DEFINE_integer("source_vocab_size", 1458580, "Vocabulary size.")
-tf.app.flags.DEFINE_integer("source_vocab_size", 142017, "Vocabulary size.")
+# tf.app.flags.DEFINE_integer("source_vocab_size", 1458584, "Vocabulary size.")
+tf.app.flags.DEFINE_integer("source_vocab_size", 142021, "Vocabulary size.")
 tf.app.flags.DEFINE_integer("target_vocab_size", 30000, "Vocabulary size.")
 tf.app.flags.DEFINE_integer("max_to_keep", 5, "Number of checkpoints to be kept")
 tf.app.flags.DEFINE_integer("max_epoch", 50, "")
@@ -49,6 +49,7 @@ tf.app.flags.DEFINE_float("learning_rate", 1e-4, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
                           "Clip gradients to this norm.")
 
+
 # for RNN LM
 tf.app.flags.DEFINE_string("cell_type", "GRUCell", "Cell type")
 tf.app.flags.DEFINE_string("seq2seq_type", "BasicSeq2Seq", "Cell type")
@@ -57,6 +58,8 @@ tf.app.flags.DEFINE_string("decoder_type", "RNNDecoder", "")
 tf.app.flags.DEFINE_boolean("use_sequence_length", True,
                             "If True, PAD_ID tokens are not input to RNN. (This option shouldn't be used when reversing encoder's inputs.)")
 tf.app.flags.DEFINE_integer("num_layers", 1, "Number of layers in the model.")
+tf.app.flags.DEFINE_boolean("trainable_source_embedding", False, "")
+tf.app.flags.DEFINE_boolean("trainable_target_embedding", True, "")
 
 ## temporal flags (not saved in config)
 tf.app.flags.DEFINE_string("mode", "train", "")
@@ -97,13 +100,13 @@ def save_config():
 
 
 @common.timewatch(logger)
-def create_model(sess, max_sequence_length, forward_only, do_update, reuse=None):
+def create_model(sess, max_sequence_length, forward_only, do_update, reuse=None, s_vocab=None, t_vocab=None):
     with tf.variable_scope("Model", reuse=reuse):
         if do_update and len(os.environ['CUDA_VISIBLE_DEVICES'].split(',')) > 1:
             m = models.MultiGPUTrainWrapper(sess, FLAGS, max_sequence_length)
         else:
             model_type = getattr(models, FLAGS.model_type)
-            m = model_type(sess, FLAGS, max_sequence_length, forward_only, do_update)
+            m = model_type(sess, FLAGS, max_sequence_length, forward_only, do_update, s_vocab=s_vocab, t_vocab=t_vocab)
     ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_path + '/checkpoints')
     saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
 
@@ -196,7 +199,7 @@ def decode_test(sess):
 def train(sess):
     # data_path = os.path.join(FLAGS.source_data_dir, FLAGS.vocab_data)
     # vocab_path = os.path.join(FLAGS.processed_data_dir, FLAGS.vocab_data)
-    s_vocab = VecVocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.w2v, FLAGS.source_lang,
+    s_vocab = VecVocabulary(FLAGS.source_data_dir, FLAGS.w2v, FLAGS.source_lang,
                             FLAGS.source_vocab_size)
     t_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.train_data, FLAGS.target_lang,
                          FLAGS.target_vocab_size)
