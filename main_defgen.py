@@ -122,17 +122,20 @@ def create_model(sess, max_sequence_length, forward_only, do_update, reuse=None)
 
 
 def decode_interact(sess):
-    s_vocab = VecVocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.vocab_data,
-                         FLAGS.source_lang, FLAGS.source_vocab_size)
-    t_vocab = DefVocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.vocab_data,
-                         FLAGS.target_lang, FLAGS.target_vocab_size)
-    mtest = create_model(sess, FLAGS.max_sequence_length, True, False)
+    s_vocab = VecVocabulary(FLAGS.source_data_dir, FLAGS.w2v, FLAGS.source_lang,
+                            FLAGS.source_vocab_size)
+    t_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.train_data, FLAGS.target_lang,
+                         FLAGS.target_vocab_size)
+    mtest = create_model(sess, FLAGS.max_sequence_length, True, False, s_vocab=s_vocab)
     while True:
         sys.stdout.write("> ", )
         source = sys.stdin.readline()
         source = source.split()
         raw_batch = [(None, s_vocab.to_ids(source), [])]
-        _, outputs = mtest.decode(sess, raw_batch)
+        print('debug sess:', sess)
+        print('debug s_vocab.to_ids(source):', s_vocab.to_ids(source))
+
+        _, outputs = mtest.decode(raw_batch)
         output = outputs[0]
         if EOS_ID in output:
             output = output[:output.index(EOS_ID)]
