@@ -229,3 +229,38 @@ class ASPECDataset(object):
       # Yield 'n_batches' batches which have 'batch_size' lines
       yield batch if n_batches > 1 else batch[0]
 
+
+class VecVocabulary(Vocabulary):
+  def __init__(self, source_dir, target_dir, source_file, lang, vocab_size):
+    source_path = os.path.join(source_dir, source_file)
+    target_path = os.path.join(target_dir, source_file) + '.Wvocab%d' % (vocab_size)
+    self.tokenizer = space_tokenizer
+    self.normalize_digits = False
+    self.create_vocabulary(source_path, target_path, vocab_size)
+    self.vocab, self.rev_vocab = self.load_vocabulary(target_path)
+    self.lang = lang
+    self.size = vocab_size
+
+  def create_vocabulary(self, data_path, vocabulary_path,
+                        max_vocabulary_size):
+    vocab = collections.defaultdict(int)
+    counter = 0
+    if not gfile.Exists(vocabulary_path):
+      print("Creating vocabulary \"%s\" " % (vocabulary_path))
+      for line in gfile.GFile(data_path, mode="r"):
+        w = line.split(' ', 1)[0]
+        counter += 1
+        if counter % 100000 == 0:
+          print("  processing line %d" % counter)
+        vocab[w] += 1
+      vocab_list = _START_VOCAB + sorted(vocab, key=vocab.get, reverse=True)
+      for w in _START_VOCAB:
+        vocab[w] = 0
+      n_unknown = sum([vocab[w] for w in vocab_list[max_vocabulary_size:]])
+      if len(vocab_list) > max_vocabulary_size:
+        vocab_list = vocab_list[:max_vocabulary_size]
+      vocab[_UNK] = n_unknown
+      vocab[_EOS] = counter
+      with gfile.GFile(vocabulary_path, mode="w") as source_file:
+        for w in vocab_list:
+          source_file.write("%s\t%d\n" % (w, vocab[w]))
