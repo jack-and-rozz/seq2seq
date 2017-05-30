@@ -193,8 +193,6 @@ class Baseline(object):
 
   def decode(self, raw_batch):
     sess = self.sess
-    batch = padding_and_format(raw_batch, self.max_sequence_length,
-                               use_sequence_length=self.use_sequence_length)
     input_feed = self.get_input_feed(batch)
     output_feed = [self.losses, self.e_states, self.d_states]
     for l in xrange(self.max_sequence_length):
