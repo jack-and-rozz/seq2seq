@@ -41,14 +41,17 @@ def _extract_beam_search(embedding, beam_size,
     A loop function.
   """
   num_symbols, embedding_size = embedding.get_shape().as_list()
-  def loop_function(prev, i, log_beam_probs, beam_path, beam_symbols):
+  def loop_function(prev, i, log_beam_probs, beam_path, beam_symbols,
+                    path_lengthes, found_EOS):
     if output_projection is not None:
       prev = nn_ops.xw_plus_b(
           prev, output_projection[0], output_projection[1])
     probs  = tf.log(tf.nn.softmax(prev))
     if i > 1:
+      
       probs = tf.reshape(probs + log_beam_probs[-1],
                          [-1, beam_size * num_symbols])
+
 
     best_probs, indices = tf.nn.top_k(probs, beam_size)
     indices = tf.stop_gradient(tf.squeeze(tf.reshape(indices, [-1, 1])))
@@ -104,7 +107,6 @@ def beam_rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None,
 
   with variable_scope.variable_scope(scope or "rnn_decoder"):
     state = initial_state
-    outputs = []
     prev = None
     log_beam_probs, beam_path, beam_symbols = [],[],[]
     state_size = int(initial_state.get_shape().with_rank(2)[1])
@@ -112,23 +114,25 @@ def beam_rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None,
     for i, inp in enumerate(decoder_inputs):
       if loop_function is not None and prev is not None:
         with variable_scope.variable_scope("loop_function", reuse=True):
-          inp = loop_function(prev, i, log_beam_probs, beam_path, beam_symbols)
+          inp = loop_function(prev, i, log_beam_probs, beam_path, beam_symbols,
+                              path_lengthes, found_EOS)
       if i > 0:
         variable_scope.get_variable_scope().reuse_variables()
-
-      input_size = inp.get_shape().with_rank(2)[1]
+      _, input_size = inp.get_shape().as_list()
       output, state = cell(inp, state)
-      
+
       if loop_function is not None:
         prev = output
       if i ==0:
-        states =[]
-        for kk in xrange(beam_size):
-          states.append(state)
+        states = [state for _ in xrange(beam_size)]
         state = tf.reshape(tf.concat(states, 0), [-1, state_size])
-      outputs.append(tf.argmax(nn_ops.xw_plus_b(
-          output, output_projection[0], output_projection[1]), dimension=1))
-  return outputs, state, tf.reshape(tf.concat(beam_path, 0),[-1,beam_size]), tf.reshape(tf.concat(beam_symbols, 0),[-1,beam_size])
+        # for length penalty
+        path_lengthes = [0 for _ in xrange(beam_size)]
+        found_EOS = tf.constant([[False] for _ in xrange(beam_size)])
+
+    beam_path = tf.reshape(tf.concat(beam_path, 0), [-1, beam_size])
+    beam_symbols = tf.reshape(tf.concat(beam_symbols, 0),[-1,beam_size])
+  return beam_path, beam_symbols, state
 
 
 def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell,
@@ -262,7 +266,7 @@ def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell
       if loop_function is not None :
         with variable_scope.variable_scope("loop_function", reuse=True):
             if prev is not None:
-                inp = loop_function(prev, i,log_beam_probs, beam_path, beam_symbols)
+                inp = loop_function(prev, i, log_beam_probs, beam_path, beam_symbols)
 
       input_size = inp.get_shape().with_rank(2)[1]
       x = linear([inp] + attns, input_size, True)
@@ -288,15 +292,14 @@ def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell
           with variable_scope.variable_scope(variable_scope.get_variable_scope(), reuse=True):
                 attns = attention(state)
 
-      outputs.append(tf.argmax(nn_ops.xw_plus_b(
-          output, output_projection[0], output_projection[1]), dimension=1))
 
-  return outputs, state, tf.reshape(tf.concat(beam_path, 0),[-1,beam_size]), tf.reshape(tf.concat(beam_symbols, 0), [-1, beam_size])
+    beam_path = tf.reshape(tf.concat(beam_path, 0), [-1, beam_size])
+    beam_symbols = tf.reshape(tf.concat(beam_symbols, 0),[-1,beam_size])
+  return  beam_path, beam_symbols, state
 
 
 
-def follow_path(output_logits, path, symbol, beam_size):
-  k = output_logits[0]
+def follow_path(path, symbol, beam_size):
   paths = []
   for kk in range(beam_size):
     paths.append([])

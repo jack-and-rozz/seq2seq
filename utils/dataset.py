@@ -60,7 +60,7 @@ def padding_and_format(data, max_sequence_length, use_sequence_length=True):
   for _, encoder_input, decoder_input in data:
     encoder_sequence_length.append(len(encoder_input))
     # Encoder inputs are padded and then reversed if do_reverse=True.
-    encoder_pad = [PAD_ID] * (encoder_size - len(encoder_input))
+    encoder_pad = [PAD_ID for _ in xrange((encoder_size - len(encoder_input)))] 
     encoder_input = encoder_input + encoder_pad
     if do_reverse:
       encoder_input = list(reversed(encoder_input))

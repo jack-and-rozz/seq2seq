@@ -135,11 +135,9 @@ class BasicSeq2Seq(object):
       self.decoder.embedding, inp) for inp in decoder_inputs]
 
     if self.do_beam_decode:
-      outputs, decoder_states, beam_paths, beam_symbols = self.seq2seq(encoder_inputs, 
-                                                                       decoder_inputs)
-#      res = self.seq2seq(encoder_inputs, 
-#                         decoder_inputs)
-      return outputs, beam_paths, beam_symbols
+      beam_paths, beam_symbols, decoder_states = self.seq2seq(encoder_inputs, 
+                                                              decoder_inputs)
+      return beam_paths, beam_symbols, decoder_states
     else:
       outputs, decoder_states = self.seq2seq(encoder_inputs, 
                                              decoder_inputs)

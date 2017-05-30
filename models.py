@@ -59,7 +59,7 @@ class Baseline(object):
       self.encoder_inputs, self.decoder_inputs[:-1],
       self.targets, self.target_weights[:-1])
     if self.forward_only and FLAGS.beam_size > 1:
-      self.logits, self.beam_paths, self.beam_symbols = res
+      self.beam_paths, self.beam_symbols, self.d_states = res
     else:
       self.logits, self.losses, self.d_states = res
 
@@ -203,10 +203,10 @@ class Baseline(object):
     sess = self.sess
     input_feed = self.get_input_feed(raw_batch)
     if self.beam_size > 1:
-      output_feed = [self.logits, self.beam_paths, self.beam_symbols]
-      logits, beam_paths, beam_symbols = sess.run(output_feed, input_feed)
+      output_feed = [self.beam_paths, self.beam_symbols]
+      beam_paths, beam_symbols = sess.run(output_feed, input_feed)
       
-      results = follow_path(logits, beam_paths, beam_symbols, self.beam_size)
+      results = follow_path(beam_paths, beam_symbols, self.beam_size)
       losses = None
       results = [results]
     else:
