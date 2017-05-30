@@ -41,14 +41,24 @@ def _extract_beam_search(embedding, beam_size,
     A loop function.
   """
   num_symbols, embedding_size = embedding.get_shape().as_list()
+  def is_EOS(_id):
+    return True if _id == EOS_ID else False
+
   def loop_function(prev, i, log_beam_probs, beam_path, beam_symbols,
-                    path_lengthes, found_EOS):
+                    path_lengthes, is_finished_beam):
     if output_projection is not None:
       prev = nn_ops.xw_plus_b(
           prev, output_projection[0], output_projection[1])
     probs  = tf.log(tf.nn.softmax(prev))
+    # EOSに当たった所は確率 & 長さを更新しない
+    found_EOS = tf.constant([is_EOS(_id) for _id in xrange(num_symbols)])
+    print path_lengthes
+    print is_finished_beam
+    print found_EOS
+    print tf.logical_or(is_finished_beam, found_EOS)
+    print probs
+    exit(1)
     if i > 1:
-      
       probs = tf.reshape(probs + log_beam_probs[-1],
                          [-1, beam_size * num_symbols])
 
@@ -59,7 +69,6 @@ def _extract_beam_search(embedding, beam_size,
 
     symbols = indices % num_symbols # Which word in vocabulary.
     beam_parent = indices // num_symbols # Which hypothesis it came from.
-
 
     beam_symbols.append(symbols)
     beam_path.append(beam_parent)
@@ -115,7 +124,7 @@ def beam_rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None,
       if loop_function is not None and prev is not None:
         with variable_scope.variable_scope("loop_function", reuse=True):
           inp = loop_function(prev, i, log_beam_probs, beam_path, beam_symbols,
-                              path_lengthes, found_EOS)
+                              path_lengthes, is_finished_beam)
       if i > 0:
         variable_scope.get_variable_scope().reuse_variables()
       _, input_size = inp.get_shape().as_list()
@@ -127,8 +136,8 @@ def beam_rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None,
         states = [state for _ in xrange(beam_size)]
         state = tf.reshape(tf.concat(states, 0), [-1, state_size])
         # for length penalty
-        path_lengthes = [0 for _ in xrange(beam_size)]
-        found_EOS = tf.constant([[False] for _ in xrange(beam_size)])
+        path_lengthes = tf.constant([[0] for _ in xrange(beam_size)])
+        is_finished_beam = tf.constant([[False] for _ in xrange(beam_size)])
 
     beam_path = tf.reshape(tf.concat(beam_path, 0), [-1, beam_size])
     beam_symbols = tf.reshape(tf.concat(beam_symbols, 0),[-1,beam_size])
