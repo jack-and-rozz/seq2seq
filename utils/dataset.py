@@ -210,11 +210,11 @@ class ASPECDataset(object):
     return data
 
   def stat(self):
-    print "Corpus Statistics"
+    print ("Corpus Statistics")
     lens = [len(d[1]) for d in self.data]
     lent = [len(d[2]) for d in self.data]
-    print 'len-Source: (min, max, ave) = (%d, %d, %.2f)' % (min(lens), max(lens), sum(lens)/len(lens))
-    print 'len-Target: (min, max, ave) = (%d, %d, %.2f)' % (min(lent), max(lent), sum(lent)/len(lent))
+    print ('len-Source: (min, max, ave) = (%d, %d, %.2f)' % (min(lens), max(lens), sum(lens)/len(lens)))
+    print ('len-Target: (min, max, ave) = (%d, %d, %.2f)' % (min(lent), max(lent), sum(lent)/len(lent)))
 
 
   def get_batch(self, batch_size, do_shuffle=False, n_batches=1):

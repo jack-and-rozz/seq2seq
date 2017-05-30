@@ -4,7 +4,9 @@ tmp
 tensorflow
 *.pyc
 .#*
+*/.#*
 .fuse*
+*/.fuse*
 .nfs*
 configs/*
 nohup.out

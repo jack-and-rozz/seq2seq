@@ -18,11 +18,12 @@ from tensorflow.python.platform import gfile
 
 
 #from seq2seq import RNNEncoder, BidirectionalRNNEncoder, RNNDecoder, BasicSeq2Seq
-import seq2seq
+import seq2seq, encoders, decoders
 from utils import common
 from utils.dataset import PAD_ID, EOS_ID, UNK_ID, padding_and_format
 dtype=tf.float32
 import models as seq2seq_models # import itself for reflection
+from beam_search import follow_path
 
 class Baseline(object):
   def __init__(self, sess, FLAGS, max_sequence_length, forward_only, do_update):
@@ -40,7 +41,7 @@ class Baseline(object):
     with variable_scope.variable_scope("Encoder") as encoder_scope:
       self.encoder_embedding = self.initialize_embedding(FLAGS.source_vocab_size,
                                                          FLAGS.embedding_size)
-      encoder = getattr(seq2seq, FLAGS.encoder_type)(
+      encoder = getattr(encoders, FLAGS.encoder_type)(
         cell, self.encoder_embedding,
         scope=encoder_scope, 
         sequence_length=self.sequence_length)
@@ -48,15 +49,20 @@ class Baseline(object):
     with variable_scope.variable_scope("Decoder") as decoder_scope:
       self.decoder_embedding = self.initialize_embedding(FLAGS.target_vocab_size,
                                                     FLAGS.embedding_size)
-      decoder = getattr(seq2seq, FLAGS.decoder_type)(
+      decoder = getattr(decoders, FLAGS.decoder_type)(
         copy.deepcopy(cell), self.decoder_embedding, scope=decoder_scope)
     self.seq2seq = getattr(seq2seq, FLAGS.seq2seq_type)(
-      encoder, decoder, FLAGS.num_samples, feed_previous=forward_only)
+      encoder, decoder, FLAGS.num_samples, feed_previous=forward_only, beam_size=FLAGS.beam_size)
 
     # The last tokens in decoder_inputs are not to set each length of placeholders to be same.
-    self.logits, self.losses, self.e_states, self.d_states = self.seq2seq(
+    res = self.seq2seq(
       self.encoder_inputs, self.decoder_inputs[:-1],
       self.targets, self.target_weights[:-1])
+    if self.forward_only and FLAGS.beam_size > 1:
+      self.logits, self.beam_paths, self.beam_symbols = res
+    else:
+      self.logits, self.losses, self.d_states = res
+
     if do_update:
       with tf.variable_scope(tf.get_variable_scope(), reuse=False):
         self.updates = self.setup_updates(self.losses)
@@ -110,7 +116,8 @@ class Baseline(object):
     if self.keep_prob < 1.0 and do_update:
       cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
     if self.num_layers > 1:
-      cell = rnn_cell.MultiRNNCell([copy.deepcopy(cell) for _ in xrange(self.num_layers)])
+      cell = rnn_cell.MultiRNNCell([copy.deepcopy(cell) for _ in xrange(self.num_layers)],
+                                   state_is_tuple=False)
     return cell
 
   def read_flags(self, FLAGS):
@@ -126,6 +133,7 @@ class Baseline(object):
     self.seq2seq_type = FLAGS.seq2seq_type
     self.cell_type = FLAGS.cell_type
     self.use_sequence_length=FLAGS.use_sequence_length
+    self.beam_size = FLAGS.beam_size
     self.learning_rate = variable_scope.get_variable(
       "learning_rate", trainable=False, shape=[],
       initializer=tf.constant_initializer(float(FLAGS.learning_rate), 
@@ -193,27 +201,32 @@ class Baseline(object):
 
   def decode(self, raw_batch):
     sess = self.sess
-    batch = padding_and_format(raw_batch, self.max_sequence_length,
-                               use_sequence_length=self.use_sequence_length)
-    input_feed = self.get_input_feed(batch)
-    output_feed = [self.losses, self.e_states, self.d_states]
-    for l in xrange(self.max_sequence_length):
-      output_feed.append(self.logits[l])
-    outputs = sess.run(output_feed, input_feed)
-    losses = outputs[0]
-    e_states = outputs[1]
-    d_states = outputs[2]
-    logits = outputs[3:]
-    def greedy_argmax(logit):
-      ex_list = []
-      output_ids = []
-      for l in logit:
-        _argsorted = np.argsort(-l)
-        _id = _argsorted[0] if not _argsorted[0] in ex_list else _argsorted[1]
-        output_ids.append(_id)
-      return output_ids
-    results = [greedy_argmax(logit) for logit in logits]
-    results = list(map(list, zip(*results))) # transpose to batch-major
+    input_feed = self.get_input_feed(raw_batch)
+    if self.beam_size > 1:
+      output_feed = [self.logits, self.beam_paths, self.beam_symbols]
+      logits, beam_paths, beam_symbols = sess.run(output_feed, input_feed)
+      
+      results = follow_path(logits, beam_paths, beam_symbols, self.beam_size)
+      losses = None
+      results = [results]
+    else:
+      output_feed = [self.losses, self.d_states]
+      for l in xrange(self.max_sequence_length):
+        output_feed.append(self.logits[l])
+      outputs = sess.run(output_feed, input_feed)
+      losses = outputs[0]
+      d_states = outputs[1]
+      logits = outputs[2:]
+      def greedy_argmax(logit):
+        ex_list = []
+        output_ids = []
+        for l in logit:
+          _argsorted = np.argsort(-l)
+          _id = _argsorted[0] if not _argsorted[0] in ex_list else _argsorted[1]
+          output_ids.append(_id)
+        return output_ids
+      results = [greedy_argmax(logit) for logit in logits]
+      results = list(map(list, zip(*results))) # transpose to batch-major
     return losses, results
 
 

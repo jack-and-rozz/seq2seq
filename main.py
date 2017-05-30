@@ -59,11 +59,11 @@ tf.app.flags.DEFINE_integer("num_layers", 1, "Number of layers in the model.")
 tf.app.flags.DEFINE_string("mode", "train", "")
 tf.app.flags.DEFINE_string("log_file", "train.log", "")
 tf.app.flags.DEFINE_string('checkpoint_path', 'models/local/tmp', 'Directory to put the training data.')
-tf.app.flags.DEFINE_integer("num_gpus", 1, "")
+tf.app.flags.DEFINE_integer("beam_size", 1, "")
 
 
 FLAGS = tf.app.flags.FLAGS
-TMP_FLAGS = ['mode', 'log_file', 'checkpoint_path', 'num_gpus']
+TMP_FLAGS = ['mode', 'log_file', 'checkpoint_path', 'beam_size']
 log_file = FLAGS.log_file if FLAGS.log_file else None
 logger = common.logManager(handler=FileHandler(log_file)) if log_file else common.logManager()
 
@@ -178,7 +178,12 @@ def decode_test(sess):
       f.write("\n".join(targets) + "\n")
 
   # write decoding results.
-  decode_path = FLAGS.checkpoint_path + TESTS_PATH + '/%s.%s.decode.ep%d' % (FLAGS.test_data, FLAGS.target_lang, mtest.epoch.eval())
+  if FLAGS.beam_size == 1:
+    result_path = '/%s.%s.decode.ep%d' % (FLAGS.test_data, FLAGS.target_lang, mtest.epoch.eval())
+  else:
+    result_path = '/%s.%s.decode.beam%d.ep%d' % (FLAGS.test_data, FLAGS.target_lang, 
+                                                 FLAGS.beam_size, mtest.epoch.eval())
+  decode_path = FLAGS.checkpoint_path + TESTS_PATH + result_path
   with open(decode_path, 'w') as f:
     f.write("\n".join(results) + "\n")
 
