@@ -8,6 +8,6 @@ tensorflow
 .fuse*
 */.fuse*
 .nfs*
-configs/*
+configs/config
 nohup.out
 tmp*

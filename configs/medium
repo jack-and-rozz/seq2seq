@@ -1,0 +1,9 @@
+encoder_type=RNNEncoder
+cell_type=GRUCell
+max_train_rows=1000000
+batch_size=800
+hidden_size=200
+embedding_size=200
+num_layers=1
+max_epoch=100
+max_sequence_length=160
