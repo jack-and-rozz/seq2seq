@@ -25,7 +25,7 @@ dtype=tf.float32
 import models as seq2seq_models # import itself for reflection
 
 class Baseline(object):
-  def __init__(self, sess, FLAGS, max_sequence_length, forward_only, do_update):
+  def __init__(self, sess, FLAGS, max_sequence_length, forward_only, do_update, s_vocab=None, t_vocab=None):
     self.sess = sess
     self.summary_dir = FLAGS.checkpoint_path + '/summaries'
     #self.summary_writer = tf.summary.FileWriter(self.summary_dir, sess.graph)
@@ -39,7 +39,9 @@ class Baseline(object):
     cell = self.setup_cell(do_update)
     with variable_scope.variable_scope("Encoder") as encoder_scope:
       self.encoder_embedding = self.initialize_embedding(FLAGS.source_vocab_size,
-                                                         FLAGS.embedding_size)
+                                                         # FLAGS.embedding_size, s_vocab,
+                                                         FLAGS.embedding_size,
+                                                         trainable=FLAGS.trainable_source_embedding)
       encoder = getattr(seq2seq, FLAGS.encoder_type)(
         cell, self.encoder_embedding,
         scope=encoder_scope, 
@@ -47,7 +49,8 @@ class Baseline(object):
 
     with variable_scope.variable_scope("Decoder") as decoder_scope:
       self.decoder_embedding = self.initialize_embedding(FLAGS.target_vocab_size,
-                                                    FLAGS.embedding_size)
+                                                    FLAGS.embedding_size,
+                                                    trainable=FLAGS.trainable_target_embedding)
       decoder = getattr(seq2seq, FLAGS.decoder_type)(
         copy.deepcopy(cell), self.decoder_embedding, scope=decoder_scope)
     self.seq2seq = getattr(seq2seq, FLAGS.seq2seq_type)(
@@ -62,12 +65,15 @@ class Baseline(object):
         self.updates = self.setup_updates(self.losses)
     self.saver = tf.train.Saver(tf.global_variables())
 
-  def initialize_embedding(self, vocab_size, embedding_size):
-    sqrt3 = math.sqrt(3)  # Uniform(-sqrt(3), sqrt(3)) has variance=1.
-    initializer = init_ops.random_uniform_initializer(-sqrt3, sqrt3)
+  def initialize_embedding(self, vocab_size, embedding_size, vocab=None, trainable=True):
+    if vocab == None: # if no pre-trained embeddings are provided
+      sqrt3 = math.sqrt(3)  # Uniform(-sqrt(3), sqrt(3)) has variance=1.
+      initializer = init_ops.random_uniform_initializer(-sqrt3, sqrt3)
+    else: # if pre-trained embeddings are provided
+      initializer = tf.constant_initializer(vocab.embedding)
     embedding = variable_scope.get_variable(
       "embedding", [vocab_size, embedding_size],
-      initializer=initializer)
+      initializer=initializer, trainable=trainable)
     return embedding
 
   def setup_updates(self, loss):
@@ -167,7 +173,7 @@ class Baseline(object):
     output_feed = [self.losses]
     if self.do_update:
       output_feed.append(self.updates)
-    if self.global_step.eval() == 500:
+    if self.global_step.eval() == 500 and False:
        run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
        run_metadata = tf.RunMetadata()
        outputs = sess.run(output_feed, input_feed,
@@ -183,7 +189,10 @@ class Baseline(object):
   def run_batch(self, data, batch_size, do_shuffle=False):
     start_time = time.time()
     loss = 0.0
-    for i, raw_batch in enumerate(data.get_batch(batch_size, do_shuffle=do_shuffle)):
+    # debugging
+    # for i, raw_batch in enumerate(data.get_batch(batch_size, do_shuffle=do_shuffle)):
+    for i, raw_batch in enumerate(data.get_batch(1, do_shuffle=False)):
+      print('debug: raw_batch', raw_batch)
       step_loss = self.step(raw_batch)
       loss += step_loss 
     epoch_time = (time.time() - start_time)
@@ -193,7 +202,7 @@ class Baseline(object):
 
   def decode(self, raw_batch):
     sess = self.sess
-    input_feed = self.get_input_feed(batch)
+    input_feed = self.get_input_feed(raw_batch)
     output_feed = [self.losses, self.e_states, self.d_states]
     for l in xrange(self.max_sequence_length):
       output_feed.append(self.logits[l])
