@@ -11,3 +11,4 @@ tensorflow
 configs/config
 nohup.out
 tmp*
+.python-version
