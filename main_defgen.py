@@ -216,12 +216,12 @@ def train(sess):
     logger.info("(train dev test) = (%d %d %d)" % (train.size, dev.size, test.size))
 
     with tf.name_scope('train'):
-        mtrain = create_model(sess, FLAGS.max_sequence_length, False, True)
+        mtrain = create_model(sess, FLAGS.max_sequence_length, True, False, s_vocab=s_vocab)
         summary_writer = tf.summary.FileWriter(FLAGS.checkpoint_path + SUMMARIES_PATH,
                                                sess.graph)
 
     with tf.name_scope('dev'):
-        mvalid = create_model(sess, FLAGS.max_sequence_length, False, False, reuse=True)
+        mvalid = create_model(sess, FLAGS.max_sequence_length, False, False, reuse=True, s_vocab=s_vocab)
     for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
         logger.info("Epoch %d: Start training." % epoch)
         epoch_time, step_time, train_ppx = mtrain.run_batch(train, FLAGS.batch_size,
