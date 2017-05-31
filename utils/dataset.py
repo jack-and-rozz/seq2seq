@@ -231,15 +231,14 @@ class ASPECDataset(object):
 
 
 class VecVocabulary(Vocabulary):
-  def __init__(self, source_dir, source_file, lang, vocab_size):
+  def __init__(self, source_dir, source_file, lang, vocab_size, read_vec=True):
     source_path = os.path.join(source_dir, source_file)
-    self.tokenizer = space_tokenizer
     self.normalize_digits = False
-    self.vocab, self.rev_vocab, self.embedding = self.load_vocabulary(source_path, vocab_size)
+    self.vocab, self.rev_vocab, self.embedding = self.load_vocabulary(source_path, vocab_size, read_vec)
     self.lang = lang
     self.size = vocab_size
 
-  def load_vocabulary(self, source_path, max_vocabulary_size):
+  def load_vocabulary(self, source_path, max_vocabulary_size, read_vec):
     vocab = collections.defaultdict(int)
     if gfile.Exists(source_path):
         rev_vocab = [] + _START_VOCAB
@@ -250,13 +249,17 @@ class VecVocabulary(Vocabulary):
               counter += 1
               if counter % 100000 == 0:
                 print("  processing line %d" % counter)
-              tokens = self.tokenizer(l, do_separate_numbers=False)
-              rev_vocab.append(tokens[0])
-              embedding.append([float(v) for v in tokens[1:]])
+              if read_vec:
+                tokens = l.rstrip().split(' ')
+                rev_vocab.append(tokens[0])
+                embedding.append([float(v) for v in tokens[1:]])
+              else:
+                rev_vocab.append(l.split(' ', 1)[0])
               if counter + len(_START_VOCAB) >= max_vocabulary_size:
                 break
         vocab = dict([(x, y) for (y, x) in enumerate(rev_vocab)])
-        embedding = [[0] * len(embedding[-1])] * len(_START_VOCAB) + embedding # prepend 4 zero vectors
+        if read_vec:
+          embedding = [[0] * len(embedding[-1])] * len(_START_VOCAB) + embedding # prepend 4 zero vectors
         return vocab, rev_vocab, np.array(embedding)
     else:
         raise ValueError("Vector file %s not found.", source_path)
