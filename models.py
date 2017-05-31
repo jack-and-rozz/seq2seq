@@ -39,8 +39,7 @@ class Baseline(object):
     cell = self.setup_cell(do_update)
     with variable_scope.variable_scope("Encoder") as encoder_scope:
       self.encoder_embedding = self.initialize_embedding(FLAGS.source_vocab_size,
-                                                         # FLAGS.embedding_size, s_vocab,
-                                                         FLAGS.embedding_size,
+                                                         FLAGS.embedding_size, vocab=s_vocab,
                                                          trainable=FLAGS.trainable_source_embedding)
       encoder = getattr(seq2seq, FLAGS.encoder_type)(
         cell, self.encoder_embedding,
@@ -71,9 +70,15 @@ class Baseline(object):
       initializer = init_ops.random_uniform_initializer(-sqrt3, sqrt3)
     else: # if pre-trained embeddings are provided
       initializer = tf.constant_initializer(vocab.embedding)
-    embedding = variable_scope.get_variable(
-      "embedding", [vocab_size, embedding_size],
-      initializer=initializer, trainable=trainable)
+    if not trainable: # use cpu
+      with tf.device('/cpu:0'):
+        embedding = variable_scope.get_variable(
+          "embedding", [vocab_size, embedding_size],
+          initializer=initializer, trainable=trainable)
+    else:
+      embedding = variable_scope.get_variable(
+        "embedding", [vocab_size, embedding_size],
+        initializer=initializer, trainable=trainable)
     return embedding
 
   def setup_updates(self, loss):
@@ -151,6 +156,8 @@ class Baseline(object):
   def get_input_feed(self, raw_batch):
     batch = padding_and_format(raw_batch, self.max_sequence_length,
                                use_sequence_length=self.use_sequence_length)
+    # print('debug get_input:', batch)
+    # raise sys.exit()
     input_feed = {}
     batch_size = batch.encoder_inputs
     encoder_size = decoder_size = self.max_sequence_length
@@ -189,10 +196,8 @@ class Baseline(object):
   def run_batch(self, data, batch_size, do_shuffle=False):
     start_time = time.time()
     loss = 0.0
-    # debugging
-    # for i, raw_batch in enumerate(data.get_batch(batch_size, do_shuffle=do_shuffle)):
-    for i, raw_batch in enumerate(data.get_batch(1, do_shuffle=False)):
-      print('debug: raw_batch', raw_batch)
+    for i, raw_batch in enumerate(data.get_batch(batch_size, do_shuffle=do_shuffle)):
+      # print('debug: raw_batch', raw_batch)
       step_loss = self.step(raw_batch)
       loss += step_loss 
     epoch_time = (time.time() - start_time)
