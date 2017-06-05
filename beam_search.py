@@ -60,86 +60,24 @@ def _extract_beam_search(embedding, beam_size, batch_size,
 
   def loop_function(prev, i, log_beam_probs, beam_path, beam_symbols,
                     path_lengthes, is_finished_beam):
-
-    
     print i
     print 'prev', prev
-    
-    if output_projection is not None:
-      prev = nn_ops.xw_plus_b(
-          prev, output_projection[0], output_projection[1])
-    probs  = tf.log(tf.nn.softmax(prev))
-
-    # [batch, beam] -> [batch, beam, vocab]
-
-    if i > 1:
-      # RNN内では[batch, beam * vocab]のテンソルを扱っているため 
-      # [batch, beam, vocab]に変換
-      probs = tf.reshape(probs, [-1, beam_size, num_symbols])
-
-      # EOSに当たった所は確率 & 長さを更新しない
-      prob_weights = tile_from_beam_to_vocab(
-        tf.to_float(tf.logical_not(is_finished_beam)))
-
-      lbp = tile_from_beam_to_vocab(log_beam_probs[-1])
-      probs = lbp + probs * prob_weights
-
-    probs = tf.reshape(probs, [-1, beam_size * num_symbols])
-    if i > 1:
-      pl = tf.reshape(tile_from_beam_to_vocab(path_lengthes), 
-                      [-1, beam_size*num_symbols])
-      best_probs, indices = tf.nn.top_k(probs / pl, beam_size)
-    else:
-      best_probs, indices = tf.nn.top_k(probs, beam_size)
-
-    print 'indices', indices
-    
-    #indices = tf.stop_gradient(tf.squeeze(tf.reshape(indices, [-1, 1])))
-    #best_probs = tf.stop_gradient(tf.reshape(best_probs, [-1, 1]))
-
-    symbols = indices % num_symbols # Which word in vocabulary.
-    beam_parent = indices // num_symbols # Which hypothesis it came from.
-    beam_symbols.append(symbols)
-    beam_path.append(beam_parent)
-    log_beam_probs.append(best_probs)
-
-    
-    # 親ビームで既にEOSである or 選ばれたtokenがEOSならTrue
-    if i > 1:
-      is_finished_beam = tf.logical_or(
-        tf.gather_nd(is_finished_beam, index_matrix_to_pairs(beam_parent)),
-        tf.equal(symbols, tf.constant(EOS_ID))
-      )
-      # EOSにまだ当たっていないなら現在の長さ+1 
-      path_lengthes = tf.gather_nd(path_lengthes, index_matrix_to_pairs(beam_parent)),
-      path_lengthes += tf.to_float(tf.logical_not(is_finished_beam))
-      path_lengthes = tf.reshape(path_lengthes, [-1, beam_size])
-    else:
-
-      is_finished_beam = tf.logical_or(
-        tf.gather(is_finished_beam, beam_parent), 
-        tf.equal(symbols, tf.constant(EOS_ID))
-      )
-      # EOSにまだ当たっていないなら現在の長さ+1 
-      path_lengthes = tf.gather(path_lengthes, beam_parent)
-      path_lengthes = tf.to_float(tf.logical_not(is_finished_beam)) + path_lengthes
-    print 'is_finished_beam', is_finished_beam
-    print 'path_lengthes', path_lengthes
-    if i == 2:
+    if i == 1:
+      # expand previous states (e.g. batch_size=beam_size=2: [a, b] -> [a, a, b, b])
+      prev = tf.gather(prev, tf.tile(tf.expand_dims(tf.range(batch_size), dim=1), [1, beam_size]))
+      prev = tf.reshape(prev, [-1, prev.get_shape()[-1]])
+      print prev
       exit(1)
-    # Note that gradients will not propagate through the second parameter of
-    # embedding_lookup.
-
+      pass
+    else:
+      pass
     emb_prev = embedding_ops.embedding_lookup(embedding, symbols)
-    #print 'emb_prev', emb_prev
-
     # [batch, beam, embedding] -> [batch * beam, embedding]
     emb_prev  = tf.reshape(emb_prev, [-1, embedding_size])
     if not update_embedding:
       emb_prev = array_ops.stop_gradient(emb_prev)
     return emb_prev, path_lengthes, is_finished_beam
   return loop_function
-
 
 
 def beam_rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None,
@@ -191,10 +129,6 @@ def beam_rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None,
 
       if loop_function is not None:
         prev = output
-      if i ==0:
-        states = [state for _ in xrange(beam_size)]
-        state = tf.reshape(tf.concat(states, 0), [-1, state_size])
-        # for length penalty
 
     beam_path = tf.reshape(tf.concat(beam_path, 0), [-1, beam_size])
     beam_symbols = tf.reshape(tf.concat(beam_symbols, 0),[-1,beam_size])
