@@ -62,15 +62,27 @@ def _extract_beam_search(embedding, beam_size, batch_size,
                     path_lengthes, is_finished_beam):
     print i
     print 'prev', prev
+    batch_size = tf.constant(2)
     if i == 1:
       # expand previous states (e.g. batch_size=beam_size=2: [a, b] -> [a, a, b, b])
       prev = tf.gather(prev, tf.tile(tf.expand_dims(tf.range(batch_size), dim=1), [1, beam_size]))
-      prev = tf.reshape(prev, [-1, prev.get_shape()[-1]])
-      print prev
+      prev = tf.reshape(prev, [-1, prev.get_shape().as_list()[-1]])
+      if output_projection is not None:
+        prev = nn_ops.xw_plus_b(
+          prev, output_projection[0], output_projection[1])
+      probs  = tf.log(tf.nn.softmax(prev))
+      path_lengthes = tf.constant([[1.0 for _ in tf.range(beam_size)] for _ in tf.range(beam_size)])
+      is_finished_beam = tf.constant([[False for _ in tf.range(beam_size)] for _ in tf.range(beam_size)])
+      print path_lengthes
+      print is_finished_beam
+      print probs
       exit(1)
-      pass
     else:
       pass
+      exit(1)
+      pass
+
+
     emb_prev = embedding_ops.embedding_lookup(embedding, symbols)
     # [batch, beam, embedding] -> [batch * beam, embedding]
     emb_prev  = tf.reshape(emb_prev, [-1, embedding_size])
@@ -113,9 +125,7 @@ def beam_rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None,
     prev = None
     log_beam_probs, beam_path, beam_symbols = [],[],[]
     state_size = int(initial_state.get_shape().with_rank(2)[1])
-    path_lengthes = tf.constant([1.0 for _ in xrange(beam_size)])
-    is_finished_beam = tf.constant([False for _ in xrange(beam_size)])
-
+    path_lengthes, is_finished_beam = None, None
     for i, inp in enumerate(decoder_inputs):
       if loop_function is not None and prev is not None:
         with variable_scope.variable_scope("loop_function", reuse=True):
