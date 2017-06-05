@@ -75,7 +75,7 @@ def _extract_beam_search(embedding, beam_size, batch_size,
     if i > 1:
       # RNN内では[batch, beam * vocab]のテンソルを扱っているため 
       # [batch, beam, vocab]に変換
-      probs = tf.reshape(probs, [batch_size, beam_size, num_symbols])
+      probs = tf.reshape(probs, [-1, beam_size, num_symbols])
 
       # EOSに当たった所は確率 & 長さを更新しない
       prob_weights = tile_from_beam_to_vocab(
@@ -84,10 +84,10 @@ def _extract_beam_search(embedding, beam_size, batch_size,
       lbp = tile_from_beam_to_vocab(log_beam_probs[-1])
       probs = lbp + probs * prob_weights
 
-    probs = tf.reshape(probs, [batch_size, beam_size * num_symbols])
+    probs = tf.reshape(probs, [-1, beam_size * num_symbols])
     if i > 1:
       pl = tf.reshape(tile_from_beam_to_vocab(path_lengthes), 
-                      [batch_size, beam_size*num_symbols])
+                      [-1, beam_size*num_symbols])
       best_probs, indices = tf.nn.top_k(probs / pl, beam_size)
     else:
       best_probs, indices = tf.nn.top_k(probs, beam_size)
@@ -137,7 +137,7 @@ def _extract_beam_search(embedding, beam_size, batch_size,
     #print 'emb_prev', emb_prev
 
     # [batch, beam, embedding] -> [batch * beam, embedding]
-    emb_prev  = tf.reshape(emb_prev, [batch_size * beam_size, embedding_size])
+    emb_prev  = tf.reshape(emb_prev, [-1, embedding_size])
     if not update_embedding:
       emb_prev = array_ops.stop_gradient(emb_prev)
     return emb_prev, path_lengthes, is_finished_beam
