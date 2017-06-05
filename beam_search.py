@@ -112,11 +112,8 @@ def _extract_beam_search(embedding, beam_size, batch_size,
       )
       # EOSにまだ当たっていないなら現在の長さ+1 
       path_lengthes = tf.gather_nd(path_lengthes, index_matrix_to_pairs(beam_parent)),
-      print 'path_lengthes',path_lengthes
-      print tf.to_float(tf.logical_not(is_finished_beam))
-      path_lengthes += tf.to_float(tf.logical_not(is_finished_beam)) #+ path_lengthes
-      print 'path_lengthes',path_lengthes
-      exit(1)
+      path_lengthes += tf.to_float(tf.logical_not(is_finished_beam))
+      path_lengthes = tf.reshape(path_lengthes, [-1, beam_size])
     else:
 
       is_finished_beam = tf.logical_or(
