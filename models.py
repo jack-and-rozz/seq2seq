@@ -208,8 +208,11 @@ class Baseline(object):
     if self.beam_size > 1:
       output_feed = [self.beam_paths, self.beam_symbols]
       beam_paths, beam_symbols = sess.run(output_feed, input_feed)
-      
+      print beam_paths
+      print beam_symbols
       results = follow_path(beam_paths, beam_symbols, self.beam_size)
+      print results
+      exit(1)
       losses = None
       results = [results]
     else:

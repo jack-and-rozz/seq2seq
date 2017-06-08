@@ -42,12 +42,16 @@ def _extract_beam_search(embedding, beam_size, batch_size,
   """
   num_symbols, embedding_size = embedding.get_shape().as_list()
 
+  if output_projection == None:
+    raise ValueError('output_projection must not be None.')
+
   def tile_from_beam_to_vocab(t):
+    # For tf.nn.top_k, tile information about beam for each word. 
     return tf.tile(tf.reshape(t, [-1, beam_size, 1]), [1, 1, num_symbols])
 
 
   def index_matrix_to_pairs(index_matrix):
-    # For gather_nd, we have to transform the shape of indices 
+    # For tf.gather_nd, transform the shape of indices 
     # from [batch_size, beam_size] to [batch_size, beam_size, 2]
     # ex) (batch_size=2, beam_size=3) : [[0,1,2], [2,1,0]] -> [[[0,0],[0,1],[0,2]], 
     #                                                          [[1,2],[1,1],[1,0]]]]
@@ -56,39 +60,53 @@ def _extract_beam_search(embedding, beam_size, batch_size,
       [1, tf.shape(index_matrix)[1]])
     return tf.stack([replicated_first_indices, index_matrix], axis=2)
 
-
-
   def loop_function(prev, i, log_beam_probs, beam_path, beam_symbols,
                     path_lengthes, is_finished_beam):
     print i
-    print 'prev', prev
-    batch_size = tf.constant(2)
+    hidden_size = prev.get_shape().as_list()[-1]
     if i == 1:
-      # expand previous states (e.g. batch_size=beam_size=2: [a, b] -> [a, a, b, b])
+      # initialize length and EOS flags for each beam.
+      path_lengthes = tf.fill([batch_size, beam_size], 1.0)
+      is_finished_beam = tf.fill([batch_size, beam_size], False)
+
+      # expand previous states to beams. (e.g. batch_size=beam_size=2: [a, b] -> [a, a, b, b])
       prev = tf.gather(prev, tf.tile(tf.expand_dims(tf.range(batch_size), dim=1), [1, beam_size]))
-      prev = tf.reshape(prev, [-1, prev.get_shape().as_list()[-1]])
-      if output_projection is not None:
-        prev = nn_ops.xw_plus_b(
-          prev, output_projection[0], output_projection[1])
-      probs  = tf.log(tf.nn.softmax(prev))
-      path_lengthes = tf.constant([[1.0 for _ in tf.range(beam_size)] for _ in tf.range(beam_size)])
-      is_finished_beam = tf.constant([[False for _ in tf.range(beam_size)] for _ in tf.range(beam_size)])
-      print path_lengthes
-      print is_finished_beam
-      print probs
-      exit(1)
-    else:
-      pass
-      exit(1)
-      pass
+      prev = tf.reshape(prev, [-1, hidden_size])
 
+    probs = nn_ops.xw_plus_b(
+      prev, output_projection[0], output_projection[1])
+    probs = tf.log(tf.nn.softmax(probs))
+    probs = tf.reshape(probs, [-1, beam_size * num_symbols])
 
+    # divide probs by the length of each beam and select top-k.
+    pl = tf.reshape(tile_from_beam_to_vocab(path_lengthes), 
+                      [-1, beam_size*num_symbols])
+    best_probs, indices = tf.nn.top_k(probs / pl, beam_size)
+    symbols = indices % num_symbols 
+    beam_parent = indices // num_symbols
+
+    beam_symbols.append(symbols)
+    beam_path.append(beam_parent)
+    log_beam_probs.append(best_probs)
+
+    is_finished_beam = tf.logical_or(
+      tf.gather_nd(is_finished_beam, index_matrix_to_pairs(beam_parent)),
+      tf.equal(symbols, tf.constant(EOS_ID))
+    )
+    path_lengthes = tf.gather_nd(path_lengthes, index_matrix_to_pairs(beam_parent))
+    path_lengthes += tf.to_float(tf.logical_not(is_finished_beam))
+
+    beam_state = tf.gather_nd(tf.reshape(prev, [batch_size, beam_size, -1]), 
+                              index_matrix_to_pairs(beam_parent))
     emb_prev = embedding_ops.embedding_lookup(embedding, symbols)
+
     # [batch, beam, embedding] -> [batch * beam, embedding]
     emb_prev  = tf.reshape(emb_prev, [-1, embedding_size])
+    beam_state = tf.reshape(beam_state, [-1, hidden_size])
+
     if not update_embedding:
       emb_prev = array_ops.stop_gradient(emb_prev)
-    return emb_prev, path_lengthes, is_finished_beam
+    return emb_prev, beam_state, path_lengthes, is_finished_beam
   return loop_function
 
 
@@ -124,17 +142,16 @@ def beam_rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None,
     state = initial_state
     prev = None
     log_beam_probs, beam_path, beam_symbols = [],[],[]
-    state_size = int(initial_state.get_shape().with_rank(2)[1])
     path_lengthes, is_finished_beam = None, None
     for i, inp in enumerate(decoder_inputs):
       if loop_function is not None and prev is not None:
         with variable_scope.variable_scope("loop_function", reuse=True):
-          inp, path_lengthes, is_finished_beam  = loop_function(
+          inp, state, path_lengthes, is_finished_beam  = loop_function(
             prev, i, log_beam_probs, beam_path, beam_symbols,
             path_lengthes, is_finished_beam)
       if i > 0:
         variable_scope.get_variable_scope().reuse_variables()
-
+      print inp, state
       output, state = cell(inp, state)
 
       if loop_function is not None:
@@ -268,15 +285,20 @@ def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell
        attns.append(tmp)
 
     log_beam_probs, beam_path, beam_symbols = [],[],[]
-    for i, inp in enumerate(decoder_inputs):
+    path_lengthes, is_finished_beam = None, None
 
+    for i, inp in enumerate(decoder_inputs):
       if i > 0:
         variable_scope.get_variable_scope().reuse_variables()
       # If loop_function is set, we use it instead of decoder_inputs.
       if loop_function is not None :
         with variable_scope.variable_scope("loop_function", reuse=True):
-            if prev is not None:
-                inp = loop_function(prev, i, log_beam_probs, beam_path, beam_symbols)
+          if prev is not None:
+            #inp = loop_function(prev, i, log_beam_probs, beam_path, beam_symbols)
+            inp, state, path_lengthes, is_finished_beam  = loop_function(
+              prev, i, log_beam_probs, beam_path, beam_symbols,
+              path_lengthes, is_finished_beam)
+
 
       input_size = inp.get_shape().with_rank(2)[1]
       x = linear([inp] + attns, input_size, True)
@@ -284,8 +306,7 @@ def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell
 
       # Run the attention mechanism.
       if i == 0 and initial_state_attention:
-        with variable_scope.variable_scope(variable_scope.get_variable_scope(),
-                                           reuse=True):
+        with variable_scope.variable_scope(variable_scope.get_variable_scope(), reuse=True):
           attns = attention(state)
       else:
           attns = attention(state)
@@ -295,12 +316,12 @@ def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell
       if loop_function is not None:
         prev = output
       if  i ==0:
-          states =[]
-          for kk in range(beam_size):
-                states.append(state)
-          state = tf.reshape(tf.concat(states, 0), [-1, state_size])
-          with variable_scope.variable_scope(variable_scope.get_variable_scope(), reuse=True):
-                attns = attention(state)
+        states =[]
+        for kk in range(beam_size):
+          states.append(state)
+        state = tf.reshape(tf.concat(states, 0), [-1, state_size])
+        with variable_scope.variable_scope(variable_scope.get_variable_scope(), reuse=True):
+          attns = attention(state)
 
 
     beam_path = tf.reshape(tf.concat(beam_path, 0), [-1, beam_size])
@@ -311,8 +332,9 @@ def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell
 
 def follow_path(path, symbol, beam_size):
   paths = []
-  for kk in range(beam_size):
+  for _ in range(beam_size):
     paths.append([])
+
   curr = range(beam_size)
   num_steps = len(path)
   for i in range(num_steps-1, -1, -1):
@@ -327,3 +349,22 @@ def follow_path(path, symbol, beam_size):
     foutputs = foutputs[:foutputs.index(EOS_ID)]
   rec = foutputs
   return rec
+
+# def follow_path(path, symbol, beam_size):
+#   paths = []
+#   for kk in range(beam_size):
+#     paths.append([])
+#   curr = range(beam_size)
+#   num_steps = len(path)
+#   for i in range(num_steps-1, -1, -1):
+#     for kk in range(beam_size):
+#       paths[kk].append(symbol[i][curr[kk]])
+#       curr[kk] = path[i][curr[kk]]
+
+#   for kk in range(beam_size):
+#     foutputs = [int(logit) for logit in paths[kk][::-1]]
+#   # If there is an EOS symbol in outputs, cut them at that point.
+#   if EOS_ID in foutputs:
+#     foutputs = foutputs[:foutputs.index(EOS_ID)]
+#   rec = foutputs
+#   return rec
