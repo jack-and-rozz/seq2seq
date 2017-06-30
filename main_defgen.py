@@ -19,7 +19,7 @@ import models
 tf.app.flags.DEFINE_string("source_data_dir", "/disk/ishiwatari/data/wikipedia/ja/def_pattern", "Data directory")
 tf.app.flags.DEFINE_string("processed_data_dir", "/disk/ishiwatari/data/wikipedia/ja/def_pattern/processed", "Data directory")
 # tf.app.flags.DEFINE_string("vocab_data", "jawiki-20160901_dim1000_all", "")
-tf.app.flags.DEFINE_string("w2v", "jawiki-20160901_dim1000.w2v.mini", "")
+tf.app.flags.DEFINE_string("w2v", "jawiki-20160901_dim1000.w2v", "")
 tf.app.flags.DEFINE_string("train_data", "jawiki-20160901_dim1000_train", "")
 tf.app.flags.DEFINE_string("dev_data", "jawiki-20160901_dim1000_dev", "")
 tf.app.flags.DEFINE_string("test_data", "jawiki-20160901_dim1000_test", "")
@@ -38,11 +38,10 @@ tf.app.flags.DEFINE_integer("batch_size", 200,
                             "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("hidden_size", 200, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("embedding_size", 200, "Size of each token embedding.")
-# tf.app.flags.DEFINE_integer("source_vocab_size", 1458584, "Vocabulary size.")
-tf.app.flags.DEFINE_integer("source_vocab_size", 142021, "Vocabulary size.")
+tf.app.flags.DEFINE_integer("source_vocab_size", 192229, "Vocabulary size.")
 tf.app.flags.DEFINE_integer("target_vocab_size", 30000, "Vocabulary size.")
-tf.app.flags.DEFINE_integer("max_to_keep", 5, "Number of checkpoints to be kept")
-tf.app.flags.DEFINE_integer("max_epoch", 50, "")
+tf.app.flags.DEFINE_integer("max_to_keep", 100, "Number of checkpoints to be kept")
+tf.app.flags.DEFINE_integer("max_epoch", 200, "")
 tf.app.flags.DEFINE_integer("max_sequence_length", 20, "")
 tf.app.flags.DEFINE_float("init_scale", 0.1, "")
 tf.app.flags.DEFINE_float("learning_rate", 1e-4, "Learning rate.")
@@ -126,7 +125,7 @@ def create_model(sess, max_sequence_length, forward_only, do_update, reuse=None,
 
 def decode_interact(sess):
     s_vocab = VecVocabulary(FLAGS.source_data_dir, FLAGS.w2v, FLAGS.source_lang,
-                            FLAGS.source_vocab_size)
+                            FLAGS.source_vocab_size, read_vec=False)
     t_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.train_data, FLAGS.target_lang,
                          FLAGS.target_vocab_size)
     mtest = create_model(sess, FLAGS.max_sequence_length, True, False, s_vocab=s_vocab)
@@ -135,7 +134,6 @@ def decode_interact(sess):
         source = sys.stdin.readline()
         source = source.split()
         raw_batch = [(None, s_vocab.to_ids(source), [])]
-        print('debug sess:', sess)
         print('debug s_vocab.to_ids(source):', s_vocab.to_ids(source))
 
         _, outputs = mtest.decode(raw_batch)
@@ -219,7 +217,7 @@ def train(sess):
     logger.info("(train dev test) = (%d %d %d)" % (train.size, dev.size, test.size))
 
     with tf.name_scope('train'):
-        mtrain = create_model(sess, FLAGS.max_sequence_length, True, False, s_vocab=s_vocab)
+        mtrain = create_model(sess, FLAGS.max_sequence_length, False, True, s_vocab=s_vocab)
         summary_writer = tf.summary.FileWriter(FLAGS.checkpoint_path + SUMMARIES_PATH,
                                                sess.graph)
 
