@@ -20,13 +20,13 @@ from tensorflow.python.platform import gfile
 #from seq2seq import RNNEncoder, BidirectionalRNNEncoder, RNNDecoder, BasicSeq2Seq
 import seq2seq, encoders, decoders
 from utils import common
-from utils.dataset import PAD_ID, EOS_ID, UNK_ID, padding_and_format
+from utils.dataset import PAD_ID, EOS_ID, UNK_ID, padding_and_format, VecVocabulary
 dtype=tf.float32
 import models as seq2seq_models # import itself for reflection
 from beam_search import follow_path
 
 class Baseline(object):
-  def __init__(self, sess, FLAGS, max_sequence_length, forward_only, do_update):
+  def __init__(self, sess, FLAGS, max_sequence_length, forward_only, do_update, s_vocab=None, t_vocab=None):
     self.sess = sess
     self.summary_dir = FLAGS.checkpoint_path + '/summaries'
     #self.summary_writer = tf.summary.FileWriter(self.summary_dir, sess.graph)
@@ -40,16 +40,18 @@ class Baseline(object):
     cell = self.setup_cell(do_update)
     with variable_scope.variable_scope("Encoder") as encoder_scope:
       self.encoder_embedding = self.initialize_embedding(FLAGS.source_vocab_size,
-                                                         FLAGS.embedding_size)
-      encoder = getattr(encoders, FLAGS.encoder_type)(
+                                                         FLAGS.embedding_size, vocab=s_vocab,
+                                                         trainable=FLAGS.trainable_source_embedding)
+      encoder = getattr(seq2seq, FLAGS.encoder_type)(
         cell, self.encoder_embedding,
         scope=encoder_scope, 
         sequence_length=self.sequence_length)
 
     with variable_scope.variable_scope("Decoder") as decoder_scope:
       self.decoder_embedding = self.initialize_embedding(FLAGS.target_vocab_size,
-                                                    FLAGS.embedding_size)
-      decoder = getattr(decoders, FLAGS.decoder_type)(
+                                                    FLAGS.embedding_size,
+                                                    trainable=FLAGS.trainable_target_embedding)
+      decoder = getattr(seq2seq, FLAGS.decoder_type)(
         copy.deepcopy(cell), self.decoder_embedding, scope=decoder_scope)
     self.seq2seq = getattr(seq2seq, FLAGS.seq2seq_type)(
       encoder, decoder, FLAGS.num_samples, feed_previous=forward_only, beam_size=FLAGS.beam_size)
@@ -68,12 +70,22 @@ class Baseline(object):
         self.updates = self.setup_updates(self.losses)
     self.saver = tf.train.Saver(tf.global_variables())
 
-  def initialize_embedding(self, vocab_size, embedding_size):
-    sqrt3 = math.sqrt(3)  # Uniform(-sqrt(3), sqrt(3)) has variance=1.
-    initializer = init_ops.random_uniform_initializer(-sqrt3, sqrt3)
-    embedding = variable_scope.get_variable(
-      "embedding", [vocab_size, embedding_size],
-      initializer=initializer)
+  def initialize_embedding(self, vocab_size, embedding_size, vocab=None, trainable=True):
+    if isinstance(vocab, VecVocabulary): # if pre-trained embeddings are provided
+      initializer = tf.constant_initializer(vocab.embedding)
+    else:
+      sqrt3 = math.sqrt(3)  # Uniform(-sqrt(3), sqrt(3)) has variance=1.
+      initializer = init_ops.random_uniform_initializer(-sqrt3, sqrt3)
+
+    if not trainable: # use cpu
+      with tf.device('/cpu:0'):
+        embedding = variable_scope.get_variable(
+          "embedding", [vocab_size, embedding_size],
+          initializer=initializer, trainable=trainable)
+    else:
+      embedding = variable_scope.get_variable(
+        "embedding", [vocab_size, embedding_size],
+        initializer=initializer, trainable=trainable)
     return embedding
 
   def setup_updates(self, loss):
@@ -81,15 +93,11 @@ class Baseline(object):
     gradients = []
     updates = []
     opt = tf.train.AdamOptimizer(self.learning_rate)
-    #gradients = tf.gradients(loss, params)
-    #clipped_gradients, norm = tf.clip_by_global_norm(gradients,
-    #                                                 self.max_gradient_norm)
     gradients = [grad for grad, _ in opt.compute_gradients(loss)]
     clipped_gradients, _ = tf.clip_by_global_norm(gradients, 
                                                   self.max_gradient_norm)
     self.grad_and_vars = [(g, v) for g, v in zip(clipped_gradients, params)]
     updates = opt.apply_gradients(self.grad_and_vars, global_step=self.global_step)
-    #updates = opt.apply_gradients(zip(clipped_gradients, params), global_step=self.global_step)
     return updates
 
   def setup_placeholders(self, use_sequence_length=True):
@@ -175,7 +183,7 @@ class Baseline(object):
     output_feed = [self.losses]
     if self.do_update:
       output_feed.append(self.updates)
-    if self.global_step.eval() == 500:
+    if self.global_step.eval() == 500 and False:
        run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
        run_metadata = tf.RunMetadata()
        outputs = sess.run(output_feed, input_feed,
@@ -205,7 +213,6 @@ class Baseline(object):
     if self.beam_size > 1:
       output_feed = [self.beam_paths, self.beam_symbols]
       beam_paths, beam_symbols = sess.run(output_feed, input_feed)
-      
       results = follow_path(beam_paths, beam_symbols, self.beam_size)
       losses = None
       results = [results]

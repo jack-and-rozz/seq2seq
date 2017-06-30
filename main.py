@@ -54,6 +54,8 @@ tf.app.flags.DEFINE_string("encoder_type", "RNNEncoder", "")
 tf.app.flags.DEFINE_string("decoder_type", "RNNDecoder", "")
 tf.app.flags.DEFINE_boolean("use_sequence_length", True, "If True, PAD_ID tokens are not input to RNN. (This option shouldn't be used when reversing encoder's inputs.)")
 tf.app.flags.DEFINE_integer("num_layers", 1, "Number of layers in the model.")
+tf.app.flags.DEFINE_boolean("trainable_source_embedding", False, "")
+tf.app.flags.DEFINE_boolean("trainable_target_embedding", True, "")
 
 ## temporal flags (not saved in config)
 tf.app.flags.DEFINE_string("mode", "train", "")

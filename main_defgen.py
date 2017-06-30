@@ -19,7 +19,7 @@ import models
 tf.app.flags.DEFINE_string("source_data_dir", "/disk/ishiwatari/data/wikipedia/ja/def_pattern", "Data directory")
 tf.app.flags.DEFINE_string("processed_data_dir", "/disk/ishiwatari/data/wikipedia/ja/def_pattern/processed", "Data directory")
 # tf.app.flags.DEFINE_string("vocab_data", "jawiki-20160901_dim1000_all", "")
-tf.app.flags.DEFINE_string("w2v", "jawiki-20160901_dim1000.w2v.mini", "")
+tf.app.flags.DEFINE_string("w2v", "jawiki-20160901_dim1000.w2v", "")
 tf.app.flags.DEFINE_string("train_data", "jawiki-20160901_dim1000_train", "")
 tf.app.flags.DEFINE_string("dev_data", "jawiki-20160901_dim1000_dev", "")
 tf.app.flags.DEFINE_string("test_data", "jawiki-20160901_dim1000_test", "")
@@ -38,16 +38,16 @@ tf.app.flags.DEFINE_integer("batch_size", 200,
                             "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("hidden_size", 200, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("embedding_size", 200, "Size of each token embedding.")
-# tf.app.flags.DEFINE_integer("source_vocab_size", 1458580, "Vocabulary size.")
-tf.app.flags.DEFINE_integer("source_vocab_size", 142017, "Vocabulary size.")
+tf.app.flags.DEFINE_integer("source_vocab_size", 192229, "Vocabulary size.")
 tf.app.flags.DEFINE_integer("target_vocab_size", 30000, "Vocabulary size.")
-tf.app.flags.DEFINE_integer("max_to_keep", 5, "Number of checkpoints to be kept")
-tf.app.flags.DEFINE_integer("max_epoch", 50, "")
+tf.app.flags.DEFINE_integer("max_to_keep", 100, "Number of checkpoints to be kept")
+tf.app.flags.DEFINE_integer("max_epoch", 200, "")
 tf.app.flags.DEFINE_integer("max_sequence_length", 20, "")
 tf.app.flags.DEFINE_float("init_scale", 0.1, "")
 tf.app.flags.DEFINE_float("learning_rate", 1e-4, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
                           "Clip gradients to this norm.")
+
 
 # for RNN LM
 tf.app.flags.DEFINE_string("cell_type", "GRUCell", "Cell type")
@@ -57,6 +57,8 @@ tf.app.flags.DEFINE_string("decoder_type", "RNNDecoder", "")
 tf.app.flags.DEFINE_boolean("use_sequence_length", True,
                             "If True, PAD_ID tokens are not input to RNN. (This option shouldn't be used when reversing encoder's inputs.)")
 tf.app.flags.DEFINE_integer("num_layers", 1, "Number of layers in the model.")
+tf.app.flags.DEFINE_boolean("trainable_source_embedding", False, "")
+tf.app.flags.DEFINE_boolean("trainable_target_embedding", True, "")
 
 ## temporal flags (not saved in config)
 tf.app.flags.DEFINE_string("mode", "train", "")
@@ -97,13 +99,13 @@ def save_config():
 
 
 @common.timewatch(logger)
-def create_model(sess, max_sequence_length, forward_only, do_update, reuse=None):
+def create_model(sess, max_sequence_length, forward_only, do_update, reuse=None, s_vocab=None, t_vocab=None):
     with tf.variable_scope("Model", reuse=reuse):
         if do_update and len(os.environ['CUDA_VISIBLE_DEVICES'].split(',')) > 1:
             m = models.MultiGPUTrainWrapper(sess, FLAGS, max_sequence_length)
         else:
             model_type = getattr(models, FLAGS.model_type)
-            m = model_type(sess, FLAGS, max_sequence_length, forward_only, do_update)
+            m = model_type(sess, FLAGS, max_sequence_length, forward_only, do_update, s_vocab=s_vocab, t_vocab=t_vocab)
     ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_path + '/checkpoints')
     saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
 
@@ -122,17 +124,19 @@ def create_model(sess, max_sequence_length, forward_only, do_update, reuse=None)
 
 
 def decode_interact(sess):
-    s_vocab = VecVocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.vocab_data,
-                         FLAGS.source_lang, FLAGS.source_vocab_size)
-    t_vocab = DefVocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.vocab_data,
-                         FLAGS.target_lang, FLAGS.target_vocab_size)
-    mtest = create_model(sess, FLAGS.max_sequence_length, True, False)
+    s_vocab = VecVocabulary(FLAGS.source_data_dir, FLAGS.w2v, FLAGS.source_lang,
+                            FLAGS.source_vocab_size, read_vec=False)
+    t_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.train_data, FLAGS.target_lang,
+                         FLAGS.target_vocab_size)
+    mtest = create_model(sess, FLAGS.max_sequence_length, True, False, s_vocab=s_vocab)
     while True:
         sys.stdout.write("> ", )
         source = sys.stdin.readline()
         source = source.split()
         raw_batch = [(None, s_vocab.to_ids(source), [])]
-        _, outputs = mtest.decode(sess, raw_batch)
+        print('debug s_vocab.to_ids(source):', s_vocab.to_ids(source))
+
+        _, outputs = mtest.decode(raw_batch)
         output = outputs[0]
         if EOS_ID in output:
             output = output[:output.index(EOS_ID)]
@@ -193,7 +197,7 @@ def decode_test(sess):
 def train(sess):
     # data_path = os.path.join(FLAGS.source_data_dir, FLAGS.vocab_data)
     # vocab_path = os.path.join(FLAGS.processed_data_dir, FLAGS.vocab_data)
-    s_vocab = VecVocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.w2v, FLAGS.source_lang,
+    s_vocab = VecVocabulary(FLAGS.source_data_dir, FLAGS.w2v, FLAGS.source_lang,
                             FLAGS.source_vocab_size)
     t_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.train_data, FLAGS.target_lang,
                          FLAGS.target_vocab_size)
@@ -213,12 +217,12 @@ def train(sess):
     logger.info("(train dev test) = (%d %d %d)" % (train.size, dev.size, test.size))
 
     with tf.name_scope('train'):
-        mtrain = create_model(sess, FLAGS.max_sequence_length, False, True)
+        mtrain = create_model(sess, FLAGS.max_sequence_length, False, True, s_vocab=s_vocab)
         summary_writer = tf.summary.FileWriter(FLAGS.checkpoint_path + SUMMARIES_PATH,
                                                sess.graph)
 
     with tf.name_scope('dev'):
-        mvalid = create_model(sess, FLAGS.max_sequence_length, False, False, reuse=True)
+        mvalid = create_model(sess, FLAGS.max_sequence_length, False, False, reuse=True, s_vocab=s_vocab)
     for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
         logger.info("Epoch %d: Start training." % epoch)
         epoch_time, step_time, train_ppx = mtrain.run_batch(train, FLAGS.batch_size,
