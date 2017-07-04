@@ -63,8 +63,15 @@ def _extract_beam_search(embedding, beam_size, batch_size,
   def loop_function(prev, i, log_beam_probs, beam_path, beam_symbols,
                     path_lengthes, is_finished_beam):
     hidden_size = prev.get_shape().as_list()[-1]
+
     if i == 1:
       # Todo: 1回目は先にトークンを選んでから状態を分岐させないと同じことを全ビームでやることになる
+      probs = nn_ops.xw_plus_b(
+        prev, output_projection[0], output_projection[1])
+      probs = tf.log(tf.nn.softmax(probs))
+
+      best_probs, indices = tf.nn.top_k(probs, beam_size)
+
       # initialize length and EOS flags for each beam.
       path_lengthes = tf.fill([batch_size, beam_size], 1.0)
       is_finished_beam = tf.fill([batch_size, beam_size], False)
@@ -72,16 +79,16 @@ def _extract_beam_search(embedding, beam_size, batch_size,
       prev = tf.gather(prev, tf.tile(tf.expand_dims(tf.range(batch_size), dim=1), [1, beam_size]))
       # prev: [batch, beam, hidden] -> [batch * beam, hidden]
       prev = tf.reshape(prev, [-1, hidden_size])
+    else:
+      probs = nn_ops.xw_plus_b(
+        prev, output_projection[0], output_projection[1])
+      probs = tf.log(tf.nn.softmax(probs))
+      probs = tf.reshape(probs, [-1, beam_size * num_symbols])
 
-    probs = nn_ops.xw_plus_b(
-      prev, output_projection[0], output_projection[1])
-    probs = tf.log(tf.nn.softmax(probs))
-    probs = tf.reshape(probs, [-1, beam_size * num_symbols])
-
-    # divide probs by the length of each beam (length penalty) and select top-k.
-    pl = tf.reshape(tile_from_beam_to_vocab(path_lengthes), 
+      # divide probs by the length of each beam (length penalty) and select top-k.
+      pl = tf.reshape(tile_from_beam_to_vocab(path_lengthes), 
                       [-1, beam_size*num_symbols])
-    best_probs, indices = tf.nn.top_k(probs / pl, beam_size)
+      best_probs, indices = tf.nn.top_k(probs / pl, beam_size)
     symbols = indices % num_symbols 
     beam_parent = indices // num_symbols
 

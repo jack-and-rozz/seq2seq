@@ -23,8 +23,8 @@ tf.app.flags.DEFINE_string("vocab_data", "train", "")
 tf.app.flags.DEFINE_string("train_data", "train", "")
 tf.app.flags.DEFINE_string("dev_data", "dev", "")
 tf.app.flags.DEFINE_string("test_data", "test", "")
-tf.app.flags.DEFINE_string("source_lang", "ja", "")
-tf.app.flags.DEFINE_string("target_lang", "en", "")
+tf.app.flags.DEFINE_string("source_lang", "en", "")
+tf.app.flags.DEFINE_string("target_lang", "ja", "")
 tf.app.flags.DEFINE_integer("max_train_rows", 2000000, "Maximum number of rows to be used as train data.")
 
 #
@@ -149,7 +149,8 @@ def decode_test(sess):
                        FLAGS.target_lang, FLAGS.target_vocab_size)
   test = ASPECDataset(
     FLAGS.source_data_dir, FLAGS.processed_data_dir, 
-    FLAGS.test_data, s_vocab, t_vocab)
+    FLAGS.test_data, s_vocab, t_vocab,
+    max_sequence_length=None, max_rows=None)
   logger.info("Number of tests: %d " % test.size)
   max_sequence_length = max(test.largest_bucket)
   mtest = create_model(sess, max_sequence_length, True, False)
