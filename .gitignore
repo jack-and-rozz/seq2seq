@@ -1,5 +1,5 @@
 dataset
-models
+checkpoints
 tmp
 tensorflow
 *.pyc
@@ -11,3 +11,4 @@ tensorflow
 configs/*
 nohup.out
 tmp*
+.DS_Store

@@ -9,7 +9,7 @@ import MeCab
 import numpy as np
 import mojimoji
 from tensorflow.python.platform import gfile
-from utils import common
+from core.utils import common
 
 
 _PAD = "_PAD"

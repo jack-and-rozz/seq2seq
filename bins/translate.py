@@ -8,12 +8,13 @@ import sys, io, os, codecs, time, itertools, math, random, copy
 from logging import FileHandler
 import numpy as np
 import tensorflow as tf
-#from six.moves import xrange  # pylint: disable=redefined-builtin
 from tensorflow.python.platform import gfile
+#from six.moves import xrange  # pylint: disable=redefined-builtin
 
-from utils import common
-from utils.dataset import Vocabulary, ASPECDataset, EOS_ID
-import models
+import core
+from core.utils import common
+from core.utils.dataset import Vocabulary, ASPECDataset, EOS_ID
+from core.models.base import MultiGPUTrainWrapper
 
 # about dataset
 tf.app.flags.DEFINE_string("source_data_dir", "dataset/source", "Data directory")
@@ -54,8 +55,10 @@ tf.app.flags.DEFINE_string("encoder_type", "RNNEncoder", "")
 tf.app.flags.DEFINE_string("decoder_type", "RNNDecoder", "")
 tf.app.flags.DEFINE_boolean("use_sequence_length", True, "If True, PAD_ID tokens are not input to RNN. (This option shouldn't be used when reversing encoder's inputs.)")
 tf.app.flags.DEFINE_integer("num_layers", 1, "Number of layers in the model.")
-tf.app.flags.DEFINE_boolean("trainable_source_embedding", False, "")
+tf.app.flags.DEFINE_boolean("trainable_source_embedding", True, "")
 tf.app.flags.DEFINE_boolean("trainable_target_embedding", True, "")
+tf.app.flags.DEFINE_boolean("share_embedding", False, "If true, a decoder uses encoder's embedding (for dialogue)")
+
 
 ## temporal flags (not saved in config)
 tf.app.flags.DEFINE_string("mode", "train", "")
@@ -73,6 +76,7 @@ CHECKPOINTS_PATH = '/checkpoints'
 TESTS_PATH = '/tests'
 VARIABLES_PATH = '/variables'
 SUMMARIES_PATH = '/summaries'
+
 def create_dir():
   if not os.path.exists(FLAGS.checkpoint_path):
     os.makedirs(FLAGS.checkpoint_path)
@@ -97,9 +101,9 @@ def save_config():
 def create_model(sess, max_sequence_length, forward_only, do_update, reuse=None):
   with tf.variable_scope("Model", reuse=reuse):
     if do_update and len(os.environ['CUDA_VISIBLE_DEVICES'].split(',')) > 1:
-      m = models.MultiGPUTrainWrapper(sess, FLAGS, max_sequence_length)
+      m = MultiGPUTrainWrapper(sess, FLAGS, max_sequence_length)
     else:
-      model_type = getattr(models, FLAGS.model_type)
+      model_type = getattr(core.models.base, FLAGS.model_type)
       m = model_type(sess, FLAGS, max_sequence_length, forward_only, do_update)
   ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_path + '/checkpoints')
   saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)

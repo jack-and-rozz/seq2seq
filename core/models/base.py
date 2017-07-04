@@ -7,7 +7,6 @@ import numpy as np
 
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
-#import tensorflow.contrib.rnn as rnn
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import init_ops
 from tensorflow.python.ops import math_ops
@@ -16,14 +15,11 @@ from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 from tensorflow.python.client import timeline
 from tensorflow.python.platform import gfile
 
-
-#from seq2seq import RNNEncoder, BidirectionalRNNEncoder, RNNDecoder, BasicSeq2Seq
-import seq2seq, encoders, decoders
-from utils import common
-from utils.dataset import PAD_ID, EOS_ID, UNK_ID, padding_and_format, VecVocabulary
-dtype=tf.float32
-import models as seq2seq_models # import itself for reflection
-from beam_search import follow_path
+from core.seq2seq import seq2seq, encoders, decoders
+from core.utils import common
+from core.utils.dataset import PAD_ID, EOS_ID, UNK_ID, padding_and_format, VecVocabulary
+#import core.models.base as seq2seq_models # import itself for reflection
+from core.seq2seq.beam_search import follow_path
 
 class Baseline(object):
   def __init__(self, sess, FLAGS, max_sequence_length, forward_only, do_update, s_vocab=None, t_vocab=None):
@@ -39,20 +35,23 @@ class Baseline(object):
       self.setup_placeholders(use_sequence_length=self.use_sequence_length)
     cell = self.setup_cell(do_update)
     with variable_scope.variable_scope("Encoder") as encoder_scope:
-      self.encoder_embedding = self.initialize_embedding(FLAGS.source_vocab_size,
-                                                         FLAGS.embedding_size, vocab=s_vocab,
-                                                         trainable=FLAGS.trainable_source_embedding)
-      encoder = getattr(seq2seq, FLAGS.encoder_type)(
-        cell, self.encoder_embedding,
+      encoder_embedding = self.initialize_embedding(
+        FLAGS.source_vocab_size,
+        FLAGS.embedding_size, 
+        vocab=s_vocab,
+        trainable=FLAGS.trainable_source_embedding)
+      encoder = getattr(encoders, FLAGS.encoder_type)(
+        cell, encoder_embedding,
         scope=encoder_scope, 
         sequence_length=self.sequence_length)
 
     with variable_scope.variable_scope("Decoder") as decoder_scope:
-      self.decoder_embedding = self.initialize_embedding(FLAGS.target_vocab_size,
-                                                    FLAGS.embedding_size,
-                                                    trainable=FLAGS.trainable_target_embedding)
-      decoder = getattr(seq2seq, FLAGS.decoder_type)(
-        copy.deepcopy(cell), self.decoder_embedding, scope=decoder_scope)
+      decoder_embedding = self.initialize_embedding(
+        FLAGS.target_vocab_size,
+        FLAGS.embedding_size,
+        trainable=FLAGS.trainable_target_embedding)
+      decoder = getattr(decoders, FLAGS.decoder_type)(
+        copy.deepcopy(cell), decoder_embedding, scope=decoder_scope)
     self.seq2seq = getattr(seq2seq, FLAGS.seq2seq_type)(
       encoder, decoder, FLAGS.num_samples, feed_previous=forward_only, beam_size=FLAGS.beam_size)
 
@@ -70,7 +69,8 @@ class Baseline(object):
         self.updates = self.setup_updates(self.losses)
     self.saver = tf.train.Saver(tf.global_variables())
 
-  def initialize_embedding(self, vocab_size, embedding_size, vocab=None, trainable=True):
+  def initialize_embedding(self, vocab_size, embedding_size, 
+                           vocab=None, trainable=True):
     if isinstance(vocab, VecVocabulary): # if pre-trained embeddings are provided
       initializer = tf.constant_initializer(vocab.embedding)
     else:
@@ -111,7 +111,7 @@ class Baseline(object):
     for i in xrange(self.max_sequence_length + 1):
       self.decoder_inputs.append(tf.placeholder(tf.int32, shape=[None],
                                                 name="decoder{0}".format(i)))
-      self.target_weights.append(tf.placeholder(dtype, shape=[None],
+      self.target_weights.append(tf.placeholder(tf.float32, shape=[None],
                                                 name="weight{0}".format(i)))
     # Our targets are decoder inputs shifted by one.
     self.targets = [self.decoder_inputs[i + 1]
@@ -174,7 +174,7 @@ class Baseline(object):
 
     # Since our targets are decoder inputs shifted by one, we need one more.
     last_target = self.decoder_inputs[decoder_size].name
-    input_feed[last_target] = np.zeros([batch.batch_size], dtype=np.int32)
+    input_feed[last_target] = np.zeros([batch.batch_size], dtype=tf.int32)
     return input_feed 
 
   def step(self, raw_batch):

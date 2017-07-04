@@ -27,8 +27,8 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import init_ops
 from tensorflow.python.util import nest
 from tensorflow.contrib.legacy_seq2seq import sequence_loss, sequence_loss_by_example, rnn_decoder, attention_decoder #, model_with_buckets
-from decoders import BeamSearchWrapper
-from beam_search import _extract_beam_search
+from core.seq2seq.decoders import BeamSearchWrapper
+from core.seq2seq.beam_search import _extract_beam_search
 
 
 # TODO(ebrevdo): Remove once _linear is fully deprecated.

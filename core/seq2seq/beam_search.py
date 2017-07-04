@@ -23,7 +23,7 @@ from tensorflow.python.framework import dtypes
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell_impl
 linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access
 
-from utils.dataset import EOS_ID
+from core.utils.dataset import EOS_ID
 
 def _extract_beam_search(embedding, beam_size,  
                          output_projection=None,
