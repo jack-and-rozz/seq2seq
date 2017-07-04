@@ -46,11 +46,11 @@ def _extract_beam_search(embedding, beam_size, batch_size,
     raise ValueError('output_projection must not be None.')
 
   def tile_from_beam_to_vocab(t):
-    # For tf.nn.top_k, tile information about beam for each word. 
+    # For tf.nn.top_k, do tiling information about beam for each word. 
     return tf.tile(tf.reshape(t, [-1, beam_size, 1]), [1, 1, num_symbols])
 
 
-  def index_matrix_to_pairs(index_matrix):
+  def divide_index_by_batch(index_matrix):
     # For tf.gather_nd, transform the shape of indices 
     # from [batch_size, beam_size] to [batch_size, beam_size, 2]
     # ex) (batch_size=2, beam_size=3) : [[0,1,2], [2,1,0]] -> [[[0,0],[0,1],[0,2]], 
@@ -62,15 +62,15 @@ def _extract_beam_search(embedding, beam_size, batch_size,
 
   def loop_function(prev, i, log_beam_probs, beam_path, beam_symbols,
                     path_lengthes, is_finished_beam):
-    print i
     hidden_size = prev.get_shape().as_list()[-1]
     if i == 1:
+      # Todo: 1回目は先にトークンを選んでから状態を分岐させないと同じことを全ビームでやることになる
       # initialize length and EOS flags for each beam.
       path_lengthes = tf.fill([batch_size, beam_size], 1.0)
       is_finished_beam = tf.fill([batch_size, beam_size], False)
-
       # expand previous states to beams. (e.g. batch_size=beam_size=2: [a, b] -> [a, a, b, b])
       prev = tf.gather(prev, tf.tile(tf.expand_dims(tf.range(batch_size), dim=1), [1, beam_size]))
+      # prev: [batch, beam, hidden] -> [batch * beam, hidden]
       prev = tf.reshape(prev, [-1, hidden_size])
 
     probs = nn_ops.xw_plus_b(
@@ -78,7 +78,7 @@ def _extract_beam_search(embedding, beam_size, batch_size,
     probs = tf.log(tf.nn.softmax(probs))
     probs = tf.reshape(probs, [-1, beam_size * num_symbols])
 
-    # divide probs by the length of each beam and select top-k.
+    # divide probs by the length of each beam (length penalty) and select top-k.
     pl = tf.reshape(tile_from_beam_to_vocab(path_lengthes), 
                       [-1, beam_size*num_symbols])
     best_probs, indices = tf.nn.top_k(probs / pl, beam_size)
@@ -90,14 +90,15 @@ def _extract_beam_search(embedding, beam_size, batch_size,
     log_beam_probs.append(best_probs)
 
     is_finished_beam = tf.logical_or(
-      tf.gather_nd(is_finished_beam, index_matrix_to_pairs(beam_parent)),
+      tf.gather_nd(is_finished_beam, divide_index_by_batch(beam_parent)),
       tf.equal(symbols, tf.constant(EOS_ID))
     )
-    path_lengthes = tf.gather_nd(path_lengthes, index_matrix_to_pairs(beam_parent))
+    
+    path_lengthes = tf.gather_nd(path_lengthes, divide_index_by_batch(beam_parent))
     path_lengthes += tf.to_float(tf.logical_not(is_finished_beam))
 
     beam_state = tf.gather_nd(tf.reshape(prev, [batch_size, beam_size, -1]), 
-                              index_matrix_to_pairs(beam_parent))
+                              divide_index_by_batch(beam_parent))
     emb_prev = embedding_ops.embedding_lookup(embedding, symbols)
 
     # [batch, beam, embedding] -> [batch * beam, embedding]
@@ -149,16 +150,22 @@ def beam_rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None,
           inp, state, path_lengthes, is_finished_beam  = loop_function(
             prev, i, log_beam_probs, beam_path, beam_symbols,
             path_lengthes, is_finished_beam)
+
       if i > 0:
         variable_scope.get_variable_scope().reuse_variables()
-      print inp, state
+      #print i, inp, state
       output, state = cell(inp, state)
 
       if loop_function is not None:
         prev = output
-
-    beam_path = tf.reshape(tf.concat(beam_path, 0), [-1, beam_size])
-    beam_symbols = tf.reshape(tf.concat(beam_symbols, 0),[-1,beam_size])
+  # from time-major to batch_major
+  beam_path = tf.stack(beam_path, axis=1)
+  beam_symbols = tf.stack(beam_symbols, axis=1)
+  # [batch*beam, state] -> [batch, beam, state]
+  state = tf.reshape(
+    state, 
+    [-1, beam_path.get_shape().as_list()[-1], state.get_shape().as_list()[-1]]
+  )
   return beam_path, beam_symbols, state
 
 
@@ -323,48 +330,45 @@ def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell
         with variable_scope.variable_scope(variable_scope.get_variable_scope(), reuse=True):
           attns = attention(state)
 
-
-    beam_path = tf.reshape(tf.concat(beam_path, 0), [-1, beam_size])
-    beam_symbols = tf.reshape(tf.concat(beam_symbols, 0),[-1,beam_size])
-  return  beam_path, beam_symbols, state
+    #beam_path = tf.reshape(tf.concat(beam_path, 0), [-1, beam_size])
+    #beam_symbols = tf.reshape(tf.concat(beam_symbols, 0),[-1,beam_size])
+  return beam_path, beam_symbols, state
 
 
 
 def follow_path(path, symbol, beam_size):
-  paths = []
-  for _ in range(beam_size):
-    paths.append([])
-
+  best_symbols = []
   curr = range(beam_size)
   num_steps = len(path)
   for i in range(num_steps-1, -1, -1):
-    for kk in range(beam_size):
-      paths[kk].append(symbol[i][curr[kk]])
-      curr[kk] = path[i][curr[kk]]
+    best_symbols.append(symbol[i][curr[0]]) 
+    for j in range(beam_size):
+      curr[j] = path[i][curr[j]] #親を更新
 
-  for kk in range(beam_size):
-    foutputs = [int(logit) for logit in paths[kk][::-1]]
+  best_symbols = best_symbols[::-1]
   # If there is an EOS symbol in outputs, cut them at that point.
-  if EOS_ID in foutputs:
-    foutputs = foutputs[:foutputs.index(EOS_ID)]
-  rec = foutputs
-  return rec
+  if EOS_ID in best_symbols:
+    best_symbols = best_symbols[:best_symbols.index(EOS_ID)]
+  return best_symbols
 
+# old version
 # def follow_path(path, symbol, beam_size):
 #   paths = []
-#   for kk in range(beam_size):
+#   for _ in range(beam_size):
 #     paths.append([])
+
 #   curr = range(beam_size)
 #   num_steps = len(path)
 #   for i in range(num_steps-1, -1, -1):
-#     for kk in range(beam_size):
-#       paths[kk].append(symbol[i][curr[kk]])
-#       curr[kk] = path[i][curr[kk]]
+#     for j in range(beam_size):
+#       paths[j].append(symbol[i][curr[j]])
+#       curr[j] = path[i][curr[j]]
 
-#   for kk in range(beam_size):
-#     foutputs = [int(logit) for logit in paths[kk][::-1]]
+#   for j in range(beam_size):
+#     foutputs = [int(logit) for logit in paths[j][::-1]]
 #   # If there is an EOS symbol in outputs, cut them at that point.
 #   if EOS_ID in foutputs:
 #     foutputs = foutputs[:foutputs.index(EOS_ID)]
 #   rec = foutputs
 #   return rec
+

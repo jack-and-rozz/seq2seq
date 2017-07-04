@@ -61,7 +61,7 @@ class Baseline(object):
       self.encoder_inputs, self.decoder_inputs[:-1],
       self.targets, self.target_weights[:-1])
     if self.forward_only and FLAGS.beam_size > 1:
-      self.beam_paths, self.beam_symbols, self.d_states = res
+      self.beam_pathes, self.beam_symbols, self.d_states = res
     else:
       self.logits, self.losses, self.d_states = res
 
@@ -176,7 +176,7 @@ class Baseline(object):
 
     # Since our targets are decoder inputs shifted by one, we need one more.
     last_target = self.decoder_inputs[decoder_size].name
-    input_feed[last_target] = np.zeros([batch.batch_size], dtype=tf.int32)
+    input_feed[last_target] = np.zeros([batch.batch_size], dtype=np.int32)
     input_feed[self.batch_size] = batch.batch_size
     return input_feed 
 
@@ -214,15 +214,14 @@ class Baseline(object):
     sess = self.sess
     input_feed = self.get_input_feed(raw_batch)
     if self.beam_size > 1:
-      output_feed = [self.beam_paths, self.beam_symbols]
-      beam_paths, beam_symbols = sess.run(output_feed, input_feed)
-      print beam_paths
-      print beam_symbols
-      results = follow_path(beam_paths, beam_symbols, self.beam_size)
-      print results
-      exit(1)
       losses = None
-      results = [results]
+      output_feed = [self.beam_pathes, self.beam_symbols]
+      # The pathes and symbols are a list of array([batch_size, beam_size])
+      beam_pathes, beam_symbols = sess.run(output_feed, input_feed)
+      results = []
+      for p, s in zip(beam_pathes, beam_symbols):
+        result = follow_path(p, s, self.beam_size)
+        results.append(result)
     else:
       output_feed = [self.losses, self.d_states]
       for l in xrange(self.max_sequence_length):
