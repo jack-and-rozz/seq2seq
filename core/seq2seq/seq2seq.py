@@ -96,7 +96,8 @@ def projection_and_sampled_loss(target_vocab_size, hidden_size, num_samples):
   return output_projection, softmax_loss_function
 
 class BasicSeq2Seq(object):
-  def __init__(self, encoder, decoder, num_samples, feed_previous=False, beam_size=1):
+  def __init__(self, encoder, decoder, num_samples, batch_size,
+               feed_previous=False, beam_size=1):
     self.encoder = encoder
     self.decoder = decoder
     self.projection, self.loss = projection_and_sampled_loss(
@@ -105,10 +106,11 @@ class BasicSeq2Seq(object):
     self.do_beam_decode = False
     if feed_previous:
       if beam_size > 1:
+        self.batch_size = tf.placeholder(tf.int32, shape=[])
         self.do_beam_decode = True
         update_embedding_for_previous = False
         self.loop_function = _extract_beam_search(
-          decoder.embedding, beam_size, 
+          decoder.embedding, beam_size, batch_size,
           output_projection=self.projection,
           update_embedding=update_embedding_for_previous)
         self.decoder = BeamSearchWrapper(self.decoder, beam_size, self.projection)

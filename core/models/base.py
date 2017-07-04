@@ -53,7 +53,8 @@ class Baseline(object):
       decoder = getattr(decoders, FLAGS.decoder_type)(
         copy.deepcopy(cell), decoder_embedding, scope=decoder_scope)
     self.seq2seq = getattr(seq2seq, FLAGS.seq2seq_type)(
-      encoder, decoder, FLAGS.num_samples, feed_previous=forward_only, beam_size=FLAGS.beam_size)
+      encoder, decoder, FLAGS.num_samples, self.batch_size,
+      feed_previous=forward_only, beam_size=FLAGS.beam_size)
 
     # The last tokens in decoder_inputs are not to set each length of placeholders to be same.
     res = self.seq2seq(
@@ -117,7 +118,8 @@ class Baseline(object):
     self.targets = [self.decoder_inputs[i + 1]
                     for i in xrange(len(self.decoder_inputs) - 1)]
     self.sequence_length = tf.placeholder(tf.int32, shape=[None], name="sequence_length") if use_sequence_length else None
-
+    # For beam_decoding, we have to feed the size of a current batch.
+    self.batch_size = tf.placeholder(tf.int32, shape=[])
 
   def setup_cell(self, do_update):
     cell = getattr(rnn_cell, self.cell_type)(self.hidden_size, reuse=tf.get_variable_scope().reuse) 
@@ -175,6 +177,7 @@ class Baseline(object):
     # Since our targets are decoder inputs shifted by one, we need one more.
     last_target = self.decoder_inputs[decoder_size].name
     input_feed[last_target] = np.zeros([batch.batch_size], dtype=tf.int32)
+    input_feed[self.batch_size] = batch.batch_size
     return input_feed 
 
   def step(self, raw_batch):
@@ -213,7 +216,11 @@ class Baseline(object):
     if self.beam_size > 1:
       output_feed = [self.beam_paths, self.beam_symbols]
       beam_paths, beam_symbols = sess.run(output_feed, input_feed)
+      print beam_paths
+      print beam_symbols
       results = follow_path(beam_paths, beam_symbols, self.beam_size)
+      print results
+      exit(1)
       losses = None
       results = [results]
     else:

@@ -4,11 +4,12 @@ tmp
 tensorflow
 *.pyc
 .#*
-*/.#*
 .fuse*
+*/.#*
 */.fuse*
 .nfs*
-configs/*
+configs/config
 nohup.out
 tmp*
 .DS_Store
+.python-version

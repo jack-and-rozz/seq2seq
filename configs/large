@@ -1,0 +1,10 @@
+encoder_type=BidirectionalRNNEncoder
+decoder_type=AttentionDecoder
+cell_type=GRUCell
+max_train_rows=2000000
+batch_size=200
+hidden_size=500
+embedding_size=500
+num_layers=2
+max_epoch=100
+max_sequence_length=64
