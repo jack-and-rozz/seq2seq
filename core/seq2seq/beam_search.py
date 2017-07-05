@@ -60,12 +60,14 @@ def _extract_beam_search(embedding, beam_size, batch_size,
       [1, tf.shape(index_matrix)[1]])
     return tf.stack([replicated_first_indices, index_matrix], axis=2)
 
-  def loop_function(prev, i, log_beam_probs, beam_path, beam_symbols,
+  def loop_function(i, prev, state, 
+                    log_beam_probs, beam_path, beam_symbols,
                     path_lengthes, is_finished_beam):
-    hidden_size = prev.get_shape().as_list()[-1]
+    output_size = prev.get_shape().as_list()[-1]
+    state_size = state.get_shape().as_list()[-1]
 
     if i == 1:
-      # Todo: 1回目は先にトークンを選んでから状態を分岐させないと同じことを全ビームでやることになる
+      # todo: prevだけではなくstateも分岐
       probs = nn_ops.xw_plus_b(
         prev, output_projection[0], output_projection[1])
       probs = tf.log(tf.nn.softmax(probs))
@@ -78,7 +80,11 @@ def _extract_beam_search(embedding, beam_size, batch_size,
       # expand previous states to beams. (e.g. batch_size=beam_size=2: [a, b] -> [a, a, b, b])
       prev = tf.gather(prev, tf.tile(tf.expand_dims(tf.range(batch_size), dim=1), [1, beam_size]))
       # prev: [batch, beam, hidden] -> [batch * beam, hidden]
-      prev = tf.reshape(prev, [-1, hidden_size])
+      prev = tf.reshape(prev, [-1, output_size])
+
+      state = tf.gather(state, tf.tile(tf.expand_dims(tf.range(batch_size), dim=1), [1, beam_size]))
+      state = tf.reshape(state, [-1, state_size])
+
     else:
       probs = nn_ops.xw_plus_b(
         prev, output_projection[0], output_projection[1])
@@ -104,14 +110,14 @@ def _extract_beam_search(embedding, beam_size, batch_size,
     path_lengthes = tf.gather_nd(path_lengthes, divide_index_by_batch(beam_parent))
     path_lengthes += tf.to_float(tf.logical_not(is_finished_beam))
 
-    beam_state = tf.gather_nd(tf.reshape(prev, [batch_size, beam_size, -1]), 
-                              divide_index_by_batch(beam_parent))
+    beam_state = tf.gather_nd(
+      tf.reshape(state, [batch_size, beam_size, state_size]), 
+      divide_index_by_batch(beam_parent))
     emb_prev = embedding_ops.embedding_lookup(embedding, symbols)
 
     # [batch, beam, embedding] -> [batch * beam, embedding]
+    beam_state = tf.reshape(beam_state, [-1, state_size])
     emb_prev  = tf.reshape(emb_prev, [-1, embedding_size])
-    beam_state = tf.reshape(beam_state, [-1, hidden_size])
-
     if not update_embedding:
       emb_prev = array_ops.stop_gradient(emb_prev)
     return emb_prev, beam_state, path_lengthes, is_finished_beam
@@ -155,14 +161,13 @@ def beam_rnn_decoder(decoder_inputs, initial_state, cell, loop_function=None,
       if loop_function is not None and prev is not None:
         with variable_scope.variable_scope("loop_function", reuse=True):
           inp, state, path_lengthes, is_finished_beam  = loop_function(
-            prev, i, log_beam_probs, beam_path, beam_symbols,
+            i, prev, state,
+            log_beam_probs, beam_path, beam_symbols,
             path_lengthes, is_finished_beam)
 
       if i > 0:
         variable_scope.get_variable_scope().reuse_variables()
-      #print i, inp, state
       output, state = cell(inp, state)
-
       if loop_function is not None:
         prev = output
   # from time-major to batch_major
@@ -308,10 +313,14 @@ def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell
       if loop_function is not None :
         with variable_scope.variable_scope("loop_function", reuse=True):
           if prev is not None:
-            #inp = loop_function(prev, i, log_beam_probs, beam_path, beam_symbols)
             inp, state, path_lengthes, is_finished_beam  = loop_function(
-              prev, i, log_beam_probs, beam_path, beam_symbols,
+              i, prev, state,
+              log_beam_probs, beam_path, beam_symbols,
               path_lengthes, is_finished_beam)
+
+            #inp, state, path_lengthes, is_finished_beam  = loop_function(
+            #  prev, i, log_beam_probs, beam_path, beam_symbols,
+            #  path_lengthes, is_finished_beam)
 
 
       input_size = inp.get_shape().with_rank(2)[1]

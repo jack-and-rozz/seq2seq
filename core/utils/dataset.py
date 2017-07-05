@@ -109,7 +109,6 @@ def padding_and_format(data, max_sequence_length, use_sequence_length=True):
 
 
 class Vocabulary(object):
-  #def __init__(self, source_path, target_path, vocab_size):
   def __init__(self, source_dir, target_dir, vocab_file, lang, vocab_size):
     source_path = os.path.join(source_dir, vocab_file) + '.' + lang
     target_path = os.path.join(target_dir, vocab_file) + '.%s.Wvocab%d' %(lang, vocab_size)
@@ -175,10 +174,14 @@ class ASPECDataset(object):
     self.s_vocab = s_vocab
     self.t_vocab = t_vocab
 
-    s_data = self.initialize_data(source_dir, target_dir, filename, s_vocab,
-                                  max_rows=max_rows)
-    t_data = self.initialize_data(source_dir, target_dir, filename, t_vocab,
-                                  max_rows=max_rows)
+    s_data, s_source_path, _ = self.initialize_data(source_dir, target_dir, 
+                                                    filename, s_vocab,
+                                                    max_rows=max_rows)
+    t_data, t_source_path, _ = self.initialize_data(source_dir, target_dir, 
+                                                    filename, t_vocab,
+                                                    max_rows=max_rows)
+    self.s_source_path = s_source_path
+    self.t_source_path = t_source_path
 
     #self.data = sorted([(i, s, t) for i,(s,t) in enumerate(zip(s_data, t_data))],key=lambda x: len(x[1]))
     self.data = [(i, s, t) for i,(s,t) in enumerate(zip(s_data, t_data))]
@@ -207,7 +210,7 @@ class ASPECDataset(object):
         data.append(vocab.to_ids(self.tokenizer(l)))
       with open(processed_path, 'w') as f:
         f.write('\n'.join([' '.join([str(x) for x in l]) for l in data]) + '\n')
-    return data
+    return data, source_path, processed_path
 
   def stat(self):
     print ("Corpus Statistics")

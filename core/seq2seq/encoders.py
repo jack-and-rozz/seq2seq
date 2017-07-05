@@ -101,6 +101,7 @@ class BidirectionalRNNEncoder(RNNEncoder):
       else:
         num_layers = len(self.cell._cells)
         size = self.state_size // num_layers
+        print size
         merged_state = []
         state_fw = tf.split(state_fw, [size for _ in xrange(num_layers)], 1)
         state_bw = tf.split(state_bw, [size for _ in xrange(num_layers)], 1)

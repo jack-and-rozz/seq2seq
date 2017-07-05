@@ -1,14 +1,13 @@
 #coding: utf-8
 from __future__ import absolute_import
 from __future__ import division
-#from __future__ import print_function
 
-import MeCab
-import sys, io, os, codecs, time, itertools, math, random, copy
+import sys, os, time, random
 from logging import FileHandler
 import numpy as np
 import tensorflow as tf
-from tensorflow.python.platform import gfile
+import nltk
+#from tensorflow.python.platform import gfile
 #from six.moves import xrange  # pylint: disable=redefined-builtin
 
 import core
@@ -108,7 +107,7 @@ def create_model(sess, max_sequence_length, forward_only, do_update, reuse=None)
   ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_path + '/checkpoints')
   saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
   
-  if ckpt and gfile.Exists(ckpt.model_checkpoint_path + '.index'):
+  if ckpt and os.path.exists(ckpt.model_checkpoint_path + '.index'):
     if reuse==None:
       logger.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
     saver.restore(sess, ckpt.model_checkpoint_path)
@@ -138,69 +137,89 @@ def decode_interact(sess):
       output = output[:output.index(EOS_ID)]
     output = " " .join(t_vocab.to_tokens(output))
     print (output)
-    
 
 def decode_test(sess):
+  def get_gold_results(data):
+    # read original test corpus (unknown words still remain)
+    sources = [data.tokenizer(l) for l in open(data.s_source_path)]
+    targets = [data.tokenizer(l) for l in open(data.t_source_path)]
+
+    s_ref_path = '%s/%s/%s.%s' % (FLAGS.checkpoint_path, TESTS_PATH, FLAGS.test_data, FLAGS.source_lang)
+    t_ref_path = '%s/%s/%s.%s' % (FLAGS.checkpoint_path, TESTS_PATH, FLAGS.test_data, FLAGS.target_lang)
+
+    if not os.path.exists(s_ref_path):
+      with open(s_ref_path, 'w') as f:
+        for s in sources:
+          f.write(" ".join([str(x) for x in s]) + '\n')
+    if not os.path.exists(t_ref_path):
+      with open(t_ref_path, 'w') as f:
+        for t in targets:
+          f.write(" ".join([str(x) for x in t]) + '\n')
+
+    return sources, targets
+
+  def get_decode_results(data, s_vocab, t_vocab):
+    max_sequence_length = max(data.largest_bucket)
+    mtest = create_model(sess, max_sequence_length, True, False)
+    decode_path = '%s/%s/%s.%s.decode.beam%d.ep%d' % (
+      FLAGS.checkpoint_path,
+      TESTS_PATH,
+      FLAGS.test_data, 
+      FLAGS.target_lang, 
+      FLAGS.beam_size, 
+      mtest.epoch.eval()
+    )
+    if not os.path.exists(decode_path):
+      sources = []
+      targets = []
+      results = []
+      for i, raw_batch in enumerate(data.get_batch(FLAGS.batch_size)):
+        _, outputs = mtest.decode(raw_batch)
+        for b, o in zip(raw_batch, outputs):
+          idx, s, t = b
+          if EOS_ID in o:
+            o = o[:o.index(EOS_ID)]
+          source = s_vocab.to_tokens(s)
+          target = t_vocab.to_tokens(t)
+          result = t_vocab.to_tokens(o)
+          sources.append(source)
+          targets.append(target)
+          results.append(result)
+          print "<%d>" % idx
+          print (' '.join(source))
+          print (' '.join(target))
+          print (' '.join(result))
+      with open(decode_path, 'w') as f:
+        f.write("\n".join([' '.join(x) for x in results]) + "\n")
+    else:
+      results = [l.replace('\n', '').split() for l in open(decode_path)]
+    return results
+
   data_path = os.path.join(FLAGS.source_data_dir, FLAGS.vocab_data)
   vocab_path = os.path.join(FLAGS.processed_data_dir, FLAGS.vocab_data)
-  s_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.vocab_data,
-                       FLAGS.source_lang, FLAGS.source_vocab_size)
-  t_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.vocab_data,
-                       FLAGS.target_lang, FLAGS.target_vocab_size)
+  s_vocab = Vocabulary(
+    FLAGS.source_data_dir, FLAGS.processed_data_dir, 
+    FLAGS.vocab_data, FLAGS.source_lang, FLAGS.source_vocab_size
+  )
+  t_vocab = Vocabulary(
+    FLAGS.source_data_dir, FLAGS.processed_data_dir, 
+    FLAGS.vocab_data, FLAGS.target_lang, FLAGS.target_vocab_size
+  )
   test = ASPECDataset(
     FLAGS.source_data_dir, FLAGS.processed_data_dir, 
     FLAGS.test_data, s_vocab, t_vocab,
     max_sequence_length=None, max_rows=None)
+  sources, targets = get_gold_results(test)
+  results = get_decode_results(test, s_vocab, t_vocab)
+  bleu_score = nltk.translate.bleu_score.corpus_bleu(targets, results)
   logger.info("Number of tests: %d " % test.size)
-  max_sequence_length = max(test.largest_bucket)
-  mtest = create_model(sess, max_sequence_length, True, False)
-  sources = []
-  targets = []
-  results = []
-  for i, raw_batch in enumerate(test.get_batch(FLAGS.batch_size)):
-    _, outputs = mtest.decode(raw_batch)
-    for b, o in zip(raw_batch, outputs):
-      idx, s, t = b
-      if EOS_ID in o:
-        o = o[:o.index(EOS_ID)]
-      source = " ".join(s_vocab.to_tokens(s))
-      target = " ".join(t_vocab.to_tokens(t))
-      result = " ".join(t_vocab.to_tokens(o))
-      sources.append(source)
-      targets.append(target)
-      results.append(result)
-      print "<%d>" % idx
-      print (source)
-      print (target)
-      print (result)
-
-  # to check the words input as _UNK.
-  source_path = FLAGS.checkpoint_path + TESTS_PATH + '/%s.%s' % (FLAGS.test_data, FLAGS.source_lang)
-  target_path = FLAGS.checkpoint_path + TESTS_PATH + '/%s.%s' % (FLAGS.test_data, FLAGS.target_lang)
-  if not os.path.exists(source_path):
-    with open(source_path, 'w') as f:
-      f.write("\n".join(sources) + "\n")
-  if not os.path.exists(target_path):
-    with open(target_path, 'w') as f:
-      f.write("\n".join(targets) + "\n")
-
-  # write decoding results.
-  if FLAGS.beam_size == 1:
-    result_path = '/%s.%s.decode.ep%d' % (FLAGS.test_data, FLAGS.target_lang, mtest.epoch.eval())
-  else:
-    result_path = '/%s.%s.decode.beam%d.ep%d' % (FLAGS.test_data, FLAGS.target_lang, 
-                                                 FLAGS.beam_size, mtest.epoch.eval())
-  decode_path = FLAGS.checkpoint_path + TESTS_PATH + result_path
-  with open(decode_path, 'w') as f:
-    f.write("\n".join(results) + "\n")
+  logger.info("BLEU Score: %f " % bleu_score)
 
 def train(sess):
   data_path = os.path.join(FLAGS.source_data_dir, FLAGS.vocab_data)
   vocab_path = os.path.join(FLAGS.processed_data_dir, FLAGS.vocab_data)
-  s_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.vocab_data,
-                       FLAGS.source_lang, FLAGS.source_vocab_size)
-  t_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.vocab_data,
-                       FLAGS.target_lang, FLAGS.target_vocab_size)
+  s_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.vocab_data, FLAGS.source_lang, FLAGS.source_vocab_size)
+  t_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, FLAGS.vocab_data, FLAGS.target_lang, FLAGS.target_vocab_size)
 
   logger.info("Reading dataset.")
   train = ASPECDataset(
