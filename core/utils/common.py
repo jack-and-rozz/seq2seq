@@ -1,10 +1,30 @@
 # -*- coding:utf-8 -*-
-from __future__ import print_function
+#from __future__ import print_function
 import sys, os, time, re, math, collections
 import numpy as np
 
 from itertools import chain
 from logging import getLogger, StreamHandler, FileHandler, Formatter, DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+try:
+   import cPickle as pickle
+except:
+   import pickle
+
+
+############################################
+#       Dump Data
+############################################
+def load_or_create(processed_path, func, *args):
+  print (processed_path)
+  if not os.path.exists(processed_path):
+    data = func(*args)
+    pickle.dump(data, open(processed_path, 'wb'))
+  else:
+    data = pickle.load(open(processed_path, "rb"))
+  return data
+
+
 
 ############################################
 #        Dictionary

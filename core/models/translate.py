@@ -15,21 +15,32 @@ from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 from tensorflow.python.client import timeline
 from tensorflow.python.platform import gfile
 
-from core.seq2seq import seq2seq, encoders, decoders
 from core.utils import common
 from core.utils.dataset import padding_and_format
 from core.utils.vocabulary import VecVocabulary, PAD_ID, EOS_ID, UNK_ID
+from core.seq2seq import seq2seq, encoders, decoders
 from core.seq2seq.beam_search import follow_path
 
 class Baseline(object):
   def __init__(self, sess, FLAGS, forward_only, do_update, 
                s_vocab=None, t_vocab=None):
     self.sess = sess
-    self.summary_dir = FLAGS.checkpoint_path + '/summaries'
-    #self.summary_writer = tf.summary.FileWriter(self.summary_dir, sess.graph)
     self.forward_only=forward_only
     self.do_update = do_update
     self.read_flags(FLAGS)
+
+    self.learning_rate = variable_scope.get_variable(
+      "learning_rate", trainable=False, shape=[],
+      initializer=tf.constant_initializer(float(FLAGS.learning_rate), 
+                                          dtype=tf.float32))
+    self.global_step = variable_scope.get_variable(
+      "global_step", trainable=False, shape=[],  dtype=tf.int32,
+      initializer=tf.constant_initializer(0, dtype=tf.int32)) 
+
+    self.epoch = variable_scope.get_variable(
+      "epoch", trainable=False, shape=[], dtype=tf.int32,
+      initializer=tf.constant_initializer(0, dtype=tf.int32)) 
+
     with tf.name_scope('placeholders'):
       self.setup_placeholders(use_sequence_length=self.use_sequence_length)
     cell = self.setup_cell(do_update)
@@ -149,17 +160,6 @@ class Baseline(object):
     self.cell_type = FLAGS.cell_type
     self.use_sequence_length=FLAGS.use_sequence_length
     self.beam_size = FLAGS.beam_size
-    self.learning_rate = variable_scope.get_variable(
-      "learning_rate", trainable=False, shape=[],
-      initializer=tf.constant_initializer(float(FLAGS.learning_rate), 
-                                          dtype=tf.float32))
-    self.global_step = variable_scope.get_variable(
-      "global_step", trainable=False, shape=[],  dtype=tf.int32,
-      initializer=tf.constant_initializer(0, dtype=tf.int32)) 
-
-    self.epoch = variable_scope.get_variable(
-      "epoch", trainable=False, shape=[], dtype=tf.int32,
-      initializer=tf.constant_initializer(0, dtype=tf.int32)) 
 
   def get_input_feed(self, raw_batch):
     batch = padding_and_format(raw_batch, self.max_sequence_length,
@@ -194,7 +194,7 @@ class Baseline(object):
                           options=run_options,
                           run_metadata=run_metadata)
        tl = timeline.Timeline(run_metadata.step_stats)
-       with tf.gfile.Open(self.summary_dir+'/timeline.json', mode='w') as trace: 
+       with tf.gfile.Open(self.SUMMARIES_PATH + '/timeline.json', mode='w') as trace: 
          trace.write(tl.generate_chrome_trace_format(show_memory=True))
     else:
       outputs = sess.run(output_feed, input_feed)
@@ -247,7 +247,6 @@ class Baseline(object):
 class MultiGPUTrainWrapper(object):
   def __init__(self, sess, FLAGS):
     self.sess = sess
-    self.summary_dir = FLAGS.checkpoint_path + '/summaries'
 
     self.learning_rate = FLAGS.learning_rate
     self.max_gradient_norm = FLAGS.max_gradient_norm
@@ -323,7 +322,7 @@ class MultiGPUTrainWrapper(object):
                           options=run_options,
                           run_metadata=run_metadata)
        tl = timeline.Timeline(run_metadata.step_stats)
-       with tf.gfile.Open(self.summary_dir+'/timeline.json', mode='w') as trace: 
+       with tf.gfile.Open(self.SUMMARIES_PATH+'/timeline.json',mode='w') as trace: 
          trace.write(tl.generate_chrome_trace_format(show_memory=True))
     else:
       outputs = sess.run(output_feed, input_feed)

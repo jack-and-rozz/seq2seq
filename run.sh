@@ -42,7 +42,7 @@ done;
 
 # get params from config
 
-params_arr=(checkpoint_path log_file mode num_layers source_lang target_lang source_vocab_size target_vocab_size num_samples hidden_size embedding_size keep_prob seq2seq_type encoder_type decoder_type cell_type batch_size max_epoch max_train_rows max_sequence_length max_to_keep source_data_dir processed_data_dir vocab_data train_data dev_data test_data num_gpus learning_rate max_gradient_norm init_scale trainable_source_embedding trainable_target_embedding beam_size w2v)
+params_arr=(checkpoint_path log_file mode num_layers source_lang target_lang source_vocab_size target_vocab_size num_samples hidden_size embedding_size keep_prob seq2seq_type encoder_type decoder_type cell_type batch_size max_epoch max_train_rows max_sequence_length max_to_keep source_data_dir processed_data_dir vocab_data train_data dev_data test_data num_gpus learning_rate max_gradient_norm init_scale trainable_source_embedding trainable_target_embedding beam_size w2v model_type)
 params=""
 for param in ${params_arr[@]}; do 
     if [ ! ${!param} = "" ]; then
@@ -56,6 +56,7 @@ run(){
     fi
     now=$(date +'%Y%m%d%H%M')
     #python -B main_defgen.py $params
+    echo "    python -B $bin_file $params"
     python -B $bin_file $params
     wait
 }

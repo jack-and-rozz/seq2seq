@@ -3,25 +3,17 @@ from __future__ import absolute_import
 from __future__ import division
 #from __future__ import print_function
 
-import gzip, os, re, tarfile, json, sys, collections, types, random, copy
+import os, re, sys, random, copy
 import commands, itertools
 import MeCab
 import numpy as np
 import mojimoji
 from tensorflow.python.platform import gfile
+
 from core.utils import common
+from core.utils.vocabulary import PAD_ID, GO_ID, EOS_ID, UNK_ID
+from core.utils.vocabulary import WordNetSynsetVocabulary, WordNetRelationVocabulary
 
-
-_PAD = "_PAD"
-_GO = "_GO"
-_EOS = "_EOS"
-_UNK = "_UNK"
-_START_VOCAB = [_PAD, _GO, _EOS, _UNK]
-
-PAD_ID = 0
-GO_ID = 1
-EOS_ID = 2
-UNK_ID = 3
 
 #_WORD_SPLIT = re.compile("([.,!?\"':;)(])")
 _DIGIT_RE = re.compile(r"\d")
@@ -32,7 +24,6 @@ def format_zen_han(l):
   l = mojimoji.zen_to_han(l, kana=False) #全角数字・アルファベットを半角に
   l = mojimoji.han_to_zen(l, digit=False, ascii=False) #半角カナを全角に
   l = l.encode('utf-8')
-  
   return l
 
 def separate_numbers(sent):
@@ -40,14 +31,12 @@ def separate_numbers(sent):
     return ' ' + m.group(0) + ' '
   return re.sub(_DIGIT_RE, addspace, sent).replace('  ', ' ')
 
-
 def space_tokenizer(sent, do_format_zen_han=True, do_separate_numbers=True):
   if do_format_zen_han:
     sent = format_zen_han(sent)
   if do_separate_numbers:
     sent = separate_numbers(sent)
   return sent.replace('\n', '').split()
-
 
 def padding_and_format(data, max_sequence_length, use_sequence_length=True):
   '''
@@ -108,95 +97,36 @@ def padding_and_format(data, max_sequence_length, use_sequence_length=True):
   return batch
 
 
-class Vocabulary(object):
-  def __init__(self, source_dir, target_dir, vocab_file, lang, vocab_size):
-    source_path = os.path.join(source_dir, vocab_file) + '.' + lang
-    target_path = os.path.join(target_dir, vocab_file) + '.%s.Wvocab%d' %(lang, vocab_size)
-    self.tokenizer = space_tokenizer
-    self.normalize_digits = False
-    self.create_vocabulary(source_path, target_path, vocab_size)
-    self.vocab, self.rev_vocab = self.load_vocabulary(target_path)
-    self.lang = lang
-    self.size = vocab_size
-
-  def get(self, token):
-    if not self.normalize_digits:
-      return self.vocab.get(token, UNK_ID)
-    else:
-      return self.vocab.get(re.sub(_DIGIT_RE, "0", token), UNK_ID)
-
-  def to_tokens(self, ids):
-    return [self.rev_vocab[_id] for _id in ids]
-  def to_ids(self, tokens):
-    return [self.get(w) for w in tokens]
-
-  def load_vocabulary(self, vocabulary_path):
-    if gfile.Exists(vocabulary_path):
-        rev_vocab = []
-        with gfile.GFile(vocabulary_path, mode="r") as f:
-            rev_vocab = [l.split('\t')[0] for l in f]
-        rev_vocab = [line.strip() for line in rev_vocab]
-        vocab = dict([(x, y) for (y, x) in enumerate(rev_vocab)])
-        return vocab, rev_vocab
-    else:
-        raise ValueError("Vocabulary file %s not found.", vocabulary_path)
-
-  def create_vocabulary(self, data_path, vocabulary_path, 
-                        max_vocabulary_size):
-    vocab = collections.defaultdict(int)
-    counter = 0
-    if not gfile.Exists(vocabulary_path):
-      print("Creating vocabulary \"%s\" " % (vocabulary_path))
-      for line in gfile.GFile(data_path, mode="r"):
-        counter += 1
-        if counter % 100000 == 0:
-          print("  processing line %d" % counter)
-        tokens = self.tokenizer(line)
-        for w in tokens:
-          vocab[w] += 1
-      vocab_list = _START_VOCAB + sorted(vocab, key=vocab.get, reverse=True)
-      for w in _START_VOCAB:
-        vocab[w] = 0
-      n_unknown = sum([vocab[w] for w in vocab_list[max_vocabulary_size:]])
-      if len(vocab_list) > max_vocabulary_size:
-        vocab_list = vocab_list[:max_vocabulary_size]
-      vocab[_UNK] = n_unknown
-      vocab[_EOS] = counter
-      with gfile.GFile(vocabulary_path, mode="w") as vocab_file:
-        for w in vocab_list:
-          vocab_file.write("%s\t%d\n" % (w, vocab[w]))
-
-
 class ASPECDataset(object):
-  def __init__(self, source_dir, target_dir, filename, s_vocab, t_vocab,
+  def __init__(self, source_dir, processed_dir, filename, s_vocab, t_vocab,
                max_sequence_length=None, max_rows=None):
-    self.tokenizer = space_tokenizer
+    self.tokenizer = s_vocab.tokenizer
     self.s_vocab = s_vocab
     self.t_vocab = t_vocab
 
-    s_data, s_source_path, _ = self.initialize_data(source_dir, target_dir, 
+    s_data, s_source_path, _ = self.initialize_data(source_dir, processed_dir, 
                                                     filename, s_vocab,
                                                     max_rows=max_rows)
-    t_data, t_source_path, _ = self.initialize_data(source_dir, target_dir, 
+    t_data, t_source_path, _ = self.initialize_data(source_dir, processed_dir, 
                                                     filename, t_vocab,
                                                     max_rows=max_rows)
     self.s_source_path = s_source_path
     self.t_source_path = t_source_path
 
-    #self.data = sorted([(i, s, t) for i,(s,t) in enumerate(zip(s_data, t_data))],key=lambda x: len(x[1]))
     self.data = [(i, s, t) for i,(s,t) in enumerate(zip(s_data, t_data))]
     if max_sequence_length:
       self.data = [(i, s, t) for (i, s, t) in self.data
                    if len(s) <= max_sequence_length and 
                    len(t) <= max_sequence_length - 2]
     self.size = len(self.data)
-    self.largest_bucket = [max([len(s)for (_, s, t) in self.data]),
-                           max([len(t)for (_, s, t) in self.data])+2]
+    self.max_sequence_length = [max([len(s)for (_, s, t) in self.data]),
+                                max([len(t)for (_, s, t) in self.data])+2]
+    self.max_sequence_length = max(self.max_sequence_length)
 
-  def initialize_data(self, source_dir, target_dir, filename, vocab, 
+  def initialize_data(self, source_dir, processed_dir, filename, vocab, 
                       max_rows=None):
-    source_path = os.path.join(source_dir, filename) + '.%s' % vocab.lang
-    processed_path = os.path.join(target_dir, filename) + '.%s.Wids%d' % (vocab.lang, vocab.size)
+    source_path = os.path.join(source_dir, filename) + '.%s' % vocab.suffix
+    processed_path = os.path.join(processed_dir, filename) + '.%s.Wids%d' % (vocab.suffix, vocab.size)
     data = []
     if gfile.Exists(processed_path):
       for i, l in enumerate(open(processed_path, 'r')):
@@ -219,8 +149,8 @@ class ASPECDataset(object):
     print ('len-Source: (min, max, ave) = (%d, %d, %.2f)' % (min(lens), max(lens), sum(lens)/len(lens)))
     print ('len-Target: (min, max, ave) = (%d, %d, %.2f)' % (min(lent), max(lent), sum(lent)/len(lent)))
 
-
   def get_batch(self, batch_size, do_shuffle=False, n_batches=1):
+    # get 'n_batches' batches each of which has 'batch_size' records.
     data = self.data
     if do_shuffle:
       data = copy.deepcopy(data)
@@ -233,36 +163,62 @@ class ASPECDataset(object):
       yield batch if n_batches > 1 else batch[0]
 
 
-class VecVocabulary(Vocabulary):
-  def __init__(self, source_dir, source_file, lang, vocab_size, read_vec=True):
-    source_path = os.path.join(source_dir, source_file)
-    self.normalize_digits = False
-    self.vocab, self.rev_vocab, self.embedding = self.load_vocabulary(source_path, vocab_size, read_vec)
-    self.lang = lang
-    self.size = vocab_size
+####################################
 
-  def load_vocabulary(self, source_path, max_vocabulary_size, read_vec):
-    vocab = collections.defaultdict(int)
-    if gfile.Exists(source_path):
-        rev_vocab = [] + _START_VOCAB
-        embedding = []
-        counter = 0
-        with gfile.GFile(source_path, mode="r") as f:
-            for l in f:
-              counter += 1
-              if counter % 100000 == 0:
-                print("  processing line %d" % counter)
-              if read_vec:
-                tokens = l.rstrip().split(' ')
-                rev_vocab.append(tokens[0])
-                embedding.append([float(v) for v in tokens[1:]])
-              else:
-                rev_vocab.append(l.split(' ', 1)[0])
-              if counter + len(_START_VOCAB) >= max_vocabulary_size:
-                break
-        vocab = dict([(x, y) for (y, x) in enumerate(rev_vocab)])
-        if read_vec:
-          embedding = [[0] * len(embedding[-1])] * len(_START_VOCAB) + embedding # prepend 4 zero vectors
-        return vocab, rev_vocab, np.array(embedding)
-    else:
-        raise ValueError("Vector file %s not found.", source_path)
+class DatasetBase(object):
+  def process(self, source_path, vocab):
+    raise NotImplementedError
+
+  def negative_sample(batch_size):
+    raise NotImplementedError
+
+  def get_batch(self, batch_size, 
+                do_shuffle=False, n_batches=1, negative_sampling_rate=0.0):
+    data = self.data
+    if negative_sampling_rate > 0:
+      data += self.negative_sample(int(len(self.data)*negative_sampling_rate))
+
+    if do_shuffle:
+      data = copy.deepcopy(data)
+      random.shuffle(data)
+    # Extract n_batches * batch_size lines from data
+    for i, b in itertools.groupby(enumerate(data), lambda x: x[0] // (batch_size*n_batches)):
+
+      raw_batch = [x[1] for x in b] # (id, data) -> data
+      # Yield 'n_batches' batches which have 'batch_size' lines
+      batch = [[x[1] for x in d2] for j, d2 in itertools.groupby(enumerate(raw_batch), lambda x: x[0] // (len(raw_batch) // n_batches))]
+
+      yield batch if n_batches > 1 else batch[0]
+
+
+class WordNetDataset(DatasetBase):
+  def __init__(self, source_dir, processed_dir, filename, 
+               s_vocab, r_vocab, max_rows=None):
+    self.s_vocab = s_vocab
+    self.r_vocab = r_vocab
+    self.source_path = os.path.join(source_dir, filename)
+    self.processed_path = os.path.join(processed_dir, filename)+ '.bin'
+    self.max_rows = max_rows
+
+    self.data = self.initialize_data(
+      self.source_path, self.processed_path, max_rows)
+    self.size = len(self.data)
+    
+  def initialize_data(self, source_path, processed_path, max_rows):
+    def process(source_path, max_rows):
+      def process_line(l):
+        s1, r, s2 = l.replace('\n', '').split('\t')
+        return [1.0, (self.s_vocab.to_id(s1),
+                      self.r_vocab.to_id(r),
+                      self.s_vocab.to_id(s2))]
+      data = [process_line(l) for i, l in enumerate(open(source_path)) if not max_rows or i < max_rows]
+      return data
+    return common.load_or_create(processed_path, process, source_path, max_rows)
+
+  def negative_sample(self, batch_size):
+    batch = []
+    for i in xrange(batch_size):
+      s1, s2 = random.sample(xrange(1, self.s_vocab.size), 2)
+      r = random.sample(xrange(1, self.r_vocab.size), 1)[0]
+      batch.append((0.0, (s1, r, s2)))
+    return batch
