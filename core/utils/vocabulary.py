@@ -2,6 +2,8 @@
 import collections, os, re, subprocess, time
 from nltk.corpus import wordnet as wn
 from subprocess import Popen, PIPE, STDOUT
+from tensorflow.python.platform import gfile
+
 import core.utils.common as common
 
 _PAD = "_PAD"

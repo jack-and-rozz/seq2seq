@@ -174,13 +174,13 @@ class DatasetBase(object):
 
   def get_batch(self, batch_size, 
                 do_shuffle=False, n_batches=1, negative_sampling_rate=0.0):
-    data = self.data
+    data = copy.deepcopy(self.data) if do_shuffle or negative_sampling_rate > 0 else self.data
+
     if negative_sampling_rate > 0:
       data += self.negative_sample(int(len(self.data)*negative_sampling_rate))
-
     if do_shuffle:
-      data = copy.deepcopy(data)
       random.shuffle(data)
+    print len(data)
     # Extract n_batches * batch_size lines from data
     for i, b in itertools.groupby(enumerate(data), lambda x: x[0] // (batch_size*n_batches)):
 
@@ -217,6 +217,8 @@ class WordNetDataset(DatasetBase):
 
   def negative_sample(self, batch_size):
     batch = []
+    print self.data[0]
+    exit(1)
     for i in xrange(batch_size):
       s1, s2 = random.sample(xrange(1, self.s_vocab.size), 2)
       r = random.sample(xrange(1, self.r_vocab.size), 1)[0]

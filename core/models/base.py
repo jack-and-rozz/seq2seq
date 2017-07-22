@@ -244,7 +244,7 @@ class Baseline(object):
     return losses, results
 
 
-class MultiGPUTrainWrapper(object):
+class AverageGradientMultiGPUTrainWrapper(object):
   def __init__(self, sess, FLAGS):
     self.sess = sess
     self.summary_dir = FLAGS.checkpoint_path + '/summaries'

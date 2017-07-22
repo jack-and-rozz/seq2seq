@@ -1,11 +1,14 @@
 #coding: utf-8
-import sys, os, random
+import sys, os, random, math
 import tensorflow as tf
 from base import BaseManager, logger
+import core.models.translate as translate_models
+from core.utils import common
+import core.models.wrappers as wrappers
 
 # about dataset
-tf.app.flags.DEFINE_string("source_data_dir", "dataset/transrate/source", "")
-tf.app.flags.DEFINE_string("processed_data_dir", "dataset/transrate/processed", "")
+tf.app.flags.DEFINE_string("source_data_dir", "dataset/translate/source", "")
+tf.app.flags.DEFINE_string("processed_data_dir", "dataset/translate/processed", "")
 tf.app.flags.DEFINE_string("source_lang", "en", "")
 tf.app.flags.DEFINE_string("target_lang", "ja", "")
 tf.app.flags.DEFINE_integer("beam_size", 1, "")
@@ -50,7 +53,7 @@ from core.utils.dataset import ASPECDataset, EOS_ID
 
 class TranslateManager(BaseManager):
   def __init__(self, FLAGS, sess):
-    super(self, TranslateManager).__init__(FLAGS, sess)
+    super(TranslateManager, self).__init__(FLAGS, sess)
     self.TMP_FLAGS += ['beam_size']
     self.s_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, 
                               FLAGS.vocab_data, FLAGS.source_lang, 
@@ -58,7 +61,32 @@ class TranslateManager(BaseManager):
     self.t_vocab = Vocabulary(FLAGS.source_data_dir, FLAGS.processed_data_dir, 
                               FLAGS.vocab_data, FLAGS.target_lang, 
                               FLAGS.target_vocab_size)
-    self.model_type = getattr(core.models.translate, FLAGS.model_type)
+    self.model_type = getattr(translate_models, FLAGS.model_type)
+
+  @common.timewatch(logger)
+  def create_model(self, FLAGS, forward_only, do_update, reuse=None):
+    sess = self.sess
+
+    with tf.variable_scope("Model", reuse=reuse):
+      if do_update and len(os.environ['CUDA_VISIBLE_DEVICES'].split(',')) > 1:
+        m = getattr(wrappers, "AverageGradientMultiGPUTrainWrapper")(sess, FLAGS, self.model_type)
+        #m = getattr(wrappers, "AverageLossMultiGPUTrainWrapper")(sess, FLAGS, self.model_type)
+      else:
+        m = self.model_type(sess, FLAGS, forward_only, do_update)
+    ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_path + '/checkpoints')
+    saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
+  
+    if ckpt and os.path.exists(ckpt.model_checkpoint_path + '.index'):
+      if reuse==None:
+        logger.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
+      saver.restore(sess, ckpt.model_checkpoint_path)
+    else:
+      if reuse==None:
+        logger.info("Created model with fresh parameters.")
+      tf.global_variables_initializer().run()
+      with open(FLAGS.checkpoint_path + '/variables/variables.list', 'w') as f:
+        f.write('\n'.join([v.name for v in tf.global_variables()]) + '\n')
+    return m
 
   def decode_interact(self):
     FLAGS = self.FLAGS
@@ -172,12 +200,13 @@ class TranslateManager(BaseManager):
                                  reuse=True)
     for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
       logger.info("Epoch %d: Start training." % epoch)
-      epoch_time, step_time, train_ppx = mtrain.run_batch(
+      epoch_time, step_time, train_loss = mtrain.run_batch(
         train, FLAGS.batch_size,do_shuffle=True)
+      train_ppx = math.exp(train_loss)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, ppx %.4f" % (epoch, epoch_time, step_time, train_ppx))
 
-      epoch_time, step_time, valid_ppx = mvalid.run_batch(dev, FLAGS.batch_size)
-
+      epoch_time, step_time, valid_loss = mvalid.run_batch(dev, FLAGS.batch_size)
+      valid_ppx = math.exp(valid_loss)
       logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, ppx %.4f" % (epoch, epoch_time, step_time, valid_ppx))
 
       mtrain.add_epoch()
@@ -188,7 +217,7 @@ class TranslateManager(BaseManager):
 
 def main(_):
   tf_config = tf.ConfigProto(
-    log_device_placement=False,
+    log_device_placement=True,
     allow_soft_placement=True, # GPU上で実行できない演算を自動でCPUに
     gpu_options=tf.GPUOptions(
       allow_growth=True, # True->必要になったら確保, False->全部

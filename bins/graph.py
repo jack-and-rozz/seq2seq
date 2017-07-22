@@ -1,5 +1,5 @@
 #coding: utf-8
-import sys, os, random
+import sys, os, random, copy
 import tensorflow as tf
 from base import BaseManager, logger
 from core.utils.vocabulary import WordNetSynsetVocabulary, WordNetRelationVocabulary
@@ -18,12 +18,13 @@ tf.app.flags.DEFINE_string("test_data", "wordnet-mlj12-test.txt", "")
 
 tf.app.flags.DEFINE_integer("syn_size", None, "")
 tf.app.flags.DEFINE_integer("rel_size", None, "")
-tf.app.flags.DEFINE_integer("batch_size", 50, "")
+tf.app.flags.DEFINE_integer("batch_size", 400, "")
 tf.app.flags.DEFINE_integer("hidden_size", 50, "")
 tf.app.flags.DEFINE_float("learning_rate", 1e-5, "Learning rate.")
+tf.app.flags.DEFINE_float("keep_prob", 0.5, "Dropout rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
                           "Clip gradients to this norm.")
-tf.app.flags.DEFINE_integer("max_epoch", 50, "")
+tf.app.flags.DEFINE_integer("max_epoch", 20, "")
 
 
 class GraphManager(BaseManager):
@@ -74,19 +75,23 @@ class GraphManager(BaseManager):
       FLAGS.test_data, self.syn_vocab, self.rel_vocab
     )
     with tf.name_scope('train'):
-      mtrain = self.create_model(FLAGS, False)
+      train_config = copy.deepcopy(FLAGS)
+      mtrain = self.create_model(train_config, False)
+
     with tf.name_scope('dev'):
-      mvalid = self.create_model(FLAGS, True)
+      valid_config = copy.deepcopy(FLAGS)
+      valid_config.keep_prob = 1.0
+      mvalid = self.create_model(valid_config, True)
 
     for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
       logger.info("Epoch %d: Start training." % epoch)
-      epoch_time, step_time, train_ppx = mtrain.run_batch(
+      epoch_time, step_time, train_loss = mtrain.run_batch(
         train, FLAGS.batch_size, do_shuffle=True)
-      logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %.4f" % (epoch, epoch_time, step_time, train_ppx))
+      logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %.4f" % (epoch, epoch_time, step_time, train_loss))
 
-      epoch_time, step_time, valid_ppx = mvalid.run_batch(dev, FLAGS.batch_size)
+      epoch_time, step_time, valid_loss = mvalid.run_batch(dev, FLAGS.batch_size)
 
-      logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %.4f" % (epoch, epoch_time, step_time, valid_ppx))
+      logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %.4f" % (epoch, epoch_time, step_time, valid_loss))
 
       mtrain.add_epoch()
       checkpoint_path = self.CHECKPOINTS_PATH + "/model.ckpt"

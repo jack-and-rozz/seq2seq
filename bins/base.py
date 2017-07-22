@@ -11,8 +11,6 @@ import tensorflow as tf
 
 import core
 from core.utils import common
-from core.models.base import MultiGPUTrainWrapper
-
 random.seed(0)
 np.random.seed(0)
 
@@ -59,32 +57,4 @@ class BaseManager(object):
         if not k in self.TMP_FLAGS:
           f.write('%s=%s\n' % (k, str(v)))
 
-  @common.timewatch(logger)
-  def create_model(self, FLAGS, forward_only, do_update, reuse=None):
-    sess = self.sess
-    with tf.variable_scope("Model", reuse=reuse):
-      if do_update and len(os.environ['CUDA_VISIBLE_DEVICES'].split(',')) > 1:
-        m = MultiGPUTrainWrapper(sess, FLAGS)
-      else:
-        m = self.model_type(sess, FLAGS, forward_only, do_update)
-    ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoint_path + '/checkpoints')
-    saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
-  
-    if ckpt and os.path.exists(ckpt.model_checkpoint_path + '.index'):
-      if reuse==None:
-        logger.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
-      saver.restore(sess, ckpt.model_checkpoint_path)
-    else:
-      if reuse==None:
-        logger.info("Created model with fresh parameters.")
-      tf.global_variables_initializer().run()
-      with open(FLAGS.checkpoint_path + '/variables/variables.list', 'w') as f:
-        f.write('\n'.join([v.name for v in tf.global_variables()]) + '\n')
-    return m
-
-  # def create_train(FLAGS):
-  #   return self.create_model(FLAGS, False, True)
-
-  # def create_valid(FLAGS):
-  #   return self.create_model(FLAGS, False, False, reuse=True)
 

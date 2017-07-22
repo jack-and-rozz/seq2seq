@@ -31,12 +31,18 @@ class SynsetLinkPrediction(object):
     self.e_subj, self.e_obj, self.e_rel = self.initialize_embeddings
     #self.loss = tf.losses.hinge_loss(self.ph_target, self.inference)
     score, target = self.inference, self.ph_target
-    
-    self.loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-      logits=score, 
-      labels=target
-    ))
+    print self.inference, self.ph_target,tf.sigmoid(self.inference)
+    # print tf.nn.sparse_softmax_cross_entropy_with_logits(
+    #   logits=score, 
+    #   labels=target
+    # )
+    # self.loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+    #   logits=score, 
+    #   labels=target
+    # ))
 
+    print self.loss
+    exit(1)
     params = tf.trainable_variables()
     opt = tf.train.AdamOptimizer(self.learning_rate)
     gradients = [grad for grad, _ in opt.compute_gradients(self.loss)]
@@ -56,6 +62,7 @@ class SynsetLinkPrediction(object):
   def read_flags(self, FLAGS):
     self.hidden_size = FLAGS.hidden_size
     self.max_gradient_norm = FLAGS.max_gradient_norm
+    self.keep_prob = FLAGS.keep_prob
 
   def add_epoch(self):
     sess = self.sess
@@ -82,16 +89,16 @@ class SynsetLinkPrediction(object):
     loss = 0.0
     ns_rate = 1.0 if self.do_update else 0.0
     for i, raw_batch in enumerate(data.get_batch(batch_size,
-                                          do_shuffle=do_shuffle,
-                                          negative_sampling_rate=ns_rate)):
+                                                 do_shuffle=do_shuffle,
+                                                 negative_sampling_rate=ns_rate)):
       result, step_loss = self.step(raw_batch)
+      print result
+
       loss += step_loss
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)
     loss /= (i+1)
     return epoch_time, step_time, loss
-
-
 
 class DistMult(SynsetLinkPrediction):
   @property
@@ -104,6 +111,10 @@ class DistMult(SynsetLinkPrediction):
       #"relations", [self.rel_vocab.size, self.hidden_size, self.hidden_size],
       "relations", [self.rel_vocab.size, self.hidden_size],
       initializer=initializer)
+    if self.keep_prob < 1.0:
+      e_syn = tf.nn.dropout(e_syn, self.keep_prob)
+      e_rel = tf.nn.dropout(e_rel, self.keep_prob)
+
     return e_syn, e_syn, e_rel
 
   @property
@@ -112,5 +123,8 @@ class DistMult(SynsetLinkPrediction):
     obj = tf.nn.embedding_lookup(self.e_obj, self.ph_obj)
     rel = tf.nn.embedding_lookup(self.e_rel, self.ph_rel)
     score = tf_utils.batch_dot(rel, subj * obj)
+    score = tf.sigmoid(score)
+
+    #score = tf.expand_dims(score, 1)
+    #score = tf.concat([1 - score, score], 1)
     return score
-    return tf.sigmoid(score)
