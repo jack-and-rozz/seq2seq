@@ -87,11 +87,11 @@ class GraphManager(BaseManager):
       logger.info("Epoch %d: Start training." % epoch)
       epoch_time, step_time, train_loss = mtrain.run_batch(
         train, FLAGS.batch_size, do_shuffle=True)
-      logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %.4f" % (epoch, epoch_time, step_time, train_loss))
+      logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %.f" % (epoch, epoch_time, step_time, train_loss))
 
       epoch_time, step_time, valid_loss = mvalid.run_batch(dev, FLAGS.batch_size)
 
-      logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %.4f" % (epoch, epoch_time, step_time, valid_loss))
+      logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %.f" % (epoch, epoch_time, step_time, valid_loss))
 
       mtrain.add_epoch()
       checkpoint_path = self.CHECKPOINTS_PATH + "/model.ckpt"

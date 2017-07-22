@@ -166,30 +166,7 @@ class ASPECDataset(object):
 ####################################
 
 class DatasetBase(object):
-  def process(self, source_path, vocab):
-    raise NotImplementedError
-
-  def negative_sample(batch_size):
-    raise NotImplementedError
-
-  def get_batch(self, batch_size, 
-                do_shuffle=False, n_batches=1, negative_sampling_rate=0.0):
-    data = copy.deepcopy(self.data) if do_shuffle or negative_sampling_rate > 0 else self.data
-
-    if negative_sampling_rate > 0:
-      data += self.negative_sample(int(len(self.data)*negative_sampling_rate))
-    if do_shuffle:
-      random.shuffle(data)
-    print len(data)
-    # Extract n_batches * batch_size lines from data
-    for i, b in itertools.groupby(enumerate(data), lambda x: x[0] // (batch_size*n_batches)):
-
-      raw_batch = [x[1] for x in b] # (id, data) -> data
-      # Yield 'n_batches' batches which have 'batch_size' lines
-      batch = [[x[1] for x in d2] for j, d2 in itertools.groupby(enumerate(raw_batch), lambda x: x[0] // (len(raw_batch) // n_batches))]
-
-      yield batch if n_batches > 1 else batch[0]
-
+  pass
 
 class WordNetDataset(DatasetBase):
   def __init__(self, source_dir, processed_dir, filename, 
@@ -208,19 +185,49 @@ class WordNetDataset(DatasetBase):
     def process(source_path, max_rows):
       def process_line(l):
         s1, r, s2 = l.replace('\n', '').split('\t')
-        return [1.0, (self.s_vocab.to_id(s1),
-                      self.r_vocab.to_id(r),
-                      self.s_vocab.to_id(s2))]
+        #return [1.0, (self.s_vocab.to_id(s1),
+        #              self.r_vocab.to_id(r),
+        #              self.s_vocab.to_id(s2))]
+        return (self.s_vocab.to_id(s1),
+                self.r_vocab.to_id(r),
+                self.s_vocab.to_id(s2))
+
       data = [process_line(l) for i, l in enumerate(open(source_path)) if not max_rows or i < max_rows]
       return data
     return common.load_or_create(processed_path, process, source_path, max_rows)
 
+  def get_batch(self, batch_size, 
+                do_shuffle=False, n_batches=1, negative_sampling_rate=0.0):
+    data = copy.deepcopy(self.data) if do_shuffle or negative_sampling_rate > 0 else self.data
+
+    #if negative_sampling_rate > 0:
+    #  data += self.negative_sample(int(len(self.data)*negative_sampling_rate))
+    if do_shuffle:
+      random.shuffle(data)
+    # Extract n_batches * batch_size lines from data
+    for i, b in itertools.groupby(enumerate(data), lambda x: x[0] // (batch_size*n_batches)):
+
+      raw_batch = [x[1] for x in b] # (id, data) -> data
+      # Yield 'n_batches' batches which have 'batch_size' lines
+      batch = [[x[1] for x in d2] for j, d2 in itertools.groupby(enumerate(raw_batch), lambda x: x[0] // (len(raw_batch) // n_batches))]
+
+      neg_batch = [self.negative_sample(int(len(batch[0]) * negative_sampling_rate)) for _ in xrange(n_batches)]
+
+      if n_batches == 1:
+        batch = batch[0]
+        neg_batch = neg_batch[0]
+      
+      yield (batch, neg_batch)
+
   def negative_sample(self, batch_size):
-    batch = []
-    print self.data[0]
-    exit(1)
-    for i in xrange(batch_size):
-      s1, s2 = random.sample(xrange(1, self.s_vocab.size), 2)
-      r = random.sample(xrange(1, self.r_vocab.size), 1)[0]
-      batch.append((0.0, (s1, r, s2)))
-    return batch
+    if batch_size == 0:
+      return None
+    def _random_sample():
+      batch = []
+      for i in xrange(batch_size):
+        s1, s2 = random.sample(xrange(1, self.s_vocab.size), 2)
+        r = random.sample(xrange(1, self.r_vocab.size), 1)[0]
+        #batch.append((0.0, (s1, r, s2)))
+        batch.append((s1, r, s2))
+      return batch
+    return _random_sample()
