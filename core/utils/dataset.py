@@ -179,6 +179,8 @@ class WordNetDataset(DatasetBase):
 
     self.data = self.initialize_data(
       self.source_path, self.processed_path, max_rows)
+    if max_rows:
+      self.data = self.data[:max_rows]
     self.size = len(self.data)
     
   def initialize_data(self, source_path, processed_path, max_rows):
@@ -211,23 +213,32 @@ class WordNetDataset(DatasetBase):
       # Yield 'n_batches' batches which have 'batch_size' lines
       batch = [[x[1] for x in d2] for j, d2 in itertools.groupby(enumerate(raw_batch), lambda x: x[0] // (len(raw_batch) // n_batches))]
 
-      neg_batch = [self.negative_sample(int(len(batch[0]) * negative_sampling_rate)) for _ in xrange(n_batches)]
+      neg_batch = [self.negative_sample(batch[i], negative_sampling_rate) for i in xrange(n_batches)]
 
       if n_batches == 1:
         batch = batch[0]
         neg_batch = neg_batch[0]
-      
       yield (batch, neg_batch)
 
-  def negative_sample(self, batch_size):
+  def negative_sample(self, batch, ns_rate):
+    batch_size = int(len(batch) * ns_rate)
     if batch_size == 0:
       return None
-    def _random_sample():
-      batch = []
+    def _random_sample(batch_size):
+      neg_batch = []
       for i in xrange(batch_size):
-        s1, s2 = random.sample(xrange(1, self.s_vocab.size), 2)
-        r = random.sample(xrange(1, self.r_vocab.size), 1)[0]
+        subj, obj = random.sample(xrange(1, self.s_vocab.size), 2)
+        rel = random.sample(xrange(1, self.r_vocab.size), 1)[0]
         #batch.append((0.0, (s1, r, s2)))
-        batch.append((s1, r, s2))
-      return batch
-    return _random_sample()
+        neg_batch.append((subj, rel, obj))
+      return neg_batch
+
+    def _close_negative_sample(batch):
+      neg_batch = []
+      for subj, rel, _ in batch:
+        obj = random.sample(xrange(1, self.s_vocab.size), 1)[0]
+        neg_batch.append((subj, rel, obj))
+      return neg_batch
+    #return _random_sample(batch_size)
+    return _close_negative_sample(batch)
+

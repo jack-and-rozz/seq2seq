@@ -18,13 +18,20 @@ tf.app.flags.DEFINE_string("test_data", "wordnet-mlj12-test.txt", "")
 
 tf.app.flags.DEFINE_integer("syn_size", None, "")
 tf.app.flags.DEFINE_integer("rel_size", None, "")
-tf.app.flags.DEFINE_integer("batch_size", 400, "")
+tf.app.flags.DEFINE_integer("max_train_rows", None, 
+                            "Maximum number of rows to be used as train data.")
+
+tf.app.flags.DEFINE_integer("batch_size", 1000, "")
 tf.app.flags.DEFINE_integer("hidden_size", 50, "")
-tf.app.flags.DEFINE_float("learning_rate", 1e-5, "Learning rate.")
-tf.app.flags.DEFINE_float("keep_prob", 0.5, "Dropout rate.")
+tf.app.flags.DEFINE_float("learning_rate", 1e-3, "Learning rate.")
+tf.app.flags.DEFINE_float("keep_prob", 1.0, "Dropout rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
                           "Clip gradients to this norm.")
-tf.app.flags.DEFINE_integer("max_epoch", 20, "")
+tf.app.flags.DEFINE_integer("max_epoch", 200, "")
+
+tf.app.flags.DEFINE_boolean("share_embedding", False, "Whether to share syn/rel embedding between subjects and objects")
+
+#tf.app.flags.DEFINE_string("loss_type", '', "Whether to share syn/rel embedding between subjects and objects")
 
 
 class GraphManager(BaseManager):
@@ -41,11 +48,19 @@ class GraphManager(BaseManager):
       FLAGS.rel_vocab_data, FLAGS.rel_size,
     )
   @common.timewatch(logger)
-  def create_model(self, FLAGS, reuse):
-    do_update = not reuse
+  def create_model(self, FLAGS, mode, reuse=False):
+    if mode == 'train':
+      do_update = True
+    elif mode == 'dev' or mode == 'test':
+      do_update = False
+    else:
+      raise ValueError("The argument \'mode\' must be \'train\', \'dev\', or \'test\'.")
+    summary_path = os.path.join(self.SUMMARIES_PATH, mode)
+
     with tf.variable_scope("Model", reuse=reuse):
       m = self.model_type(self.sess, FLAGS, do_update,
-                          syn_vocab=self.syn_vocab, rel_vocab=self.rel_vocab)
+                          syn_vocab=self.syn_vocab, rel_vocab=self.rel_vocab,
+                          summary_path=summary_path)
     ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
     self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
     if ckpt and os.path.exists(ckpt.model_checkpoint_path + '.index'):
@@ -64,7 +79,7 @@ class GraphManager(BaseManager):
     FLAGS = self.FLAGS
     train = WordNetDataset(
       FLAGS.source_data_dir, FLAGS.processed_data_dir,
-      FLAGS.train_data, self.syn_vocab, self.rel_vocab
+      FLAGS.train_data, self.syn_vocab, self.rel_vocab, FLAGS.max_train_rows
     )
     dev = WordNetDataset(
       FLAGS.source_data_dir, FLAGS.processed_data_dir,
@@ -75,27 +90,36 @@ class GraphManager(BaseManager):
       FLAGS.test_data, self.syn_vocab, self.rel_vocab
     )
     with tf.name_scope('train'):
-      train_config = copy.deepcopy(FLAGS)
-      mtrain = self.create_model(train_config, False)
+      mtrain = self.create_model(FLAGS, 'train', reuse=False)
 
     with tf.name_scope('dev'):
-      valid_config = copy.deepcopy(FLAGS)
-      valid_config.keep_prob = 1.0
-      mvalid = self.create_model(valid_config, True)
+      mvalid = self.create_model(FLAGS, 'dev', reuse=True)
 
+    if mtrain.epoch.eval() == 0:
+      logger.info("(train, dev, test) = (%d, %d, %d)" % (train.size, dev.size, test.size))
+      logger.info("(Synset, Relation) = (%d, %d)" % (self.syn_vocab.size, self.rel_vocab.size))
     for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
       logger.info("Epoch %d: Start training." % epoch)
       epoch_time, step_time, train_loss = mtrain.run_batch(
         train, FLAGS.batch_size, do_shuffle=True)
-      logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %.f" % (epoch, epoch_time, step_time, train_loss))
+      logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, train_loss))
 
+      #epoch_time, step_time, valid_loss = mvalid.run_batch(dev, FLAGS.batch_size)
       epoch_time, step_time, valid_loss = mvalid.run_batch(dev, FLAGS.batch_size)
-
-      logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %.f" % (epoch, epoch_time, step_time, valid_loss))
+      logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, valid_loss))
 
       mtrain.add_epoch()
       checkpoint_path = self.CHECKPOINTS_PATH + "/model.ckpt"
       self.saver.save(self.sess, checkpoint_path, global_step=mtrain.epoch)
+
+  def test(self):
+    FLAGS = self.FLAGS
+    test = WordNetDataset(
+      FLAGS.source_data_dir, FLAGS.processed_data_dir,
+      FLAGS.test_data, self.syn_vocab, self.rel_vocab
+    )
+    with tf.name_scope('test'):
+      mtest= self.create_model(config, 'test', reuse=False)
 
 
 

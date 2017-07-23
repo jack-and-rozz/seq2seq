@@ -7,8 +7,8 @@ from core.utils import common
 import core.models.wrappers as wrappers
 
 # about dataset
-tf.app.flags.DEFINE_string("source_data_dir", "dataset/translate/source", "")
-tf.app.flags.DEFINE_string("processed_data_dir", "dataset/translate/processed", "")
+tf.app.flags.DEFINE_string("source_data_dir", "dataset/translate/ASPEC-JE/source", "")
+tf.app.flags.DEFINE_string("processed_data_dir", "dataset/translate/ASPEC-JE/processed", "")
 tf.app.flags.DEFINE_string("source_lang", "en", "")
 tf.app.flags.DEFINE_string("target_lang", "ja", "")
 tf.app.flags.DEFINE_integer("beam_size", 1, "")

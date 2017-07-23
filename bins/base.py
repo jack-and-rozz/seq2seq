@@ -30,7 +30,7 @@ class BaseManager(object):
   def __init__(self, FLAGS, sess):
     self.FLAGS = FLAGS
     FLAGS = self.FLAGS
-    self.TMP_FLAGS = ['mode', 'log_file', 'checkpoint_path']
+    self.TMP_FLAGS = ['mode', 'log_file', 'checkpoint_path', 'write_summary']
     self.CHECKPOINTS_PATH = FLAGS.checkpoint_path +'/checkpoints'
     self.TESTS_PATH = FLAGS.checkpoint_path + '/tests'
     self.VARIABLES_PATH = FLAGS.checkpoint_path +'/variables'

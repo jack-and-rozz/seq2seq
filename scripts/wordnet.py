@@ -6,11 +6,18 @@ def func1():
     print 'Synsets:'
     for i, w in enumerate(wn.synsets(word)):
       print "{0}) '{1}' -- definition: '{2}'".format(i,w.name(),w.definition())
-
+ 
     print 'Lemmas:'
     for i, w in enumerate(wn.lemmas(word)):
       print "{0}) '{1}'".format(i, str(w))
     print ''
+    syn_id = int(raw_input('Enter an synset ID: '))
+    synset = wn.synsets(word)[syn_id]
+    if len(wn.synsets(word)) > 0:
+      for i, l in enumerate(synset.lemmas()):
+        print "{0}) '{1}'".format(i, l)
+
+
 print wn.VERB
 func1()
 
