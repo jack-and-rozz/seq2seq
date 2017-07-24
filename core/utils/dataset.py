@@ -198,12 +198,9 @@ class WordNetDataset(DatasetBase):
       return data
     return common.load_or_create(processed_path, process, source_path, max_rows)
 
-  def get_batch(self, batch_size, 
+  def get_train_batch(self, batch_size, 
                 do_shuffle=False, n_batches=1, negative_sampling_rate=0.0):
     data = copy.deepcopy(self.data) if do_shuffle or negative_sampling_rate > 0 else self.data
-
-    #if negative_sampling_rate > 0:
-    #  data += self.negative_sample(int(len(self.data)*negative_sampling_rate))
     if do_shuffle:
       random.shuffle(data)
     # Extract n_batches * batch_size lines from data
@@ -219,6 +216,8 @@ class WordNetDataset(DatasetBase):
         batch = batch[0]
         neg_batch = neg_batch[0]
       yield (batch, neg_batch)
+  def get_test_batch(self, batch_size):
+    pass
 
   def negative_sample(self, batch, ns_rate):
     batch_size = int(len(batch) * ns_rate)

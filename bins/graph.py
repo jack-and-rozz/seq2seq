@@ -59,7 +59,8 @@ class GraphManager(BaseManager):
 
     with tf.variable_scope("Model", reuse=reuse):
       m = self.model_type(self.sess, FLAGS, do_update,
-                          syn_vocab=self.syn_vocab, rel_vocab=self.rel_vocab,
+                          node_vocab=self.syn_vocab, 
+                          edge_vocab=self.rel_vocab,
                           summary_path=summary_path)
     ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
     self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
@@ -100,12 +101,10 @@ class GraphManager(BaseManager):
       logger.info("(Synset, Relation) = (%d, %d)" % (self.syn_vocab.size, self.rel_vocab.size))
     for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
       logger.info("Epoch %d: Start training." % epoch)
-      epoch_time, step_time, train_loss = mtrain.run_batch(
-        train, FLAGS.batch_size, do_shuffle=True)
+      epoch_time, step_time, train_loss = mtrain.train_or_valid(train, FLAGS.batch_size, do_shuffle=True)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, train_loss))
 
-      #epoch_time, step_time, valid_loss = mvalid.run_batch(dev, FLAGS.batch_size)
-      epoch_time, step_time, valid_loss = mvalid.run_batch(dev, FLAGS.batch_size)
+      epoch_time, step_time, valid_loss = mvalid.train_or_valid(dev, FLAGS.batch_size)
       logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, valid_loss))
 
       mtrain.add_epoch()
@@ -119,8 +118,8 @@ class GraphManager(BaseManager):
       FLAGS.test_data, self.syn_vocab, self.rel_vocab
     )
     with tf.name_scope('test'):
-      mtest= self.create_model(config, 'test', reuse=False)
-
+      mtest= self.create_model(FLAGS, 'test', reuse=False)
+      mtest.test(test, FLAGS.batch_size)
 
 
 def main(_):
@@ -140,6 +139,8 @@ def main(_):
     if FLAGS.mode == "train":
       manager.save_config()
       manager.train()
+    elif FLAGS.mode == "test":
+      manager.test()
     else:
       sys.stderr.write("Unknown mode.\n")
       exit(1)
