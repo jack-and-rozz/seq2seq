@@ -9,6 +9,7 @@ import core.models.wrappers as wrappers
 # about dataset
 tf.app.flags.DEFINE_string("source_data_dir", "dataset/translate/ASPEC-JE/source", "")
 tf.app.flags.DEFINE_string("processed_data_dir", "dataset/translate/ASPEC-JE/processed", "")
+tf.app.flags.DEFINE_string("model_type", "Baseline", "")
 tf.app.flags.DEFINE_string("source_lang", "en", "")
 tf.app.flags.DEFINE_string("target_lang", "ja", "")
 tf.app.flags.DEFINE_integer("beam_size", 1, "")
@@ -175,7 +176,6 @@ class TranslateManager(BaseManager):
   def train(self):
     FLAGS = self.FLAGS
     sess = self.sess
-    data_path = os.path.join(FLAGS.source_data_dir, FLAGS.vocab_data)
 
     logger.info("Reading dataset.")
     train = ASPECDataset(
@@ -201,7 +201,7 @@ class TranslateManager(BaseManager):
     for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
       logger.info("Epoch %d: Start training." % epoch)
       epoch_time, step_time, train_loss = mtrain.run_batch(
-        train, FLAGS.batch_size,do_shuffle=True)
+        train, FLAGS.batch_size, do_shuffle=True)
       train_ppx = math.exp(train_loss)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, ppx %.4f" % (epoch, epoch_time, step_time, train_ppx))
 

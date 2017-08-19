@@ -178,13 +178,13 @@ class WordNetDataset(DatasetBase):
     self.max_rows = max_rows
 
     self.data = self.initialize_data(
-      self.source_path, self.processed_path, max_rows)
+      self.source_path, self.processed_path)
     if max_rows:
       self.data = self.data[:max_rows]
     self.size = len(self.data)
     
   def initialize_data(self, source_path, processed_path, max_rows):
-    def process(source_path, max_rows):
+    def process(source_path):
       def process_line(l):
         s1, r, s2 = l.replace('\n', '').split('\t')
         #return [1.0, (self.s_vocab.to_id(s1),
@@ -194,12 +194,12 @@ class WordNetDataset(DatasetBase):
                 self.r_vocab.to_id(r),
                 self.s_vocab.to_id(s2))
 
-      data = [process_line(l) for i, l in enumerate(open(source_path)) if not max_rows or i < max_rows]
+      data = [process_line(l) for l in open(source_path)]
       return data
     return common.load_or_create(processed_path, process, source_path, max_rows)
 
   def get_train_batch(self, batch_size, 
-                do_shuffle=False, n_batches=1, negative_sampling_rate=0.0):
+                      do_shuffle=False, n_batches=1, negative_sampling_rate=0.0):
     data = copy.deepcopy(self.data) if do_shuffle or negative_sampling_rate > 0 else self.data
     if do_shuffle:
       random.shuffle(data)
@@ -207,7 +207,7 @@ class WordNetDataset(DatasetBase):
     for i, b in itertools.groupby(enumerate(data), lambda x: x[0] // (batch_size*n_batches)):
 
       raw_batch = [x[1] for x in b] # (id, data) -> data
-      # Yield 'n_batches' batches which have 'batch_size' lines
+      # Yield 'n_batches' batches which have 'batch_size' lines.
       batch = [[x[1] for x in d2] for j, d2 in itertools.groupby(enumerate(raw_batch), lambda x: x[0] // (len(raw_batch) // n_batches))]
 
       neg_batch = [self.negative_sample(batch[i], negative_sampling_rate) for i in xrange(n_batches)]
@@ -216,8 +216,21 @@ class WordNetDataset(DatasetBase):
         batch = batch[0]
         neg_batch = neg_batch[0]
       yield (batch, neg_batch)
-  def get_test_batch(self, batch_size):
-    pass
+
+  def get_test_batch(self, batch_size, filtered=False):
+    data = self.data
+    for i, l in enumerate(data):
+      subj, rel, obj = l
+      subj_replaced = [(i, rel, obj) for i in range(self.s_vocab.size)]
+      obj_replaced = [(subj, rel, i) for i in range(self.s_vocab.size)]
+      # Put the correct triple at the beginning.
+      subj_replaced.remove((subj, rel, obj))
+      obj_replaced.remove((subj, rel, obj))
+      subj_replaced.insert(0, (subj, rel, obj))
+      obj_replaced.insert(0, (subj, rel, obj))
+      subj_replaced = common.batching(subj_replaced, batch_size)
+      obj_replaced = common.batching(obj_replaced, batch_size)
+      yield subj_replaced, obj_replaced
 
   def negative_sample(self, batch, ns_rate):
     batch_size = int(len(batch) * ns_rate)

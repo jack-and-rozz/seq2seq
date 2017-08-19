@@ -2,7 +2,7 @@
 #from __future__ import print_function
 import sys, os, time, re, math, collections
 import numpy as np
-
+import itertools
 from itertools import chain
 from logging import getLogger, StreamHandler, FileHandler, Formatter, DEBUG, INFO, WARNING, ERROR, CRITICAL
 
@@ -52,9 +52,9 @@ def map_dict(func, _dict):
 def split_dict():
     pass
 class dotDict(dict):
-	__getattr__ = dict.__getitem__
-	__setattr__ = dict.__setitem__
-	__delattr__ = dict.__delitem__
+  __getattr__ = dict.__getitem__
+  __setattr__ = dict.__setitem__
+  __delattr__ = dict.__delitem__
 
 class rec_defaultdict(collections.defaultdict):
     def __init__(self):
@@ -76,6 +76,10 @@ def zero_one_vector(one_indices, n_elem):
   for idx in one_indices:
     l[idx] = 1.0
   return l
+
+def batching(data, batch_size):
+  batch = [[x[1] for x in d2] for j, d2 in itertools.groupby(enumerate(data), lambda x: x[0] // batch_size)]
+  return batch
 
 ############################################
 #        Random

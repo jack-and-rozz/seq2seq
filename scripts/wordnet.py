@@ -12,6 +12,7 @@ def func1():
     for i, w in enumerate(wn.lemmas(word)):
       print "{0}) '{1}'".format(i, str(w))
     print ''
+    continue
     syn_id = int(raw_input('Enter an synset ID: '))
 
     synset = wn.synsets(word)[syn_id]

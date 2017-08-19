@@ -10,6 +10,7 @@ import core.models.graph
 tf.app.flags.DEFINE_string("source_data_dir", "dataset/graph/wordnet-mlj12/source", "")
 tf.app.flags.DEFINE_string("processed_data_dir", "dataset/graph/wordnet-mlj12/processed", "")
 
+tf.app.flags.DEFINE_string("model_type", "Baseline", "")
 tf.app.flags.DEFINE_string("syn_vocab_data", "wordnet-mlj12-definitions.txt", "")
 tf.app.flags.DEFINE_string("rel_vocab_data", "wordnet-mlj12-train.txt", "")
 tf.app.flags.DEFINE_string("train_data", "wordnet-mlj12-train.txt", "")
@@ -18,16 +19,17 @@ tf.app.flags.DEFINE_string("test_data", "wordnet-mlj12-test.txt", "")
 
 tf.app.flags.DEFINE_integer("syn_size", None, "")
 tf.app.flags.DEFINE_integer("rel_size", None, "")
-tf.app.flags.DEFINE_integer("max_train_rows", None, 
+tf.app.flags.DEFINE_integer("max_rows", None, 
                             "Maximum number of rows to be used as train data.")
 
 tf.app.flags.DEFINE_integer("batch_size", 1000, "")
-tf.app.flags.DEFINE_integer("hidden_size", 50, "")
+tf.app.flags.DEFINE_integer("hidden_size", 100, "")
 tf.app.flags.DEFINE_float("learning_rate", 1e-3, "Learning rate.")
-tf.app.flags.DEFINE_float("keep_prob", 1.0, "Dropout rate.")
+tf.app.flags.DEFINE_float("keep_prob", 0.75, "Dropout rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
                           "Clip gradients to this norm.")
-tf.app.flags.DEFINE_integer("max_epoch", 200, "")
+tf.app.flags.DEFINE_float("negative_sampling_rate", 1.0, "")
+tf.app.flags.DEFINE_integer("max_epoch", 100, "")
 
 tf.app.flags.DEFINE_boolean("share_embedding", False, "Whether to share syn/rel embedding between subjects and objects")
 
@@ -76,17 +78,18 @@ class GraphManager(BaseManager):
         f.write('\n'.join([v.name for v in tf.global_variables()]) + '\n')
     return m
 
+  @common.timewatch(logger)
   def train(self):
     FLAGS = self.FLAGS
-    train = WordNetDataset(
+    train_data = WordNetDataset(
       FLAGS.source_data_dir, FLAGS.processed_data_dir,
-      FLAGS.train_data, self.syn_vocab, self.rel_vocab, FLAGS.max_train_rows
+      FLAGS.train_data, self.syn_vocab, self.rel_vocab, FLAGS.max_rows
     )
-    dev = WordNetDataset(
+    dev_data = WordNetDataset(
       FLAGS.source_data_dir, FLAGS.processed_data_dir,
       FLAGS.dev_data, self.syn_vocab, self.rel_vocab
     )
-    test = WordNetDataset(
+    test_data = WordNetDataset(
       FLAGS.source_data_dir, FLAGS.processed_data_dir,
       FLAGS.test_data, self.syn_vocab, self.rel_vocab
     )
@@ -94,33 +97,44 @@ class GraphManager(BaseManager):
       mtrain = self.create_model(FLAGS, 'train', reuse=False)
 
     with tf.name_scope('dev'):
+      config.negative_sampling_rate = 0.0
       mvalid = self.create_model(FLAGS, 'dev', reuse=True)
 
     if mtrain.epoch.eval() == 0:
-      logger.info("(train, dev, test) = (%d, %d, %d)" % (train.size, dev.size, test.size))
+      logger.info("(train, dev, test) = (%d, %d, %d)" % (train_data.size, dev_data.size, test_data.size))
       logger.info("(Synset, Relation) = (%d, %d)" % (self.syn_vocab.size, self.rel_vocab.size))
+
     for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
       logger.info("Epoch %d: Start training." % epoch)
-      epoch_time, step_time, train_loss = mtrain.train_or_valid(train, FLAGS.batch_size, do_shuffle=True)
+      epoch_time, step_time, train_loss = mtrain.train_or_valid(train_data, FLAGS.batch_size, do_shuffle=True)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, train_loss))
 
-      epoch_time, step_time, valid_loss = mvalid.train_or_valid(dev, FLAGS.batch_size)
+      epoch_time, step_time, valid_loss = mvalid.train_or_valid(dev_data, FLAGS.batch_size)
       logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, valid_loss))
 
       mtrain.add_epoch()
       checkpoint_path = self.CHECKPOINTS_PATH + "/model.ckpt"
       self.saver.save(self.sess, checkpoint_path, global_step=mtrain.epoch)
+      if (epoch + 1) % 10 == 0:
+        results = mvalid.test(test_data, FLAGS.batch_size)
+        results, ranks, mrr, hits_10 = results
+        logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtrain.epoch.eval(), mrr, hits_10))
 
-  def test(self):
+  @common.timewatch(logger)
+  def test(self, test_data=None, mtest=None):
     FLAGS = self.FLAGS
-    test = WordNetDataset(
-      FLAGS.source_data_dir, FLAGS.processed_data_dir,
-      FLAGS.test_data, self.syn_vocab, self.rel_vocab
-    )
+    if not test_data:
+      test_data = WordNetDataset(
+        FLAGS.source_data_dir, FLAGS.processed_data_dir,
+        FLAGS.test_data, self.syn_vocab, self.rel_vocab, FLAGS.max_rows
+      )
+    
     with tf.name_scope('test'):
-      mtest= self.create_model(FLAGS, 'test', reuse=False)
-      mtest.test(test, FLAGS.batch_size)
-
+      if not mtest:
+        mtest= self.create_model(FLAGS, 'test', reuse=False)
+      results = mtest.test(test_data, FLAGS.batch_size)
+      results, ranks, mrr, hits_10 = results
+    logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mrr, hits_10))
 
 def main(_):
   tf_config = tf.ConfigProto(

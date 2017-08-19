@@ -2,7 +2,7 @@
 import math, time
 import tensorflow as tf
 import core.utils.tf_utils as tf_utils
-from core.utils import common
+from core.utils import common, evaluation
 
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import init_ops
@@ -43,9 +43,10 @@ class GraphLinkPrediction(object):
                                                   self.sess.graph)
       self.summary_loss = tf.placeholder(tf.float32, shape=[],
                                          name='summary_loss')
-      self.summary_op = tf.summary.merge([
-        tf.summary.scalar('loss', self.summary_loss),
-      ])
+      self.summary_mrr = tf.placeholder(tf.float32, shape=[],
+                                        name='summary_mrr')
+      self.summary_hits_10 = tf.placeholder(tf.float32, shape=[],
+                                            name='summary_hits_10')
 
     if do_update:
       with tf.name_scope("update"):
@@ -74,7 +75,7 @@ class GraphLinkPrediction(object):
     self.max_gradient_norm = config.max_gradient_norm
     self.keep_prob = config.keep_prob if self.do_update else 1.0
     self.share_embedding = common.str_to_bool(config.share_embedding)
-    self.ns_rate = 1.0 #config.negative_sampling_rate
+    self.ns_rate = config.negative_sampling_rate
 
   def add_epoch(self):
     sess = self.sess
@@ -83,18 +84,13 @@ class GraphLinkPrediction(object):
   def get_input_feed(self, raw_batch):
     input_feed = {}
     input_feed[self.p_triples] = raw_batch[0]
-    input_feed[self.n_triples] = raw_batch[1]
+
+    # in test, raw_batch = [triples, []] 
+    if raw_batch[1]:
+      input_feed[self.n_triples] = raw_batch[1]
     return input_feed
 
-  def step(self, raw_batch):
-    input_feed = self.get_input_feed(raw_batch)
-    output_feed = [
-      self.loss,
-      self.inference(self.p_triples),
-      self.inference(self.n_triples)
-    ]
-    if self.do_update:
-      output_feed.append(self.updates)
+  def step(self, input_feed, output_feed):
     outputs = self.sess.run(output_feed, input_feed)
     return outputs
 
@@ -104,8 +100,17 @@ class GraphLinkPrediction(object):
     batches = data.get_train_batch(batch_size,
                                    do_shuffle=do_shuffle,
                                    negative_sampling_rate=self.ns_rate)
+    output_feed = [
+      self.loss,
+      tf.reduce_mean(self.inference(self.p_triples)),
+      tf.reduce_mean(self.inference(self.n_triples))
+    ]
+    if self.do_update:
+      output_feed.append(self.updates)
+
     for i, raw_batch in enumerate(batches):
-      outputs = self.step(raw_batch)
+      input_feed = self.get_input_feed(raw_batch)
+      outputs = self.step(input_feed)
       step_loss = outputs[0]
       loss += step_loss
     epoch_time = (time.time() - start_time)
@@ -117,13 +122,46 @@ class GraphLinkPrediction(object):
       input_feed = {
         self.summary_loss: loss
       }
-      summary = self.sess.run(self.summary_op, input_feed)
+      summary_ops = tf.summary.merge([
+        tf.summary.scalar('loss', self.summary_loss),
+      ])
+      summary = self.sess.run(summary_ops, input_feed)
       self.summary_writer.add_summary(summary, self.epoch.eval())
     return epoch_time, step_time, loss
 
   def test(self, data, batch_size):
-    pass
+    def _step(batch):
+      output_feed = self.inference(self.p_triples)
+      result = []
+      for b in batch:
+        input_feed = self.get_input_feed((b, []))
+        outputs = self.step(input_feed, output_feed)
+        outputs = list(outputs)
+        result.extend(outputs)
+      return result
 
+    results = []
+    for i, (subj_replaced, obj_replaced) in enumerate(data.get_test_batch(batch_size)):
+      print i
+      results.append(_step(subj_replaced))
+      results.append(_step(obj_replaced))
+    ranks = [evaluation.get_rank(r) for r in results]
+    mrr = evaluation.mrr(ranks)
+    hits_10 = evaluation.hits_k(ranks)
+    print ranks
+    print mrr, hits_10
+    if self.summary_writer:
+      input_feed = {
+        self.summary_mrr: mrr,
+        self.summary_hits_10: hits_10,
+      }
+      summary_ops = tf.summary.merge([
+        tf.summary.scalar('hits@10', self.summary_hits_10),
+        tf.summary.scalar('MRR', self.summary_mrr),
+      ])
+      summary = self.sess.run(summary_ops, input_feed)
+      self.summary_writer.add_summary(summary, self.epoch.eval())
+    return results, ranks, mrr, hits_10
   def initialize_embeddings(self):
     raise NotImplementedError
 
@@ -168,4 +206,6 @@ class DistMult(GraphLinkPrediction):
     return score
 
 
-
+class FactorizedDistMult(GraphLinkPrediction):
+  pass
+  
