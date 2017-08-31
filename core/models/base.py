@@ -7,7 +7,6 @@ class ModelBase(object):
     self.do_update = do_update
 
     self.hidden_size = config.hidden_size
-    self.keep_prob = config.keep_prob if self.do_update else 1.0
     self.max_gradient_norm = config.max_gradient_norm
 
     self.learning_rate = tf.get_variable(

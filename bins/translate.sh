@@ -12,10 +12,10 @@ source ./scripts/manually_getopt.sh $@
 if [ $argc -lt 3 ];then
     usage;
 fi
-bin_file=${argv[0]}
-checkpoint_path=${argv[1]}
-mode=${argv[2]}
-config_file=${argv[3]}
+bin_file=bins/translate.py
+checkpoint_path=${argv[0]}
+mode=${argv[1]}
+config_file=${argv[2]}
 config_dir=configs
 
 log_file=$checkpoint_path/${mode}.log

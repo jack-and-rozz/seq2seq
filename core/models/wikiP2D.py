@@ -113,7 +113,7 @@ class WikiP2D(graph.GraphLinkPrediction):
     return input_feed
 
   def inference(self, articles, link_spans, triples):
-    
+    return
   #def train_or_valid(self, data, batch_size, do_shuffle=False):
 
 

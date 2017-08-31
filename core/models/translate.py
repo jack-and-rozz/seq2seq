@@ -136,7 +136,6 @@ class Baseline(ModelBase):
 
   def read_flags(self, FLAGS):
     self.max_sequence_length = FLAGS.max_sequence_length
-
     self.keep_prob = FLAGS.keep_prob if self.do_update else 1.0
     self.hidden_size = FLAGS.hidden_size
     self.max_gradient_norm = FLAGS.max_gradient_norm

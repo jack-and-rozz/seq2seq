@@ -49,8 +49,9 @@ tf.app.flags.DEFINE_boolean("trainable_source_embedding", True, "")
 tf.app.flags.DEFINE_boolean("trainable_target_embedding", True, "")
 tf.app.flags.DEFINE_boolean("share_embedding", False, "If true, a decoder uses encoder's embedding (for dialogue)")
 
-from core.utils.vocabulary import Vocabulary
-from core.utils.dataset import ASPECDataset, EOS_ID
+from core.utils.vocabulary.base import EOS_ID
+from core.utils.vocabulary.translate import Vocabulary
+from core.utils.dataset import ASPECDataset
 
 class TranslateManager(BaseManager):
   def __init__(self, FLAGS, sess):

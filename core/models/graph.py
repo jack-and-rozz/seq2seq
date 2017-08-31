@@ -83,6 +83,7 @@ class GraphLinkPrediction(ModelBase):
     return tf.reduce_mean(tf.maximum(margin - positives + negatives, 0))
 
   def read_config(self, config):
+    self.keep_prob = config.keep_prob if self.do_update else 1.0
     self.share_embedding = common.str_to_bool(config.share_embedding)
     self.ns_rate = config.negative_sampling_rate
 

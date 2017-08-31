@@ -2,6 +2,7 @@
 import sys, os, random, copy
 import tensorflow as tf
 from base import BaseManager, logger
+
 from core.utils import common
 import core.models.wikiP2D as model
 from core.dataset.wikiP2D import WikiP2DDataset
@@ -24,7 +25,6 @@ tf.app.flags.DEFINE_float("negative_sampling_rate", 1.0, "")
 
 ## Text processing methods
 tf.app.flags.DEFINE_string("cell_type", "GRUCell", "Cell type")
-tf.app.flags.DEFINE_string("seq2seq_type", "BasicSeq2Seq", "Cell type")
 tf.app.flags.DEFINE_string("encoder_type", "RNNEncoder", "")
 tf.app.flags.DEFINE_boolean("cbase", False,  "Whether to make the model character-based or not.")
 

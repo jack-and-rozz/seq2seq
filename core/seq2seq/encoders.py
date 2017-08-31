@@ -4,7 +4,6 @@ from __future__ import division
 #from __future__ import print_function
 
 import copy, math
-import numpy as np
 # We disable pylint because we need python3 compatibility.
 from six.moves import xrange  # pylint: disable=redefined-builtin
 from six.moves import zip  # pylint: disable=redefined-builtin
@@ -14,20 +13,14 @@ from tensorflow.python.ops import rnn
 from tensorflow.contrib.rnn.python.ops import core_rnn
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell
 from tensorflow.python.framework import ops
-from tensorflow.python.ops import math_ops
-from tensorflow.python.ops import array_ops
-from tensorflow.python.ops import init_ops
 from tensorflow.python.util import nest
-
-
 
 class Encoder(object):
   pass
 
-
 class RNNEncoder(Encoder):
   def __init__(self, cell, embedding, sequence_length=None,
-               scope=None, activation=math_ops.tanh):
+               scope=None, activation=tf.nn.tanh):
     with tf.variable_scope(scope or "rnn_encoder") as scope:
       self.cell = cell
       self.embedding = embedding
@@ -54,7 +47,7 @@ class RNNEncoder(Encoder):
 
 class BidirectionalRNNEncoder(RNNEncoder):
   def __init__(self, cell, embedding, sequence_length=None,
-               scope=None, activation=math_ops.tanh):
+               scope=None, activation=tf.nn.tanh):
     with tf.variable_scope(scope or "bidirectional_rnn_encoder"):
       self.cell = self.cell_fw = cell
       self.cell_bw = copy.deepcopy(cell)
@@ -74,7 +67,7 @@ class BidirectionalRNNEncoder(RNNEncoder):
         w = tf.get_variable("proj_w", [size * 2, size])
         b = tf.get_variable("proj_b", [size])
         states = self.activation(
-          tf.nn.xw_plus_b(array_ops.concat([s_fw, s_bw], 1), w, b))
+          tf.nn.xw_plus_b(tf.concat([s_fw, s_bw], 1), w, b))
         return states
 
       merged_outputs = []
@@ -102,7 +95,7 @@ class BidirectionalRNNEncoder(RNNEncoder):
             w = tf.get_variable("proj_w", [size * 2, size])
             b = tf.get_variable("proj_b", [size])
             merged_state.append(self.activation(
-              tf.nn.xw_plus_b(array_ops.concat([s_fw, s_bw], 1), w, b)))
+              tf.nn.xw_plus_b(tf.concat([s_fw, s_bw], 1), w, b)))
 
         merged_state = tf.concat(merged_state, 1)
       return merged_outputs, merged_state

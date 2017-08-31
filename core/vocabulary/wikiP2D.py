@@ -3,7 +3,7 @@ import os, time, re, sys
 from collections import defaultdict, OrderedDict, Counter
 import core.utils.common as common
 from core.vocabulary.base import ERROR_ID, PAD_ID, GO_ID, EOS_ID, UNK_ID, _PAD, _GO, _EOS, _UNK 
-from core.vocabulary.base import format_zen_han, VocabularyBase
+from core.vocabulary.base import VocabularyBase
 
 _DIGIT_RE = re.compile(r"\d")
 
@@ -49,7 +49,7 @@ class WikiP2DVocabulary(VocabularyBase):
 
     self.cbase = cbase
     self.vocab, self.rev_vocab = self.init_vocab(sentences, vocab_path, vocab_size)
-    self.vocab_size = len(self.vocab)
+    self.size = len(self.vocab)
 
   def init_vocab(self, sentences, vocab_path, vocab_size):
     if os.path.exists(vocab_path):
