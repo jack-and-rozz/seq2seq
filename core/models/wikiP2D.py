@@ -1,28 +1,18 @@
 # coding: utf-8 
+
+from core.models.base import ModelBase
 import core.models.graph as graph
 
 class WikiP2D(graph.GraphLinkPrediction):
   def __init__(self, sess, config, do_update,
                vocab, node_vocab, edge_vocab,
                summary_path=None):
-    self.sess = sess
-    self.do_update = do_update
+    self.initialize(sess, config, do_update)
+
     self.vocab = vocab
     self.node_vocab = node_vocab
     self.edge_vocab = edge_vocab
     self.read_config(config)
-
-    self.learning_rate = variable_scope.get_variable(
-      "learning_rate", trainable=False, shape=[],
-      initializer=tf.constant_initializer(float(config.learning_rate), 
-                                          dtype=tf.float32))
-    self.global_step = variable_scope.get_variable(
-      "global_step", trainable=False, shape=[],  dtype=tf.int32,
-      initializer=tf.constant_initializer(0, dtype=tf.int32)) 
-
-    self.epoch = variable_scope.get_variable(
-      "epoch", trainable=False, shape=[], dtype=tf.int32,
-      initializer=tf.constant_initializer(0, dtype=tf.int32)) 
     self.initialize_embeddings()
 
     with tf.name_scope("loss"):

@@ -13,7 +13,7 @@ if [ $argc -lt 2 ];then
     usage;
 fi
 #bin_file=${argv[0]}
-bin_file=bins/wikidata.py
+bin_file=bins/wikiP2D.py
 checkpoint_path=${argv[0]}
 mode=${argv[1]}
 config_file=${argv[2]}

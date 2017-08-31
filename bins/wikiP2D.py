@@ -47,7 +47,7 @@ class GraphManager(BaseManager):
     with tf.variable_scope("Model", reuse=reuse):
       m = self.model_type(
         self.sess, FLAGS, do_update,
-        self.dataset.vocab, self.dataset.o_vocab, self.dataset.r_vocab
+        self.dataset.vocab, self.dataset.o_vocab, self.dataset.r_vocab,
         summary_path=summary_path)
 
     ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)

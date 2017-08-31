@@ -3,11 +3,12 @@ import math, time
 import tensorflow as tf
 import core.utils.tf_utils as tf_utils
 from core.utils import common, evaluation
+from core.models.base import ModelBase
 
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import init_ops
 
-class GraphLinkPrediction(object):
+class GraphLinkPrediction(ModelBase):
   """
   Define node and edge embeddings and scoring function for inferen
   """
@@ -19,8 +20,8 @@ class GraphLinkPrediction(object):
 
   def __init__(self, sess, config, do_update, 
                node_vocab, edge_vocab, summary_path=None):
-    self.sess = sess
-    self.do_update = do_update
+    #super(GraphLinkPrediction, self).__init__(sess, config, do_update)
+    self.initialize(sess, config, do_update)
     self.node_vocab = node_vocab
     self.edge_vocab = edge_vocab
     self.read_config(config)
@@ -29,17 +30,6 @@ class GraphLinkPrediction(object):
     self.n_triples = tf.placeholder(tf.int32, shape=[None, 3],
                                     name='negative_triples')
 
-    self.learning_rate = variable_scope.get_variable(
-      "learning_rate", trainable=False, shape=[],
-      initializer=tf.constant_initializer(float(config.learning_rate), 
-                                          dtype=tf.float32))
-    self.global_step = variable_scope.get_variable(
-      "global_step", trainable=False, shape=[],  dtype=tf.int32,
-      initializer=tf.constant_initializer(0, dtype=tf.int32)) 
-
-    self.epoch = variable_scope.get_variable(
-      "epoch", trainable=False, shape=[], dtype=tf.int32,
-      initializer=tf.constant_initializer(0, dtype=tf.int32)) 
     self.initialize_embeddings()
 
     with tf.name_scope("loss"):
@@ -87,10 +77,6 @@ class GraphLinkPrediction(object):
     self.keep_prob = config.keep_prob if self.do_update else 1.0
     self.share_embedding = common.str_to_bool(config.share_embedding)
     self.ns_rate = config.negative_sampling_rate
-
-  def add_epoch(self):
-    sess = self.sess
-    sess.run(tf.assign(self.epoch, tf.add(self.epoch, tf.constant(1, dtype=tf.int32))))
 
   def get_input_feed(self, raw_batch):
     input_feed = {}

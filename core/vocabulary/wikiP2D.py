@@ -48,10 +48,10 @@ class WikiP2DVocabulary(VocabularyBase):
                                       normalize_digits=normalize_digits) 
 
     self.cbase = cbase
-    self.vocab, self.rev_vocab = self.init_vocab(sentences, vocab_size, vocab_path)
+    self.vocab, self.rev_vocab = self.init_vocab(sentences, vocab_path, vocab_size)
     self.vocab_size = len(self.vocab)
 
-  def init_vocab(self, sentences, vocab_size, vocab_path):
+  def init_vocab(self, sentences, vocab_path, vocab_size):
     if os.path.exists(vocab_path):
       return self.load_vocab(vocab_path)
     elif not sentences:
@@ -70,7 +70,7 @@ class WikiP2DVocabulary(VocabularyBase):
     return vocab, rev_vocab
 
   def load_vocab(self, vocab_path):
-    sys.stderr.write('Loading the vocabulary from \'%s\' ...\n' % vocab_path)
+    sys.stderr.write('Loading vocabulary from \'%s\' ...\n' % vocab_path)
     rev_vocab = [(l.split('\t')[0], int(l.split('\t')[1])) for l in open(vocab_path, 'r')]
     vocab = OrderedDict({t:i for i,t in enumerate(rev_vocab)})
     return vocab, rev_vocab

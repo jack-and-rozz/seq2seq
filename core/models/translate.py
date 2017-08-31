@@ -15,31 +15,20 @@ from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 from tensorflow.python.client import timeline
 from tensorflow.python.platform import gfile
 
+from core.model.base import ModelBase
 from core.utils import common
 from core.utils.dataset import padding_and_format
 from core.utils.vocabulary.base import  PAD_ID, GO_ID, EOS_ID, UNK_ID, VecVocabulary
 from core.seq2seq import seq2seq, encoders, decoders
 from core.seq2seq.beam_search import follow_path
 
-class Baseline(object):
+class Baseline(ModelBase):
   def __init__(self, sess, FLAGS, forward_only, do_update, 
                s_vocab=None, t_vocab=None):
-    self.sess = sess
+    #super(Baseline, self).__init__(sess, FLAGS, do_update)
+    self.initialize(sess, config, do_update)
     self.forward_only=forward_only
-    self.do_update = do_update
     self.read_flags(FLAGS)
-
-    self.learning_rate = variable_scope.get_variable(
-      "learning_rate", trainable=False, shape=[],
-      initializer=tf.constant_initializer(float(FLAGS.learning_rate), 
-                                          dtype=tf.float32))
-    self.global_step = variable_scope.get_variable(
-      "global_step", trainable=False, shape=[],  dtype=tf.int32,
-      initializer=tf.constant_initializer(0, dtype=tf.int32)) 
-
-    self.epoch = variable_scope.get_variable(
-      "epoch", trainable=False, shape=[], dtype=tf.int32,
-      initializer=tf.constant_initializer(0, dtype=tf.int32)) 
 
     with tf.name_scope('placeholders'):
       self.setup_placeholders(use_sequence_length=self.use_sequence_length)
@@ -79,10 +68,6 @@ class Baseline(object):
       with tf.variable_scope(tf.get_variable_scope(), reuse=False):
         self.updates = self.setup_updates(self.losses)
     self.saver = tf.train.Saver(tf.global_variables())
-
-  def add_epoch(self):
-    sess = self.sess
-    sess.run(tf.assign(self.epoch, tf.add(self.epoch, tf.constant(1, dtype=tf.int32))))
 
   def initialize_embedding(self, vocab_size, embedding_size, 
                            vocab=None, trainable=True):
