@@ -60,11 +60,22 @@ class GraphLinkPrediction(ModelBase):
         self.updates = opt.apply_gradients(
           grad_and_vars, global_step=self.global_step)
 
+    ## About outputs
+    self.output_feed = {}
+    self.output_feed['train'] = [
+      self.loss,
+      tf.reduce_mean(self.inference(self.p_triples)),
+      tf.reduce_mean(self.inference(self.n_triples))
+    ]
+    if self.do_update:
+      self.output_feed['train'].append(self.updates)
+    output_feed['test'] = self.inference(self.p_triples)
+
   # loss functions
   def cross_entropy(self, positives, negatives):
     # calculate cross-entropy by hand.
     ce1 = -tf.log(positives)
-    ce2 = -tf.log(negatives)
+    ce2 = -tf.log(1 - negatives)
     return tf.reduce_mean(tf.concat([ce1, ce2], axis=0))
 
   def margin_loss(self, positives, negatives, margin=1.0):
@@ -72,9 +83,6 @@ class GraphLinkPrediction(ModelBase):
     return tf.reduce_mean(tf.maximum(margin - positives + negatives, 0))
 
   def read_config(self, config):
-    self.hidden_size = config.hidden_size
-    self.max_gradient_norm = config.max_gradient_norm
-    self.keep_prob = config.keep_prob if self.do_update else 1.0
     self.share_embedding = common.str_to_bool(config.share_embedding)
     self.ns_rate = config.negative_sampling_rate
 
@@ -87,9 +95,6 @@ class GraphLinkPrediction(ModelBase):
       input_feed[self.n_triples] = raw_batch[1]
     return input_feed
 
-  def step(self, input_feed, output_feed):
-    outputs = self.sess.run(output_feed, input_feed)
-    return outputs
 
   def train_or_valid(self, data, batch_size, do_shuffle=False):
     start_time = time.time()
@@ -97,17 +102,9 @@ class GraphLinkPrediction(ModelBase):
     batches = data.get_train_batch(batch_size,
                                    do_shuffle=do_shuffle,
                                    negative_sampling_rate=self.ns_rate)
-    output_feed = [
-      self.loss,
-      tf.reduce_mean(self.inference(self.p_triples)),
-      tf.reduce_mean(self.inference(self.n_triples))
-    ]
-    if self.do_update:
-      output_feed.append(self.updates)
-
     for i, raw_batch in enumerate(batches):
       input_feed = self.get_input_feed(raw_batch)
-      outputs = self.step(input_feed)
+      outputs = self.sess.run(output_feed['train'], input_feed)
       step_loss = outputs[0]
       loss += step_loss
     epoch_time = (time.time() - start_time)
@@ -128,11 +125,10 @@ class GraphLinkPrediction(ModelBase):
 
   def test(self, data, batch_size):
     def _step(batch):
-      output_feed = self.inference(self.p_triples)
       result = []
       for b in batch:
         input_feed = self.get_input_feed((b, []))
-        outputs = self.step(input_feed, output_feed)
+        outputs = self.sess.run(output_feed['test'], input_feed)
         outputs = list(outputs)
         result.extend(outputs)
       return result
@@ -163,7 +159,7 @@ class GraphLinkPrediction(ModelBase):
 
 class DistMult(GraphLinkPrediction):
   def initialize_embeddings(self):
-    initializer = init_ops.random_uniform_initializer(-math.sqrt(3), math.sqrt(3))
+    initializer = tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3))
     if self.share_embedding:
       e_syn = variable_scope.get_variable(
         "synsets", [self.node_vocab.size, self.hidden_size],

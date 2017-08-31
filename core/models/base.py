@@ -1,19 +1,24 @@
 # coding: utf-8
-
+import tensorflow as tf
 
 class ModelBase(object):
-  def initialize((self, sess, FLAGS, do_update):
+  def initialize(self, sess, config, do_update):
     self.sess = sess
     self.do_update = do_update
-    self.learning_rate = variable_scope.get_variable(
+
+    self.hidden_size = config.hidden_size
+    self.keep_prob = config.keep_prob if self.do_update else 1.0
+    self.max_gradient_norm = config.max_gradient_norm
+
+    self.learning_rate = tf.get_variable(
       "learning_rate", trainable=False, shape=[],
       initializer=tf.constant_initializer(float(config.learning_rate), 
                                           dtype=tf.float32))
-    self.global_step = variable_scope.get_variable(
+    self.global_step = tf.get_variable(
       "global_step", trainable=False, shape=[],  dtype=tf.int32,
       initializer=tf.constant_initializer(0, dtype=tf.int32)) 
 
-    self.epoch = variable_scope.get_variable(
+    self.epoch = tf.get_variable(
       "epoch", trainable=False, shape=[], dtype=tf.int32,
       initializer=tf.constant_initializer(0, dtype=tf.int32)) 
 

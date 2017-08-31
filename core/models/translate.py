@@ -10,7 +10,7 @@ import tensorflow as tf
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import init_ops
 from tensorflow.python.ops import math_ops
-from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
+#from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 
 from tensorflow.python.client import timeline
 from tensorflow.python.platform import gfile
@@ -19,7 +19,7 @@ from core.model.base import ModelBase
 from core.utils import common
 from core.utils.dataset import padding_and_format
 from core.utils.vocabulary.base import  PAD_ID, GO_ID, EOS_ID, UNK_ID, VecVocabulary
-from core.seq2seq import seq2seq, encoders, decoders
+from core.seq2seq import seq2seq, encoders, decoders, rnn
 from core.seq2seq.beam_search import follow_path
 
 class Baseline(ModelBase):
@@ -32,8 +32,12 @@ class Baseline(ModelBase):
 
     with tf.name_scope('placeholders'):
       self.setup_placeholders(use_sequence_length=self.use_sequence_length)
-    cell = self.setup_cell(do_update)
-    with variable_scope.variable_scope("Encoder") as encoder_scope:
+    #cell = self.setup_cell(self.cell_type, self.num_layers, 1.0, self.keep_prob,
+    #                       state_is_tuple=False)
+    cell = rnn.setup_cell(self.cell_type, self.num_layers, 1.0, self.keep_prob,
+                          state_is_tuple=False)
+
+    with tf.variable_scope("Encoder") as encoder_scope:
       encoder_embedding = self.initialize_embedding(
         FLAGS.source_vocab_size,
         FLAGS.embedding_size, 
@@ -44,7 +48,7 @@ class Baseline(ModelBase):
         scope=encoder_scope, 
         sequence_length=self.sequence_length)
 
-    with variable_scope.variable_scope("Decoder") as decoder_scope:
+    with tf.variable_scope("Decoder") as decoder_scope:
       decoder_embedding = self.initialize_embedding(
         FLAGS.target_vocab_size,
         FLAGS.embedding_size,
@@ -79,11 +83,11 @@ class Baseline(ModelBase):
 
     if not trainable: # use cpu
       with tf.device('/cpu:0'):
-        embedding = variable_scope.get_variable(
+        embedding = tf.get_variable(
           "embedding", [vocab_size, embedding_size],
           initializer=initializer, trainable=trainable)
     else:
-      embedding = variable_scope.get_variable(
+      embedding = tf.get_variable(
         "embedding", [vocab_size, embedding_size],
         initializer=initializer, trainable=trainable)
     return embedding
@@ -120,19 +124,20 @@ class Baseline(ModelBase):
     # For beam_decoding, we have to feed the size of a current batch.
     self.batch_size = tf.placeholder(tf.int32, shape=[])
 
-  def setup_cell(self, do_update):
-    cell = getattr(rnn_cell, self.cell_type)(self.hidden_size, reuse=tf.get_variable_scope().reuse) 
-    if self.keep_prob < 1.0 and do_update:
-      cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
-    if self.num_layers > 1:
-      cell = rnn_cell.MultiRNNCell([copy.deepcopy(cell) for _ in xrange(self.num_layers)],
-                                   state_is_tuple=False)
-    return cell
+  # def setup_cell(self, cell_type, num_layers=1, 
+  #                in_keep_prob=1.0, out_keep_prob=1.0):
+  #   cell = getattr(rnn_cell, self.cell_type)(self.hidden_size, reuse=tf.get_variable_scope().reuse) 
+  #   if in_keep_prob < 1.0 or out_keep_prob < 1.0:
+  #     cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
+  #   if num_layers > 1:
+  #     cell = rnn_cell.MultiRNNCell([copy.deepcopy(cell) for _ in xrange(self.num_layers)],
+  #                                  state_is_tuple=False)
+  #   return cell
 
   def read_flags(self, FLAGS):
     self.max_sequence_length = FLAGS.max_sequence_length
 
-    self.keep_prob = FLAGS.keep_prob
+    self.keep_prob = FLAGS.keep_prob if self.do_update else 1.0
     self.hidden_size = FLAGS.hidden_size
     self.max_gradient_norm = FLAGS.max_gradient_norm
     self.num_samples = FLAGS.num_samples

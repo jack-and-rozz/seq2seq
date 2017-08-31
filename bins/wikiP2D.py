@@ -8,19 +8,26 @@ from core.dataset.wikiP2D import WikiP2DDataset
 
 tf.app.flags.DEFINE_string("source_data_dir", "dataset/wikiP2D/source", "")
 tf.app.flags.DEFINE_string("processed_data_dir", "dataset/wikiP2D/processed", "")
-
 tf.app.flags.DEFINE_string("model_type", "WikiP2D", "")
 tf.app.flags.DEFINE_string("dataset", "Q5O15000R300.small.bin", "")
 
+## Hyperparameters
 tf.app.flags.DEFINE_integer("batch_size", 100, "")
 tf.app.flags.DEFINE_integer("hidden_size", 100, "")
 tf.app.flags.DEFINE_integer("vocab_size", 10000, "")
 tf.app.flags.DEFINE_float("learning_rate", 1e-4, "Learning rate.")
-tf.app.flags.DEFINE_float("keep_prob", 0.75, "Dropout rate.")
+tf.app.flags.DEFINE_float("in_keep_prob", 1.0, "Dropout rate.")
+tf.app.flags.DEFINE_float("out_keep_prob", 0.75, "Dropout rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
                           "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("negative_sampling_rate", 1.0, "")
-tf.app.flags.DEFINE_boolean("cbase", True,  "Whether to make the model character-based or not.")
+
+## Text processing methods
+tf.app.flags.DEFINE_string("cell_type", "GRUCell", "Cell type")
+tf.app.flags.DEFINE_string("seq2seq_type", "BasicSeq2Seq", "Cell type")
+tf.app.flags.DEFINE_string("encoder_type", "RNNEncoder", "")
+tf.app.flags.DEFINE_boolean("cbase", False,  "Whether to make the model character-based or not.")
+
 #tf.app.flags.DEFINE_integer("max_epoch", 100, "")
 #tf.app.flags.DEFINE_boolean("share_embedding", False, "Whether to share syn/rel embedding between subjects and objects")
 
