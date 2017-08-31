@@ -17,7 +17,7 @@ from tensorflow.python.platform import gfile
 
 from core.utils import common
 from core.utils.dataset import padding_and_format
-from core.utils.vocabulary import VecVocabulary, PAD_ID, EOS_ID, UNK_ID
+from core.utils.vocabulary.base import  PAD_ID, GO_ID, EOS_ID, UNK_ID, VecVocabulary
 from core.seq2seq import seq2seq, encoders, decoders
 from core.seq2seq.beam_search import follow_path
 
@@ -162,8 +162,8 @@ class Baseline(object):
     self.beam_size = FLAGS.beam_size
 
   def get_input_feed(self, raw_batch):
-    batch = padding_and_format(raw_batch, self.max_sequence_length,
-                               use_sequence_length=self.use_sequence_length)
+    batch = self.padding_and_format(raw_batch,
+                                    use_sequence_length=self.use_sequence_length)
     input_feed = {}
     batch_size = batch.encoder_inputs
     encoder_size = decoder_size = self.max_sequence_length
@@ -243,6 +243,66 @@ class Baseline(object):
       results = list(map(list, zip(*results))) # transpose to batch-major
     return losses, results
 
+
+  def padding_and_format(self, data, use_sequence_length=True):
+    '''
+    Caution:  if both do_reverse and use_sequence_length are True at the same time, many PAD_IDs and only a small part of a sentence are read.
+    '''
+    max_sequence_length = self.max_sequence_length
+    do_reverse = not use_sequence_length
+    batch_size = len(data)
+    encoder_size, decoder_size = max_sequence_length, max_sequence_length
+    encoder_inputs, decoder_inputs, encoder_sequence_length = [], [], []
+    for _, encoder_input, decoder_input in data:
+      encoder_sequence_length.append(len(encoder_input))
+      # Encoder inputs are padded and then reversed if do_reverse=True.
+      encoder_pad = [PAD_ID for _ in xrange((encoder_size - len(encoder_input)))] 
+      encoder_input = encoder_input + encoder_pad
+      if do_reverse:
+        encoder_input = list(reversed(encoder_input))
+      encoder_inputs.append(encoder_input)
+
+      # Decoder inputs get an extra "GO" and "EOS" symbol, and are padded then.
+      decoder_pad_size = decoder_size - len(decoder_input) - 2
+      decoder_inputs.append([GO_ID] + decoder_input + [EOS_ID] +
+                            [PAD_ID] * decoder_pad_size)
+
+    # Now we create batch-major vectors from the data selected above.
+    batch_encoder_inputs, batch_decoder_inputs, batch_weights = [], [], []
+
+    # Batch encoder inputs are just re-indexed encoder_inputs.
+    for length_idx in xrange(encoder_size):
+      batch_encoder_inputs.append(
+        np.array([encoder_inputs[batch_idx][length_idx]
+                  for batch_idx in xrange(batch_size)], dtype=np.int32))
+
+    # Batch decoder inputs are re-indexed decoder_inputs, we create weights.
+    for length_idx in xrange(decoder_size):
+      batch_decoder_inputs.append(
+        np.array([decoder_inputs[batch_idx][length_idx]
+                  for batch_idx in xrange(batch_size)], dtype=np.int32))
+
+      # Create target_weights to be 0 for targets that are padding.
+      batch_weight = np.ones(batch_size, dtype=np.float32)
+      for batch_idx in xrange(batch_size):
+        # We set weight to 0 if the corresponding target is a PAD symbol.
+        # The corresponding target is decoder_input shifted by 1 forward.
+        if length_idx < decoder_size - 1:
+          target = decoder_inputs[batch_idx][length_idx + 1]
+        if length_idx == decoder_size - 1 or target == PAD_ID:
+          batch_weight[batch_idx] = 0.0
+      batch_weights.append(batch_weight)
+    if not use_sequence_length:
+      encoder_sequence_length = None 
+    batch = common.dotDict({
+      'encoder_inputs' : batch_encoder_inputs,
+      'decoder_inputs' : batch_decoder_inputs,
+      'target_weights' : batch_weights,
+      'sequence_length' : encoder_sequence_length,
+      'batch_size' : batch_size,
+    })
+    return batch
+
 # class AverageGradientMultiGPUTrainManager(object):
 #   def __init__(self, sess, FLAGS, forward_only, do_update):
 #     if do_update and len(os.environ['CUDA_VISIBLE_DEVICES'].split(',')) > 1:
@@ -251,3 +311,4 @@ class Baseline(object):
 #       m = Baseline(sess, FLAGS, forward_only, do_update)
 
     #super(AverageGradientMultiGPUTrainWrapper, self).__init__(sess, FLAGS, forward_only, do_update, s_vocab=s_vocab, t_vocab=t_vocab)
+

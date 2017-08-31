@@ -5,6 +5,7 @@ import numpy as np
 import itertools
 from itertools import chain
 from logging import getLogger, StreamHandler, FileHandler, Formatter, DEBUG, INFO, WARNING, ERROR, CRITICAL
+import multiprocessing as mp
 
 try:
    import cPickle as pickle
@@ -51,6 +52,7 @@ def map_dict(func, _dict):
 
 def split_dict():
     pass
+
 class dotDict(dict):
   __getattr__ = dict.__getitem__
   __setattr__ = dict.__setitem__
@@ -59,6 +61,14 @@ class dotDict(dict):
 class rec_defaultdict(collections.defaultdict):
     def __init__(self):
         self.default_factory = type(self)
+
+class rec_dotdefaultdict(collections.defaultdict):
+  __getattr__ = dict.__getitem__
+  __setattr__ = dict.__setitem__
+  __delattr__ = dict.__delitem__
+  def __init__(self, _=None):
+    super(rec_dotdefaultdict, self).__init__(rec_dotdefaultdict)
+
 
 def modulize(dictionary):
     import imp
@@ -237,6 +247,8 @@ def str_to_bool(str_):
         exit(1)
     return bool_
 
+def str2bool(str_):
+  return str_to_bool(str_)
 
 def separate_path_and_filename(file_path):
     pattern = '^(.+)/(.+)$'
@@ -413,6 +425,34 @@ def timewatch(logger=None):
 ############################################
 #        MultiProcessing
 ############################################
+
+def multi_process(func, *args):
+  def wrapper(_func, idx, q):
+    def _wrapper(*args, **kwargs):
+      res = func(*args, **kwargs)
+      return q.put((idx, res))
+    return _wrapper
+
+  workers = []
+  # mp.Queue() seems to have a bug..? 
+  # (stackoverflow.com/questions/13649625/multiprocessing-in-python-blocked)
+  q = mp.Manager().Queue() 
+  
+  # kwargs are not supported... (todo)
+  for i, a in enumerate(zip(*args)):
+    worker = mp.Process(target=wrapper(func, i, q), args=a)
+    workers.append(worker)
+    worker.daemon = True  # make interrupting the process with ctrl+c easier
+    worker.start()
+
+  for worker in workers:
+    worker.join()
+  results = []
+  while not q.empty():
+    res = q.get()
+    results.append(res)
+  
+  return [res for i, res in sorted(results, key=lambda x: x[0])]
 
 def argwrapper(args):
     '''

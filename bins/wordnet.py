@@ -5,7 +5,7 @@ from base import BaseManager, logger
 from core.utils.vocabulary import WordNetSynsetVocabulary, WordNetRelationVocabulary
 from core.utils import common
 from core.utils.dataset import WordNetDataset
-import core.models.graph
+import core.models.wordnet
 
 tf.app.flags.DEFINE_string("source_data_dir", "dataset/graph/wordnet-mlj12/source", "")
 tf.app.flags.DEFINE_string("processed_data_dir", "dataset/graph/wordnet-mlj12/processed", "")
@@ -39,7 +39,7 @@ tf.app.flags.DEFINE_boolean("share_embedding", False, "Whether to share syn/rel 
 class WordNetManager(BaseManager):
   def __init__(self, FLAGS, sess):
     super(WordNetManager, self).__init__(FLAGS, sess)
-    self.model_type = getattr(core.models.graph, FLAGS.model_type)
+    self.model_type = getattr(core.models.wordnet, FLAGS.model_type)
     self.FLAGS = FLAGS
     self.syn_vocab = WordNetSynsetVocabulary(
       FLAGS.source_data_dir, FLAGS.processed_data_dir,
