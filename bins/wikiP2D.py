@@ -13,22 +13,26 @@ tf.app.flags.DEFINE_string("model_type", "WikiP2D", "")
 tf.app.flags.DEFINE_string("dataset", "Q5O15000R300.small.bin", "")
 
 ## Hyperparameters
+tf.app.flags.DEFINE_integer("max_epoch", 100, "")
 tf.app.flags.DEFINE_integer("batch_size", 100, "")
-tf.app.flags.DEFINE_integer("hidden_size", 100, "")
+tf.app.flags.DEFINE_float("negative_sampling_rate", 1.0, "")
 tf.app.flags.DEFINE_integer("vocab_size", 10000, "")
+tf.app.flags.DEFINE_integer("hidden_size", 100, "")
 tf.app.flags.DEFINE_float("learning_rate", 1e-4, "Learning rate.")
 tf.app.flags.DEFINE_float("in_keep_prob", 1.0, "Dropout rate.")
 tf.app.flags.DEFINE_float("out_keep_prob", 0.75, "Dropout rate.")
+tf.app.flags.DEFINE_integer("num_layers", 1, "")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
                           "Clip gradients to this norm.")
-tf.app.flags.DEFINE_float("negative_sampling_rate", 1.0, "")
 
 ## Text processing methods
 tf.app.flags.DEFINE_string("cell_type", "GRUCell", "Cell type")
 tf.app.flags.DEFINE_string("encoder_type", "RNNEncoder", "")
 tf.app.flags.DEFINE_boolean("cbase", False,  "Whether to make the model character-based or not.")
+tf.app.flags.DEFINE_boolean("state_is_tuple", True,  "")
+tf.app.flags.DEFINE_integer("max_sentence_length", 10, "")
+tf.app.flags.DEFINE_integer("max_word_length", 5, "")
 
-#tf.app.flags.DEFINE_integer("max_epoch", 100, "")
 #tf.app.flags.DEFINE_boolean("share_embedding", False, "Whether to share syn/rel embedding between subjects and objects")
 
 
@@ -45,10 +49,10 @@ class GraphManager(BaseManager):
   def create_model(self, FLAGS, mode, reuse=False):
     if mode == 'train':
       do_update = True
-    elif mode == 'dev' or mode == 'test':
+    elif mode == 'valid' or mode == 'test':
       do_update = False
     else:
-      raise ValueError("The argument \'mode\' must be \'train\', \'dev\', or \'test\'.")
+      raise ValueError("The argument \'mode\' must be \'train\', \'valid\', or \'test\'.")
     summary_path = os.path.join(self.SUMMARIES_PATH, mode)
 
     with tf.variable_scope("Model", reuse=reuse):
@@ -73,33 +77,37 @@ class GraphManager(BaseManager):
 
   @common.timewatch(logger)
   def train(self):
-    FLAGS = self.FLAGS
-
+    config = self.FLAGS
+    train_data = self.dataset.train
+    valid_data = self.dataset.valid
+    test_data = self.dataset.test
+    
     with tf.name_scope('train'):
-      mtrain = self.create_model(FLAGS, 'train', reuse=False)
-    print mtrain
-    exit(1)
-    with tf.name_scope('dev'):
+      mtrain = self.create_model(config, 'train', reuse=False)
+
+    with tf.name_scope('valid'):
       config.negative_sampling_rate = 0.0
-      mvalid = self.create_model(FLAGS, 'dev', reuse=True)
-
+      mvalid = self.create_model(config, 'valid', reuse=True)
+      config.negative_sampling_rate = 1.0
+    print mtrain.epoch.eval()
     if mtrain.epoch.eval() == 0:
-      logger.info("(train, dev, test) = (%d, %d, %d)" % (train_data.size, dev_data.size, test_data.size))
-      logger.info("(Synset, Relation) = (%d, %d)" % (self.syn_vocab.size, self.rel_vocab.size))
+      logger.info("(train) articles, triples, subjects = (%d, %d, %d)" % (train_data.size))
+      logger.info("(valid) articles, triples, subjects = (%d, %d, %d)" % (valid_data.size))
+      logger.info("(test)  articles, triples, subjects = (%d, %d, %d)" % (test_data.size))
 
-    for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
+    for epoch in xrange(mtrain.epoch.eval(), config.max_epoch):
       logger.info("Epoch %d: Start training." % epoch)
-      epoch_time, step_time, train_loss = mtrain.train_or_valid(train_data, FLAGS.batch_size, do_shuffle=True)
+      epoch_time, step_time, train_loss = mtrain.train_or_valid(train_data, config.batch_size, do_shuffle=True)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, train_loss))
 
-      epoch_time, step_time, valid_loss = mvalid.train_or_valid(dev_data, FLAGS.batch_size)
+      epoch_time, step_time, valid_loss = mvalid.train_or_valid(valid_data, config.batch_size, do_shuffle=False)
       logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, valid_loss))
 
       mtrain.add_epoch()
       checkpoint_path = self.CHECKPOINTS_PATH + "/model.ckpt"
       self.saver.save(self.sess, checkpoint_path, global_step=mtrain.epoch)
       if (epoch + 1) % 10 == 0:
-        results = mvalid.test(test_data, FLAGS.batch_size)
+        results = mvalid.test(valid_data, config.batch_size)
         results, ranks, mrr, hits_10 = results
         logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtrain.epoch.eval(), mrr, hits_10))
 

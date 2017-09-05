@@ -12,6 +12,10 @@ def func1():
     for i, w in enumerate(wn.lemmas(word)):
       print "{0}) '{1}'".format(i, str(w))
     print ''
+    #continue
+    lem_id = int(raw_input('Enter an lemma ID: '))
+    l = wn.lemmas(word)[lem_id]
+    print l, l.definition()
     continue
     syn_id = int(raw_input('Enter an synset ID: '))
 

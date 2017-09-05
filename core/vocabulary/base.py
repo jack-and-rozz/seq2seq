@@ -4,13 +4,13 @@ from tensorflow.python.platform import gfile
 import core.utils.common as common
 
 _PAD = "_PAD"
-_GO = "_GO"
+_BOS = "_BOS"
 _EOS = "_EOS"
 _UNK = "_UNK"
 
 ERROR_ID = -1
 PAD_ID = 0
-GO_ID = 1
+BOS_ID = 1
 EOS_ID = 2
 UNK_ID = 3
 

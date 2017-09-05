@@ -19,7 +19,6 @@ tf.app.flags.DEFINE_integer("max_to_keep", 5, "Number of checkpoints to be kept"
 tf.app.flags.DEFINE_string("mode", "train", "")
 tf.app.flags.DEFINE_string("log_file", "train.log", "")
 tf.app.flags.DEFINE_string('checkpoint_path', '/tmp/model.ckpt', 'Directory to savev the trained model.')
-
 log_file = tf.app.flags.FLAGS.log_file if tf.app.flags.FLAGS.log_file else None
 logger = common.logManager(handler=FileHandler(log_file)) if log_file else common.logManager()
 

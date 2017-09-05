@@ -20,7 +20,6 @@ from tensorflow.python.ops import rnn
 from tensorflow.contrib.rnn.python.ops import core_rnn
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell
 from tensorflow.python.framework import ops
-from tensorflow.python.ops import embedding_ops
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import array_ops
@@ -56,7 +55,7 @@ def _extract_argmax_and_embed(embedding,
     prev_symbol = math_ops.argmax(prev, 1)
     # Note that gradients will not propagate through the second parameter of
     # embedding_lookup.
-    emb_prev = embedding_ops.embedding_lookup(embedding, prev_symbol)
+    emb_prev = tf.nn.embedding_lookup(embedding, prev_symbol)
     if not update_embedding:
       emb_prev = array_ops.stop_gradient(emb_prev)
     return emb_prev
@@ -117,7 +116,6 @@ class BasicSeq2Seq(object):
       else:
         self.loop_function = _extract_argmax_and_embed(
           self.decoder.embedding, output_projection=self.projection)
-      
 
   def seq2seq(self, encoder_inputs, decoder_inputs):
     with variable_scope.variable_scope("Encoder") as scope:
@@ -131,9 +129,9 @@ class BasicSeq2Seq(object):
 
   def __call__(self, encoder_inputs, decoder_inputs, targets, weights,
                per_example_loss=False):
-    encoder_inputs = [embedding_ops.embedding_lookup(
+    encoder_inputs = [tf.nn.embedding_lookup(
       self.encoder.embedding, inp) for inp in encoder_inputs]
-    decoder_inputs = [embedding_ops.embedding_lookup(
+    decoder_inputs = [tf.nn.embedding_lookup(
       self.decoder.embedding, inp) for inp in decoder_inputs]
 
     if self.do_beam_decode:
@@ -141,8 +139,8 @@ class BasicSeq2Seq(object):
                                                               decoder_inputs)
       return beam_paths, beam_symbols, decoder_states
     else:
-      outputs, decoder_states = self.seq2seq(encoder_inputs, 
-                                             decoder_inputs)
+      outputs, decoder_states = self.seq2seq(encoder_inputs, decoder_inputs)
+
       def to_logits(outputs):
         return [tf.nn.xw_plus_b(output, self.projection[0], self.projection[1])
                 for output in outputs]

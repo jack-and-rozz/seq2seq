@@ -2,12 +2,12 @@
 import collections, os, time, re
 from tensorflow.python.platform import gfile
 
-from core.vocabulary.base import ERROR_ID, PAD_ID, GO_ID, EOS_ID, UNK_ID, _PAD, _GO, _EOS, _UNK 
+from core.vocabulary.base import ERROR_ID, PAD_ID, BOS_ID, EOS_ID, UNK_ID, _PAD, _BOS, _EOS, _UNK 
 from core.vocabulary.base import VocabularyBase, space_tokenizer,
 
 class Vocabulary(VocabularyBase):
   def __init__(self, source_dir, processed_dir, vocab_file, suffix, vocab_size):
-    self.START_VOCAB = [_PAD, _GO, _EOS, _UNK]
+    self.START_VOCAB = [_PAD, _BOS, _EOS, _UNK]
     source_path = os.path.join(source_dir, vocab_file) + '.' + suffix
     target_path = os.path.join(processed_dir, vocab_file) + '.%s.Wvocab%d' %(suffix, vocab_size)
     self.tokenizer = space_tokenizer

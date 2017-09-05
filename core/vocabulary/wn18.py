@@ -3,7 +3,7 @@ import collections, os, time
 from nltk.corpus import wordnet as wn
 from tensorflow.python.platform import gfile
 import core.utils.common as common
-from core.vocabulary.base import PAD_ID, GO_ID, EOS_ID, UNK_ID
+from core.vocabulary.base import _UNK
 
 class WordNetVocabularyBase(object):
   def __init__(self):
