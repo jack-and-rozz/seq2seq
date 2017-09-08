@@ -10,13 +10,14 @@ from core.dataset.wikiP2D import WikiP2DDataset
 tf.app.flags.DEFINE_string("source_data_dir", "dataset/wikiP2D/source", "")
 tf.app.flags.DEFINE_string("processed_data_dir", "dataset/wikiP2D/processed", "")
 tf.app.flags.DEFINE_string("model_type", "WikiP2D", "")
-tf.app.flags.DEFINE_string("dataset", "Q5O15000R300.small.bin", "")
+tf.app.flags.DEFINE_string("dataset", "Q5O15000R300.micro.bin", "")
 
 ## Hyperparameters
 tf.app.flags.DEFINE_integer("max_epoch", 100, "")
 tf.app.flags.DEFINE_integer("batch_size", 100, "")
 tf.app.flags.DEFINE_float("negative_sampling_rate", 1.0, "")
-tf.app.flags.DEFINE_integer("vocab_size", 10000, "")
+tf.app.flags.DEFINE_integer("w_vocab_size", 30000, "")
+tf.app.flags.DEFINE_integer("c_vocab_size", 1000, "")
 tf.app.flags.DEFINE_integer("hidden_size", 100, "")
 tf.app.flags.DEFINE_float("learning_rate", 1e-4, "Learning rate.")
 tf.app.flags.DEFINE_float("in_keep_prob", 1.0, "Dropout rate.")
@@ -27,11 +28,13 @@ tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
 
 ## Text processing methods
 tf.app.flags.DEFINE_string("cell_type", "GRUCell", "Cell type")
-tf.app.flags.DEFINE_string("encoder_type", "RNNEncoder", "")
-tf.app.flags.DEFINE_boolean("cbase", False,  "Whether to make the model character-based or not.")
+tf.app.flags.DEFINE_string("encoder_type", "BidirectionalRNNEncoder", "")
+tf.app.flags.DEFINE_boolean("cbase", True,  "Whether to make the model character-based or not.")
+tf.app.flags.DEFINE_boolean("wbase", True,  "Whether to make the model word-based or not.")
+
 tf.app.flags.DEFINE_boolean("state_is_tuple", True,  "")
 tf.app.flags.DEFINE_integer("max_sentence_length", 10, "")
-tf.app.flags.DEFINE_integer("max_word_length", 5, "")
+tf.app.flags.DEFINE_integer("max_word_length", 0, "")
 
 #tf.app.flags.DEFINE_boolean("share_embedding", False, "Whether to share syn/rel embedding between subjects and objects")
 
@@ -43,7 +46,7 @@ class GraphManager(BaseManager):
     self.FLAGS = FLAGS
     self.dataset = WikiP2DDataset(
       FLAGS.source_data_dir, FLAGS.processed_data_dir, 
-      FLAGS.dataset, FLAGS.vocab_size, cbase=FLAGS.cbase)
+      FLAGS.dataset, FLAGS.w_vocab_size, FLAGS.c_vocab_size)
 
   @common.timewatch(logger)
   def create_model(self, FLAGS, mode, reuse=False):
@@ -58,7 +61,8 @@ class GraphManager(BaseManager):
     with tf.variable_scope("Model", reuse=reuse):
       m = self.model_type(
         self.sess, FLAGS, do_update,
-        self.dataset.vocab, self.dataset.o_vocab, self.dataset.r_vocab,
+        self.dataset.w_vocab, self.dataset.c_vocab,
+        self.dataset.o_vocab, self.dataset.r_vocab,
         summary_path=summary_path)
 
     ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
@@ -78,7 +82,8 @@ class GraphManager(BaseManager):
   @common.timewatch(logger)
   def train(self):
     config = self.FLAGS
-    train_data = self.dataset.train
+    #train_data = self.dataset.train
+    train_data = self.dataset.test
     valid_data = self.dataset.valid
     test_data = self.dataset.test
     
@@ -106,10 +111,10 @@ class GraphManager(BaseManager):
       mtrain.add_epoch()
       checkpoint_path = self.CHECKPOINTS_PATH + "/model.ckpt"
       self.saver.save(self.sess, checkpoint_path, global_step=mtrain.epoch)
-      if (epoch + 1) % 10 == 0:
-        results = mvalid.test(valid_data, config.batch_size)
-        results, ranks, mrr, hits_10 = results
-        logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtrain.epoch.eval(), mrr, hits_10))
+      #if (epoch + 1) % 10 == 0:
+      #  results = mvalid.test(valid_data, config.batch_size)
+      #  results, ranks, mrr, hits_10 = results
+      #  logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtrain.epoch.eval(), mrr, hits_10))
 
   # @common.timewatch(logger)
   # def test(self, test_data=None, mtest=None):

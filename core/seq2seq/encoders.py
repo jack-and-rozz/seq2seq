@@ -19,12 +19,11 @@ class Encoder(object):
   pass
 
 class RNNEncoder(Encoder):
-  def __init__(self, cell, embedding, 
-               scope=None, activation=tf.nn.tanh):
+  def __init__(self, cell, embedding=None, 
+               scope=None):
     with tf.variable_scope(scope or "rnn_encoder") as scope:
       self.cell = cell
       self.embedding = embedding
-      self.activation = activation
 
   @property
   def state_size(self):
@@ -49,7 +48,7 @@ class RNNEncoder(Encoder):
     return outputs, state
 
 class BidirectionalRNNEncoder(RNNEncoder):
-  def __init__(self, cell, embedding, 
+  def __init__(self, cell, embedding=None, 
                scope=None, activation=tf.nn.tanh):
     with tf.variable_scope(scope or "bidirectional_rnn_encoder"):
       self.cell = self.cell_fw = cell
@@ -81,7 +80,6 @@ class BidirectionalRNNEncoder(RNNEncoder):
       elif merge_type == 'avg':
         #print outputs
         outputs = (output_fw + output_bw) / 2
-        #if isinstance(self.cell, rnn_cell.MultiRNNCell):
         if nest.is_sequence(self.state_size):
           state = ((s_fw + s_bw /2) for s_fw, s_bw in zip(state_fw, state_bw))
           state = tuple(state)

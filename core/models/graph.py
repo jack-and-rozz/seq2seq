@@ -198,3 +198,4 @@ class DistMult(GraphLinkPrediction):
 class FactorizedDistMult(GraphLinkPrediction):
   pass
   
+

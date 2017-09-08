@@ -49,6 +49,9 @@ class WikiP2DVocabulary(VocabularyBase):
     self.vocab, self.rev_vocab = self.init_vocab(sentences, vocab_path, vocab_size)
     self.size = len(self.vocab)
 
+    # Number of additonal tokens (e.g. EOS) when articles are padded.
+    # self.n_additional_paddings = 1
+
   def init_vocab(self, sentences, vocab_path, vocab_size):
     if os.path.exists(vocab_path):
       return self.load_vocab(vocab_path)
@@ -86,12 +89,8 @@ class WikiP2DVocabulary(VocabularyBase):
     tokens = self.tokenizer(sentence)
     if self.cbase:
       res = [[self.vocab.get(char, UNK_ID) for char in word] for word in tokens]
-      res.append([EOS_ID])
-      #res.insert(0, [BOS_ID]) # todo link_spanをどうする？
     else:
       res = [self.vocab.get(word, UNK_ID) for word in tokens]
-      res.append(EOS_ID)
-      #res.insert(0, BOS_ID)
     return res
   def id2token(self, _id):
     if _id < 0 or _id > len(self.rev_vocab):
@@ -108,6 +107,55 @@ class WikiP2DVocabulary(VocabularyBase):
     else:
       sent = " ".join([self.rev_vocab[word_id] for word_id in ids])
     return sent
+  def padding(self, sentences, max_sentence_length=None, max_word_length=None):
+    print max_sentence_length, max_word_length
+    '''
+    '''
+    if not max_sentence_length:
+      max_sentence_length = max([len(s) for s in sentences])
+    if not max_word_length and self.cbase:
+      max_word_length = max([max([len(w) for w in s]) for s in sentences])
+    print max_sentence_length, max_word_length
+
+    def wsent_padding(sentences, max_s_length):
+      def w_pad(sent):
+        padded_s = sent[:max_s_length] + [EOS_ID]
+        size = len(padded_s)
+        padded_s += [PAD_ID] * (max_s_length - size)
+        return padded_s, size
+      res = [w_pad(s) for s in sentences]
+      articles, sentence_lengthes = map(list, zip(*res))
+      return articles, sentence_lengthes
+
+    def csent_padding(sentences, max_s_length, max_w_length):
+      def c_pad(w):
+        padded_w = w[:max_w_length] 
+        size = len(padded_w)
+        padded_w += [PAD_ID] * (max_w_length - size)
+        return padded_w, size
+      def s_pad(s):
+        padded_s, word_lengthes = map(list, zip(*[c_pad(w) for w in s]))
+        padded_s.append([EOS_ID] + [PAD_ID] * (max_w_length - 1))
+        sentence_length = len(padded_s)
+        padded_s += [[PAD_ID] * max_w_length] * (max_s_length - sentence_length)
+        return padded_s, sentence_length, word_lengthes
+      for s in sentences:
+        res = s_pad(s)
+        print len(res[0]),  len(res[1]),  len(res[2])
+        print res
+        exit(1)
+        
+    sentence_lengthes =  [] # [batch_size]
+    word_lengthes = [] # [batch_size, max_sentence_length]
+    if self.cbase:
+      return csent_padding(sentences, max_sentence_length, max_word_length)
+    else:
+      return wsent_padding(sentences, max_sentence_length)
+
+      for i,a in enumerate(article):
+        print i, a
+      print sentence_lengthes
+    exit(1)
 
 class WikiP2DRelVocabulary(WikiP2DVocabulary):
   def __init__(self, data, vocab_path, vocab_size=None):
