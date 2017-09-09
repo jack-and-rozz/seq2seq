@@ -5,7 +5,7 @@ from core.utils import common, evaluation, tf_utils
 from core.models.base import ModelBase
 import core.models.graph as graph
 from core.seq2seq import encoders, rnn
-
+import numpy as np
 ##############################
 ##    Scoring Functions
 ##############################
@@ -16,6 +16,7 @@ def distmult(subjects, relations, objects):
     score = tf_utils.batch_dot(relations, subjects * objects, n_unk_dims=2)
     score = tf.sigmoid(score)
     return score
+
 
 ##############################
 ##      Model classes
@@ -28,7 +29,7 @@ class WikiP2D(graph.GraphLinkPrediction):
     self.initialize(sess, config, do_update)
     self.cbase = config.cbase
     self.wbase = config.wbase
-    self.ns_rate = config.negative_sampling_rate
+    #self.ns_rate = config.negative_sampling_rate
     self.scoring_function = distmult
     self.activation = tf.nn.tanh
     self.w_vocab = w_vocab
@@ -44,13 +45,14 @@ class WikiP2D(graph.GraphLinkPrediction):
 
     batch_size = None
     self.max_sentence_length = max_sentence_length = config.max_sentence_length
-    self.max_word_length = max_word_length = config.max_word_length
+    self.max_word_length = max_word_length = config.max_word_length if config.max_word_length else None
+
     #batch_size, max_sentence_length, max_word_length = None, 10, None
 
     self.w_articles = tf.placeholder(tf.int32, name='w_articles',
-                                     shape=[batch_size, max_sentence_length+1])
+                                     shape=[batch_size, max_sentence_length+2])
     self.c_articles = tf.placeholder(tf.int32, name='c_articles',
-                    shape=[batch_size, max_sentence_length+1, max_word_length])
+                    shape=[batch_size, max_sentence_length+2, max_word_length])
 
     self.link_spans = tf.placeholder(tf.int32, shape=[batch_size, 2], 
                                      name='link_spans')
@@ -80,7 +82,7 @@ class WikiP2D(graph.GraphLinkPrediction):
     if self.cbase:
       with tf.variable_scope('word_encoder') as scope:
         self.word_length = tf.placeholder(
-          tf.int32, shape=[batch_size, max_sentence_length+1], name="word_length")
+          tf.int32, shape=[batch_size, max_sentence_length+2], name="word_length")
         self.w_encoder_cell = rnn.setup_cell(config.cell_type, config.hidden_size,
                                              num_layers=config.num_layers, 
                                              in_keep_prob=config.in_keep_prob, 
@@ -135,10 +137,12 @@ class WikiP2D(graph.GraphLinkPrediction):
     ## About outputs
     self.output_feed = {
       'train' : [
-        self.loss
+        self.loss,
+        self.positives,
+        self.negatives,
       ],
       'test' : [
-        self.loss
+        self.positives,
       ]
     }
     if self.do_update:
@@ -171,7 +175,7 @@ class WikiP2D(graph.GraphLinkPrediction):
     word_repls = tf.concat([_encode(a) for a in wc_articles], axis=-1)
     # Linearly transformetsu to adjust the vector size if wbase and cbase are both True.
     if word_repls.get_shape()[-1] != self.hidden_size:
-      with tf.variable_scope('linear'):
+      with tf.variable_scope('word_and_chars'):
         word_repls = tf_utils.linear_trans_for_seq(word_repls, self.hidden_size,
                                                    activation=self.activation)
 
@@ -214,49 +218,53 @@ class WikiP2D(graph.GraphLinkPrediction):
 
   def get_input_feed(self, raw_batch):
     input_feed = {}
-    w_sentences, c_sentences, link_spans, p_triples, n_triples = raw_batch
-    if c_sentences:
-      c_sentences, sentence_length = self.c_vocab.padding(c_sentences,
-                                                          self.max_sentence_length,
-                                                          self.max_word_length)
-      input_feed[self.c_articles] = np.array(c_sentences)
+    w_articles, c_articles, link_spans, p_triples, n_triples = raw_batch
+    if c_articles:
+      c_articles, sentence_length, word_length = self.c_vocab.padding(
+        c_articles, self.max_sentence_length, self.max_word_length)
+      input_feed[self.c_articles] = np.array(c_articles)
       input_feed[self.word_length] = np.array(word_length)
-      print c_sentences, sentence_length
-      exit(1)
-    if w_sentences:
-      w_sentences, sentence_length = self.w_vocab.padding(w_sentences, 
-                                                          self.max_sentence_length)
-      input_feed[self.w_articles] = np.array(w_sentences)
+    if w_articles:
+      w_articles, sentence_length = self.w_vocab.padding(
+        w_articles, self.max_sentence_length)
+      input_feed[self.w_articles] = np.array(w_articles)
       input_feed[self.sentence_length] = np.array(sentence_length)
 
     input_feed[self.link_spans] = np.array(link_spans)
     input_feed[self.p_triples] = np.array(p_triples)
     if n_triples:
       input_feed[self.n_triples] = np.array(n_triples)
+
+    # # DEBUG
+    #for ca, wa, ls in zip(c_articles, w_articles, link_spans):
+    #   print self.c_vocab.ids2tokens(ca, ls)
+    #   print self.w_vocab.ids2tokens(wa, ls)
     return input_feed
 
+  
   def train_or_valid(self, data, batch_size, do_shuffle=False):
     start_time = time.time()
     loss = 0.0
     output_feed = self.output_feed['train']
     batches = data.get_batch(batch_size,
                              do_shuffle=do_shuffle,
-                             negative_sampling_rate=self.ns_rate, 
                              min_sentence_length=None,
                              max_sentence_length=self.max_sentence_length)
     for i, raw_batch in enumerate(batches):
       input_feed = self.get_input_feed(raw_batch)
-      # for i, (k, v) in enumerate(input_feed.items()):
-      #   print k, v[0]
-      #   if i == 0:
-      #     print self.w_vocab.ids2tokens(v[0])
-      #   if i == 1:
-      #     print self.c_vocab.ids2tokens(v[0])
-      print output_feed
       outputs = self.sess.run(output_feed, input_feed)
-      step_loss = outputs[0]
+      step_loss = math.exp(outputs[0])
       loss += step_loss
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)
     loss /= (i+1)
+    loss = loss
     return epoch_time, step_time, loss
+
+  def test(self, data, batch_size):
+    output_feed = self.output_feed['test']
+    batches = data.get_test_batch(batch_size, max_sentence_length=self.max_sentence_length)
+
+    for i, raw_batch in enumerate(batches):
+      input_feed = self.get_input_feed(raw_batch)
+      outputs = self.sess.run(output_feed, input_feed)

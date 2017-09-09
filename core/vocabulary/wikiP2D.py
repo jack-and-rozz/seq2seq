@@ -92,40 +92,43 @@ class WikiP2DVocabulary(VocabularyBase):
     else:
       res = [self.vocab.get(word, UNK_ID) for word in tokens]
     return res
+
   def id2token(self, _id):
     if _id < 0 or _id > len(self.rev_vocab):
       raise ValueError('Token ID must be between 0 and %d' % len(self.rev_vocab))
+    elif _id in set([PAD_ID, EOS_ID, BOS_ID]):
+      return ''
     else:
       return self.rev_vocab[_id]
 
-  def ids2tokens(self, ids):
+  def ids2tokens(self, ids, link_span=None):
     if self.cbase:
-      if type(ids[0]) == int:
-        sent = "".join([self.rev_vocab[char_id] for char_id in ids])
-      else:
-        sent = " ".join(["".join([self.rev_vocab[char_id] for char_id in word]) for word in ids])
+      sent_tokens = ["".join([self.id2token(char_id) for char_id in word]) 
+                     for word in ids]
     else:
-      sent = " ".join([self.rev_vocab[word_id] for word_id in ids])
-    return sent
+      sent_tokens = [self.id2token(word_id) for word_id in ids]
+    if link_span:
+      for i in xrange(link_span[0], link_span[1]+1):
+        sent_tokens[i] = common.colored(sent_tokens[i], 'bold')
+      sent_tokens = [w for w in sent_tokens if w]
+    return " ".join(sent_tokens)
+
   def padding(self, sentences, max_sentence_length=None, max_word_length=None):
-    print max_sentence_length, max_word_length
     '''
     '''
     if not max_sentence_length:
       max_sentence_length = max([len(s) for s in sentences])
     if not max_word_length and self.cbase:
       max_word_length = max([max([len(w) for w in s]) for s in sentences])
-    print max_sentence_length, max_word_length
 
     def wsent_padding(sentences, max_s_length):
       def w_pad(sent):
-        padded_s = sent[:max_s_length] + [EOS_ID]
+        padded_s = [BOS_ID] + sent[:max_s_length] + [EOS_ID]
         size = len(padded_s)
-        padded_s += [PAD_ID] * (max_s_length - size)
+        padded_s += [PAD_ID] * (max_s_length+2 - size)
         return padded_s, size
       res = [w_pad(s) for s in sentences]
-      articles, sentence_lengthes = map(list, zip(*res))
-      return articles, sentence_lengthes
+      return map(list, zip(*res))
 
     def csent_padding(sentences, max_s_length, max_w_length):
       def c_pad(w):
@@ -134,28 +137,24 @@ class WikiP2DVocabulary(VocabularyBase):
         padded_w += [PAD_ID] * (max_w_length - size)
         return padded_w, size
       def s_pad(s):
+        s = s[:max_s_length]
         padded_s, word_lengthes = map(list, zip(*[c_pad(w) for w in s]))
-        padded_s.append([EOS_ID] + [PAD_ID] * (max_w_length - 1))
+        padded_s.insert(0, [BOS_ID] + [PAD_ID] * (max_w_length-1))
+        padded_s.append([EOS_ID] + [PAD_ID] * (max_w_length-1))
         sentence_length = len(padded_s)
-        padded_s += [[PAD_ID] * max_w_length] * (max_s_length - sentence_length)
+        padded_s += [[PAD_ID] * max_w_length] * (max_s_length+2 - sentence_length)
+        word_lengthes.insert(0, 1)
+        word_lengthes.extend([1]+[0] * (max_s_length+2 - sentence_length))
         return padded_s, sentence_length, word_lengthes
-      for s in sentences:
-        res = s_pad(s)
-        print len(res[0]),  len(res[1]),  len(res[2])
-        print res
-        exit(1)
-        
+      res = [s_pad(s) for s in sentences]
+      return map(list, zip(*res))
+
     sentence_lengthes =  [] # [batch_size]
     word_lengthes = [] # [batch_size, max_sentence_length]
     if self.cbase:
       return csent_padding(sentences, max_sentence_length, max_word_length)
     else:
       return wsent_padding(sentences, max_sentence_length)
-
-      for i,a in enumerate(article):
-        print i, a
-      print sentence_lengthes
-    exit(1)
 
 class WikiP2DRelVocabulary(WikiP2DVocabulary):
   def __init__(self, data, vocab_path, vocab_size=None):
@@ -174,10 +173,10 @@ class WikiP2DRelVocabulary(WikiP2DVocabulary):
       self.save_vocab(vocab_with_freq, vocab_path)
     self.size = len(self.vocab)
 
-  def to_ids(self, token):
+  def token2id(self, token):
     return self.vocab.get(token, ERROR_ID)
 
-  def to_tokens(self, _id):
+  def id2token(self, _id):
     return self.rev_vocab[_id]
 
 class WikiP2DObjVocabulary(WikiP2DRelVocabulary):

@@ -74,9 +74,11 @@ class GraphLinkPrediction(ModelBase):
   # loss functions
   def cross_entropy(self, positives, negatives):
     # calculate cross-entropy by hand.
-    ce1 = -tf.log(positives)
-    ce2 = -tf.log(1 - negatives)
-    return tf.reduce_mean(tf.concat([ce1, ce2], axis=0))
+    with tf.name_scope('cross_entropy'):
+      ce1 = -tf.log(positives)
+      ce2 = -tf.log(1 - negatives)
+      c_ent = tf.reduce_mean(tf.concat([ce1, ce2], axis=0))
+    return c_ent
 
   def margin_loss(self, positives, negatives, margin=1.0):
     # margin_loss

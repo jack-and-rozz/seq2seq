@@ -33,13 +33,14 @@ tf.app.flags.DEFINE_boolean("cbase", True,  "Whether to make the model character
 tf.app.flags.DEFINE_boolean("wbase", True,  "Whether to make the model word-based or not.")
 
 tf.app.flags.DEFINE_boolean("state_is_tuple", True,  "")
-tf.app.flags.DEFINE_integer("max_sentence_length", 10, "")
+tf.app.flags.DEFINE_integer("max_sentence_length", 40, "")
 tf.app.flags.DEFINE_integer("max_word_length", 0, "")
 
 #tf.app.flags.DEFINE_boolean("share_embedding", False, "Whether to share syn/rel embedding between subjects and objects")
 
 
 class GraphManager(BaseManager):
+  @common.timewatch(logger)
   def __init__(self, FLAGS, sess):
     super(GraphManager, self).__init__(FLAGS, sess)
     self.model_type = getattr(model, FLAGS.model_type)
@@ -82,8 +83,8 @@ class GraphManager(BaseManager):
   @common.timewatch(logger)
   def train(self):
     config = self.FLAGS
-    #train_data = self.dataset.train
-    train_data = self.dataset.test
+    train_data = self.dataset.train
+    #train_data = self.dataset.test
     valid_data = self.dataset.valid
     test_data = self.dataset.test
     
@@ -116,21 +117,21 @@ class GraphManager(BaseManager):
       #  results, ranks, mrr, hits_10 = results
       #  logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtrain.epoch.eval(), mrr, hits_10))
 
-  # @common.timewatch(logger)
-  # def test(self, test_data=None, mtest=None):
-  #   FLAGS = self.FLAGS
-  #   if not test_data:
-  #     test_data = WordNetDataset(
-  #       FLAGS.source_data_dir, FLAGS.processed_data_dir,
-  #       FLAGS.test_data, self.syn_vocab, self.rel_vocab, FLAGS.max_rows
-  #     )
+  @common.timewatch(logger)
+  def test(self, test_data=None, mtest=None):
+    FLAGS = self.FLAGS
+    if not test_data:
+      test_data = WordNetDataset(
+        FLAGS.source_data_dir, FLAGS.processed_data_dir,
+        FLAGS.test_data, self.syn_vocab, self.rel_vocab, FLAGS.max_rows
+      )
     
-  #   with tf.name_scope('test'):
-  #     if not mtest:
-  #       mtest= self.create_model(FLAGS, 'test', reuse=False)
-  #     results = mtest.test(test_data, FLAGS.batch_size)
-  #     results, ranks, mrr, hits_10 = results
-  #   logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mrr, hits_10))
+    with tf.name_scope('test'):
+      if not mtest:
+        mtest= self.create_model(FLAGS, 'test', reuse=False)
+      results = mtest.test(test_data, FLAGS.batch_size)
+      results, ranks, mrr, hits_10 = results
+    logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mrr, hits_10))
 
 @common.timewatch(logger)
 def main(_):
