@@ -13,7 +13,7 @@ from core.utils import common
 random.seed(0)
 np.random.seed(0)
 
-tf.app.flags.DEFINE_integer("max_to_keep", 5, "Number of checkpoints to be kept")
+tf.app.flags.DEFINE_integer("max_to_keep", 10, "Number of checkpoints to be kept")
 
 ## temporal flags (not saved in config)
 tf.app.flags.DEFINE_string("mode", "train", "")

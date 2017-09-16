@@ -22,5 +22,4 @@ class ModelBase(object):
       initializer=tf.constant_initializer(0, dtype=tf.int32)) 
 
   def add_epoch(self):
-    sess = self.sess
-    sess.run(tf.assign(self.epoch, tf.add(self.epoch, tf.constant(1, dtype=tf.int32))))
+    self.sess.run(tf.assign(self.epoch, tf.add(self.epoch, tf.constant(1, dtype=tf.int32))))

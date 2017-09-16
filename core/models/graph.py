@@ -73,6 +73,8 @@ class GraphLinkPrediction(ModelBase):
 
   # loss functions
   def cross_entropy(self, positives, negatives):
+    positives = tf.reshape(positives, [-1])
+    negatives = tf.reshape(negatives, [-1])
     # calculate cross-entropy by hand.
     with tf.name_scope('cross_entropy'):
       ce1 = -tf.log(positives)
@@ -157,7 +159,7 @@ class GraphLinkPrediction(ModelBase):
       ])
       summary = self.sess.run(summary_ops, input_feed)
       self.summary_writer.add_summary(summary, self.epoch.eval())
-    return results, ranks, mrr, hits_10
+    return results, mrr, hits_10
 
 
 class DistMult(GraphLinkPrediction):

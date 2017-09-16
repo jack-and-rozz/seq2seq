@@ -493,3 +493,17 @@ def colored(str_, color):
   elif type(color) == tuple or type(color) == list:
     res = "".join([ctable[c] for c in color]) + str_ + RESET
   return res 
+
+
+def get_parser():
+  import corenlp, json
+  corenlp_dir = os.environ['CORENLP']
+  properties_file = os.path.join(corenlp_dir, 'user.properties')
+  parser = corenlp.StanfordCoreNLP(corenlp_path=corenlp_dir, properties=properties_file)
+  def _parse(text):
+    result = json.loads(parser.parse(text))
+    sentences = [sent for sent in result['sentences'] if sent['words']]
+    paragraph = [" ".join([w[0] for w in sent['words']]).encode('utf-8') for sent in sentences]
+    return paragraph
+  return _parse
+   

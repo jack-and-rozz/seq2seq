@@ -133,8 +133,9 @@ class WordNetManager(BaseManager):
       if not mtest:
         mtest= self.create_model(FLAGS, 'test', reuse=False)
       results = mtest.test(test_data, FLAGS.batch_size)
-      results, ranks, mrr, hits_10 = results
+      results, mrr, hits_10 = results
     logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mrr, hits_10))
+    return results, mrr, hits_10
 
 def main(_):
   tf_config = tf.ConfigProto(

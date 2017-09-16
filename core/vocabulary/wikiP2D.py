@@ -161,6 +161,7 @@ class WikiP2DRelVocabulary(WikiP2DVocabulary):
     '''
     data : Ordereddict[Pid] = {'name': str, 'freq': int, 'aka': set, 'desc': str}
     '''
+    self.data = data
     if os.path.exists(vocab_path) or not data:
       self.vocab, self.rev_vocab = self.load_vocab(vocab_path)
     else:
@@ -178,6 +179,16 @@ class WikiP2DRelVocabulary(WikiP2DVocabulary):
 
   def id2token(self, _id):
     return self.rev_vocab[_id]
+
+  def id2name(self, _id):
+    return self.data[self.id2token(_id)]['name']
+
+  def save_vocab(self, vocab_with_freq, vocab_path):
+    with open(vocab_path, 'w') as f:
+      txt = ["%s\t%d\t%s" % (v, freq, self.data[v]['name']) 
+             for (v, freq) in vocab_with_freq]
+      f.write('\n'.join(txt) + '\n')
+
 
 class WikiP2DObjVocabulary(WikiP2DRelVocabulary):
   pass

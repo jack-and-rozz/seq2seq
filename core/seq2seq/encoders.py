@@ -18,6 +18,48 @@ from tensorflow.python.util import nest
 class Encoder(object):
   pass
 
+class NoneEncoder(Encoder):
+  def __init__(self, embedding=None, scope=None):
+    with tf.variable_scope(scope or "none_encoder") as scope:
+      self.embedding = embedding
+  @property
+  def output_size(self):
+    return self.embedding.get_shape()[-1]
+
+  @property
+  def state_size(self):
+    return self.embedding.get_shape()[-1]
+
+  def __call__(self, inputs, sequence_length=None, scope=None):
+    with tf.variable_scope(scope or "none_encoder"):
+      return inputs, inputs
+
+# class AverageEncoder(Encoder):
+#   def __init__(self, embedding, scope=None):
+#     with tf.variable_scope(scope or "average_encoder") as scope:
+#       self.embedding = embedding
+
+#   @property
+#   def output_size(self):
+#     return self.embedding.get_shape()[-1]
+
+#   def state_size(self):
+#     return self.embedding.get_shape()[-1]
+
+#   def __call__(self, inputs, sequence_length=None, scope=None):
+#     '''
+#     Args:
+#       inputs : [batch_size, seq_length, ]
+#     '''
+#     print '----------------'
+#     if sequence_length != None:
+#       mask = tf.sequence_mask(sequence_length, dtype=tf.float32)
+#       res = tf.reduce_sum(inputs*mask, axis=1) / tf.cast(sequence_length, tf.float32)
+#     else:
+#       res = tf.reduce_mean(inputs, axis=1)
+#     return res, res
+
+
 class RNNEncoder(Encoder):
   def __init__(self, cell, embedding=None, 
                scope=None):

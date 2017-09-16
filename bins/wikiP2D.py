@@ -5,7 +5,7 @@ from base import BaseManager, logger
 
 from core.utils import common
 import core.models.wikiP2D as model
-from core.dataset.wikiP2D import WikiP2DDataset
+from core.dataset.wikiP2D import WikiP2DDataset, DemoBatch
 
 tf.app.flags.DEFINE_string("source_data_dir", "dataset/wikiP2D/source", "")
 tf.app.flags.DEFINE_string("processed_data_dir", "dataset/wikiP2D/processed", "")
@@ -13,9 +13,8 @@ tf.app.flags.DEFINE_string("model_type", "WikiP2D", "")
 tf.app.flags.DEFINE_string("dataset", "Q5O15000R300.micro.bin", "")
 
 ## Hyperparameters
-tf.app.flags.DEFINE_integer("max_epoch", 100, "")
-tf.app.flags.DEFINE_integer("batch_size", 100, "")
-tf.app.flags.DEFINE_float("negative_sampling_rate", 1.0, "")
+tf.app.flags.DEFINE_integer("max_epoch", 50, "")
+tf.app.flags.DEFINE_integer("batch_size", 128, "")
 tf.app.flags.DEFINE_integer("w_vocab_size", 30000, "")
 tf.app.flags.DEFINE_integer("c_vocab_size", 1000, "")
 tf.app.flags.DEFINE_integer("hidden_size", 100, "")
@@ -25,10 +24,12 @@ tf.app.flags.DEFINE_float("out_keep_prob", 0.75, "Dropout rate.")
 tf.app.flags.DEFINE_integer("num_layers", 1, "")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
                           "Clip gradients to this norm.")
+tf.app.flags.DEFINE_integer("n_triples", 0, "If 0, all positive triples are used per an article.")
 
 ## Text processing methods
 tf.app.flags.DEFINE_string("cell_type", "GRUCell", "Cell type")
 tf.app.flags.DEFINE_string("encoder_type", "BidirectionalRNNEncoder", "")
+tf.app.flags.DEFINE_string("c_encoder_type", "BidirectionalRNNEncoder", "")
 tf.app.flags.DEFINE_boolean("cbase", True,  "Whether to make the model character-based or not.")
 tf.app.flags.DEFINE_boolean("wbase", True,  "Whether to make the model word-based or not.")
 
@@ -37,7 +38,6 @@ tf.app.flags.DEFINE_integer("max_sentence_length", 40, "")
 tf.app.flags.DEFINE_integer("max_word_length", 0, "")
 
 #tf.app.flags.DEFINE_boolean("share_embedding", False, "Whether to share syn/rel embedding between subjects and objects")
-
 
 class GraphManager(BaseManager):
   @common.timewatch(logger)
@@ -50,14 +50,14 @@ class GraphManager(BaseManager):
       FLAGS.dataset, FLAGS.w_vocab_size, FLAGS.c_vocab_size)
 
   @common.timewatch(logger)
-  def create_model(self, FLAGS, mode, reuse=False):
+  def create_model(self, FLAGS, mode, reuse=False, write_summary=True):
     if mode == 'train':
       do_update = True
     elif mode == 'valid' or mode == 'test':
       do_update = False
     else:
       raise ValueError("The argument \'mode\' must be \'train\', \'valid\', or \'test\'.")
-    summary_path = os.path.join(self.SUMMARIES_PATH, mode)
+    summary_path = os.path.join(self.SUMMARIES_PATH, mode) if write_summary else None
 
     with tf.variable_scope("Model", reuse=reuse):
       m = self.model_type(
@@ -92,17 +92,15 @@ class GraphManager(BaseManager):
       mtrain = self.create_model(config, 'train', reuse=False)
 
     with tf.name_scope('valid'):
-      config.negative_sampling_rate = 0.0
       mvalid = self.create_model(config, 'valid', reuse=True)
-      config.negative_sampling_rate = 1.0
-    print mtrain.epoch.eval()
+
     if mtrain.epoch.eval() == 0:
       logger.info("(train) articles, triples, subjects = (%d, %d, %d)" % (train_data.size))
       logger.info("(valid) articles, triples, subjects = (%d, %d, %d)" % (valid_data.size))
       logger.info("(test)  articles, triples, subjects = (%d, %d, %d)" % (test_data.size))
 
     for epoch in xrange(mtrain.epoch.eval(), config.max_epoch):
-      logger.info("Epoch %d: Start training." % epoch)
+      #logger.info("Epoch %d: Start training." % epoch)
       epoch_time, step_time, train_loss = mtrain.train_or_valid(train_data, config.batch_size, do_shuffle=True)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, train_loss))
 
@@ -111,27 +109,72 @@ class GraphManager(BaseManager):
 
       mtrain.add_epoch()
       checkpoint_path = self.CHECKPOINTS_PATH + "/model.ckpt"
-      self.saver.save(self.sess, checkpoint_path, global_step=mtrain.epoch)
-      #if (epoch + 1) % 10 == 0:
-      #  results = mvalid.test(valid_data, config.batch_size)
-      #  results, ranks, mrr, hits_10 = results
-      #  logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtrain.epoch.eval(), mrr, hits_10))
+      if epoch % 5 == 0:
+        self.saver.save(self.sess, checkpoint_path, global_step=mtrain.epoch)
+        #results, ranks, mrr, hits_10 = mvalid.test(test_data, 20)
+        #logger.info("Epoch %d (valid): MRR %f, Hits@10 %f" % (epoch, mrr, hits_10))
 
   @common.timewatch(logger)
   def test(self, test_data=None, mtest=None):
     FLAGS = self.FLAGS
     if not test_data:
-      test_data = WordNetDataset(
-        FLAGS.source_data_dir, FLAGS.processed_data_dir,
-        FLAGS.test_data, self.syn_vocab, self.rel_vocab, FLAGS.max_rows
-      )
-    
+      test_data = self.dataset.test
+
     with tf.name_scope('test'):
       if not mtest:
         mtest= self.create_model(FLAGS, 'test', reuse=False)
       results = mtest.test(test_data, FLAGS.batch_size)
       results, ranks, mrr, hits_10 = results
     logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mrr, hits_10))
+
+  def demo(self):
+    with tf.name_scope('demo'):
+      mtest= self.create_model(self.FLAGS, 'test', 
+                               reuse=False, write_summary=False)
+
+    # for debug
+    parser = common.get_parser()
+    def get_inputs():
+      article = 'How about making the graph look nicer?'
+      link_span = (4, 4)
+      return article, link_span
+
+    def get_result(article, link_span):
+      article = " ".join(parser(article))
+      w_article = self.dataset.w_vocab.sent2ids(article)
+      c_article =  self.dataset.c_vocab.sent2ids(article)
+      p_triples = [(0, i) for i in xrange(10)]
+      batch = {
+        'w_articles': [w_article],
+        'c_articles': [c_article],
+        'link_spans': [link_span],
+        'p_triples': [p_triples], #self.dataset.get_all_triples(),
+        'n_triples': None
+      }
+      demo_data = DemoBatch(batch)
+      results = mtest.test(demo_data, 1)[0][0]
+      results = common.flatten(results)
+      def id2text(r, o):
+        rid = self.dataset.r_vocab.id2token(r)
+        rname = self.dataset.r_vocab.id2name(r)
+        rr = "%s(%s)" % (rid, rname)
+        oid = self.dataset.o_vocab.id2token(o)
+        oname = self.dataset.o_vocab.id2name(o)
+        oo = "%s (%s)" % (oid, oname)
+        return (rr, oo)
+      return [(id2text(r, o), score) for (r, o), score in results]
+
+    inputs = get_inputs()
+    while inputs:
+      article, link_span = inputs
+      results = get_result(article, link_span)
+      print article
+      print " ".join(article.split()[link_span[0]:link_span[1]+1])
+      print results
+      break
+      #exit(1)
+      inputs = get_inputs()
+      break
 
 @common.timewatch(logger)
 def main(_):
@@ -152,6 +195,8 @@ def main(_):
       manager.train()
     elif FLAGS.mode == "test":
       manager.test()
+    elif FLAGS.mode == "demo":
+      manager.demo()
     else:
       sys.stderr.write("Unknown mode.\n")
       exit(1)
