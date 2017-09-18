@@ -486,7 +486,7 @@ def colored(str_, color):
     'blue': "\033[34m",
     'purple': "\033[35m",
     'underline': '\033[4m',
-    'bold': "\033[1m" + '\033[4m',
+    'bold': "\033[31m" + '\033[4m',
   }
   if type(color) == str:
     res = ctable[color] + str_ + RESET

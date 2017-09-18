@@ -50,12 +50,6 @@ class WikiP2D(graph.GraphLinkPrediction):
                                           shape=[])
     #max_word_length = config.max_word_length if config.max_word_length else None
 
-    
-    self.w_articles = tf.placeholder(tf.int32, name='w_articles',
-                                     shape=[batch_size, max_sentence_length+2])
-    self.c_articles = tf.placeholder(tf.int32, name='c_articles',
-                    shape=[batch_size, max_sentence_length+2, None])
-
     self.link_spans = tf.placeholder(tf.int32, shape=[batch_size, 2], 
                                      name='link_spans')
     self.p_triples = tf.placeholder(tf.int32, shape=[batch_size, None, 2], 
@@ -68,8 +62,14 @@ class WikiP2D(graph.GraphLinkPrediction):
                                     name='nt_weights')
 
     ## Embeddings
-    self.w_embeddings = self.initialize_embeddings('w_vocab', w_vocab)
-    self.c_embeddings = self.initialize_embeddings('c_vocab', c_vocab)
+    if self.wbase:
+      self.w_articles = tf.placeholder(tf.int32, name='w_articles',
+                                       shape=[batch_size, max_sentence_length+2])
+      self.w_embeddings = self.initialize_embeddings('w_vocab', w_vocab)
+    if self.cbase:
+      self.c_embeddings = self.initialize_embeddings('c_vocab', c_vocab)
+      self.c_articles = tf.placeholder(tf.int32, name='c_articles',
+                                shape=[batch_size, max_sentence_length+2, None])
     self.o_embeddings = self.initialize_embeddings('o_vocab', o_vocab)
     self.r_embeddings = self.initialize_embeddings('r_vocab', r_vocab)
 
@@ -182,8 +182,8 @@ class WikiP2D(graph.GraphLinkPrediction):
       nt_weights = tf.reshape(nt_weights, [-1])
       N = tf.count_nonzero(
         tf.concat([pt_weights, nt_weights], axis=0), dtype=tf.float32) 
-      ce1 = -tf.log(positives) * pt_weights
-      ce2 = -tf.log(1 - negatives) * nt_weights
+      ce1 = -tf.log(positives + 1e-6) * pt_weights
+      ce2 = -tf.log(1 - negatives + 1e-6) * nt_weights
       c_ent = tf.reduce_sum(tf.concat([ce1, ce2], axis=0)) / (N + 1e-6)
     return c_ent
 
@@ -264,13 +264,13 @@ class WikiP2D(graph.GraphLinkPrediction):
     n_triples = batch['n_triples']
     
     link_spans = [(s+1, e+1) for (s, e) in link_spans] # Shifted back one position by BOS.
-    if c_articles:
+    if self.cbase:
       c_articles, sentence_length, word_length = self.c_vocab.padding(
         c_articles, self.max_sentence_length)
       input_feed[self.c_articles] = np.array(c_articles)
       input_feed[self.word_length] = np.array(word_length)
       input_feed[self.max_word_length] = np.array(c_articles).shape[-1]
-    if w_articles:
+    if self.wbase:
       w_articles, sentence_length = self.w_vocab.padding(
         w_articles, self.max_sentence_length)
       input_feed[self.w_articles] = np.array(w_articles)
@@ -320,11 +320,8 @@ class WikiP2D(graph.GraphLinkPrediction):
                              n_pos_triples=self.num_triples)
     for i, raw_batch in enumerate(batches):
       input_feed = self.get_input_feed(raw_batch)
-      #for k,v in input_feed.items():
-      #  print k, v.shape
       outputs = self.sess.run(output_feed, input_feed)
       step_loss = math.exp(outputs[0])
-      outputs = self.sess.run(output_feed, input_feed)
       loss += step_loss
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)
@@ -344,20 +341,28 @@ class WikiP2D(graph.GraphLinkPrediction):
 
   def test(self, data, batch_size):
     output_feed = self.output_feed['test']
+    t = time.time()
     batches = data.get_batch(batch_size, 
                              max_sentence_length=self.max_sentence_length, 
                              n_neg_triples=None, n_pos_triples=None)
+    print 'get_batch', time.time() - t
 
     results = []
+    ranks = []
     for i, raw_batch in enumerate(batches):
       input_feed = self.get_input_feed(raw_batch)
       t = time.time()
       outputs = self.sess.run(output_feed, input_feed)
+      print 'run', time.time() - t
       loss, positives, negatives = outputs
-      results += self.summarize_results(positives, negatives, raw_batch)
-      break
-    ranks = [[evaluation.get_rank([z[1] for z in y]) for y in x] for x in results]
-    f_ranks = common.flatten(ranks)
+      t = time.time()
+      _results = self.summarize_results(positives, negatives, raw_batch)
+
+      _ranks = [[evaluation.get_rank([score for _, score in res_by_pt]) for res_by_pt in res_by_art] for res_by_art in _results]
+      results.append(_results)
+      ranks.append(_ranks)
+
+    f_ranks = common.flatten(common.flatten(ranks)) # batch-loop, article-loop
     mean_rank = sum(f_ranks) / len(f_ranks)
     mrr = evaluation.mrr(f_ranks)
     hits_10 = evaluation.hits_k(f_ranks)
@@ -375,24 +380,26 @@ class WikiP2D(graph.GraphLinkPrediction):
       ])
       summary = self.sess.run(summary_ops, input_feed)
       self.summary_writer.add_summary(summary, self.epoch.eval())
-    return results, ranks, mrr, hits_10
+    return results, ranks, mean_rank, mrr, hits_10
 
   def summarize_results(self, positives, negatives, raw_batch):
 
     p_triples = raw_batch['p_triples']
     n_triples = raw_batch['n_triples']
-    res = [] # [batch_size, n_positive_triples, n_total_triples]
+    res = [] 
     if not n_triples:
       return [[[(pt, p)] for p, pt  in zip(positives[j], p_triples[j])] for j in xrange(len(positives))]
-    for j in xrange(len(positives)):
+    for j in xrange(len(positives)): # per an article
       res_by_pt = []
-      for p, pt, nt in zip(positives[j], p_triples[j], n_triples[j]):
-        n_idx = [common.flatten(n_triples[j]).index(t) for t in nt]
+      n_neg = int(len(negatives[j]) / len(positives[j]))
+      negatives_by_p = [negatives[j][i*n_neg:(i+1)*n_neg] for i in xrange(len(positives[j]))]
+      for p, ns, pt, nts in zip(positives[j], negatives_by_p, 
+                                p_triples[j], n_triples[j]):
         pp = [(pt, p)]
-        nn = [(t, negatives[j][idx]) for t, idx in zip(nt, n_idx)]
+        nn = [(nt, n) for nt, n in zip(nts, ns)]
         res_by_pt.append(pp + nn)
       res.append(res_by_pt)
-    return res
+    return res # [batch_size, n_positive_triples, 1+n_neg_triples, 2 (triple, score)]
 
 
 def MultiGPUTrain(objects):

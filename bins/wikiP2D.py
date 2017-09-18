@@ -1,8 +1,9 @@
 #coding: utf-8
 import sys, os, random, copy
 import tensorflow as tf
-from base import BaseManager, logger
+from pprint import pprint
 
+from base import BaseManager, logger
 from core.utils import common
 import core.models.wikiP2D as model
 from core.dataset.wikiP2D import WikiP2DDataset, DemoBatch
@@ -107,12 +108,35 @@ class GraphManager(BaseManager):
       epoch_time, step_time, valid_loss = mvalid.train_or_valid(valid_data, config.batch_size, do_shuffle=False)
       logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, valid_loss))
 
-      mtrain.add_epoch()
       checkpoint_path = self.CHECKPOINTS_PATH + "/model.ckpt"
-      if epoch % 5 == 0:
+      if epoch == 0 or (epoch+1) % 5 == 0:
         self.saver.save(self.sess, checkpoint_path, global_step=mtrain.epoch)
         #results, ranks, mrr, hits_10 = mvalid.test(test_data, 20)
         #logger.info("Epoch %d (valid): MRR %f, Hits@10 %f" % (epoch, mrr, hits_10))
+      mtrain.add_epoch()
+
+
+  def print_results(self, data, results, ranks, output_path=None):
+    FLAGS = self.FLAGS
+    batches = data.get_batch(FLAGS.batch_size, 
+                             max_sentence_length=FLAGS.max_sentence_length, 
+                             n_neg_triples=None, n_pos_triples=None)
+    cnt = 0
+    if output_path:
+      sys.stdout = output_path
+    for batch, res_by_batch, ranks_by_batch in zip(batches, results, ranks): # per a batch
+      for batch_by_art, res_by_art, rank_by_art in zip(self.dataset.batch2text(batch), res_by_batch, ranks_by_batch): # per an article
+        wa, ca, pts = batch_by_art
+        print '<%d>' % cnt
+        print  "Article(word):\t%s" % wa
+        print  "Article(char):\t%s" % ca
+        print  "Triple, Score, Rank:"
+        for pt, res_by_pt, rank in zip(pts, res_by_art, rank_by_art): # per a positive triple
+          _, score = res_by_pt[0] # the first element of a result is the positive's.
+          print "(%s, %s) - %f, %d" % (pt[0], pt[1], score, int(rank)) 
+        print
+        cnt += 1 
+    sys.stdout = sys.__stdout__
 
   @common.timewatch(logger)
   def test(self, test_data=None, mtest=None):
@@ -123,9 +147,14 @@ class GraphManager(BaseManager):
     with tf.name_scope('test'):
       if not mtest:
         mtest= self.create_model(FLAGS, 'test', reuse=False)
-      results = mtest.test(test_data, FLAGS.batch_size)
-      results, ranks, mrr, hits_10 = results
-    logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mrr, hits_10))
+      res = mtest.test(test_data, FLAGS.batch_size)
+      results, ranks, mean_rank, mrr, hits_10 = res
+
+    output_path = self.TESTS_PATH + '/g_test.ep%02d' % mtest.epoch.eval()
+    with open(output_path, 'w') as f:
+      self.print_results(test_data, results, ranks, output_path=output_path)
+   
+    logger.info("Epoch %d (test): MeanRank %f, MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mean_rank, mrr, hits_10))
 
   def demo(self):
     with tf.name_scope('demo'):
@@ -174,7 +203,6 @@ class GraphManager(BaseManager):
       break
       #exit(1)
       inputs = get_inputs()
-      break
 
 @common.timewatch(logger)
 def main(_):

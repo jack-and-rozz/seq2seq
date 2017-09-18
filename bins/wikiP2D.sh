@@ -46,7 +46,7 @@ done;
 
 # get params from config
 
-params_arr=(checkpoint_path log_file mode dataset w_vocab_size c_vocab_size batch_size hidden_size learning_rate in_keep_prob out_keep_prob num_layers max_gradient_norm encoder_type c_encoder_type cell_type cbase wbase state_is_tuple max_sentence_length max_word_length n_triples)
+params_arr=(mode checkpoint_path log_file dataset w_vocab_size c_vocab_size batch_size hidden_size learning_rate in_keep_prob out_keep_prob num_layers max_gradient_norm encoder_type c_encoder_type cell_type cbase wbase state_is_tuple max_sentence_length max_word_length n_triples)
 
 #num_layers source_lang target_lang source_vocab_size target_vocab_size num_samples hidden_size embedding_size keep_prob seq2seq_type encoder_type decoder_type cell_type batch_size max_epoch max_rows max_sequence_length max_to_keep source_data_dir processed_data_dir vocab_data train_data dev_data test_data num_gpus learning_rate max_gradient_norm init_scale trainable_source_embedding trainable_target_embedding beam_size w2v model_type multi_gpu_wrapper, negative_sampling_rate)
 params=""
