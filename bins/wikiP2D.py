@@ -116,14 +116,14 @@ class GraphManager(BaseManager):
       mtrain.add_epoch()
 
 
-  def print_results(self, data, results, ranks, output_path=None):
+  def print_results(self, data, results, ranks, output_file=None):
     FLAGS = self.FLAGS
     batches = data.get_batch(FLAGS.batch_size, 
                              max_sentence_length=FLAGS.max_sentence_length, 
                              n_neg_triples=None, n_pos_triples=None)
     cnt = 0
-    if output_path:
-      sys.stdout = output_path
+    if output_file:
+      sys.stdout = output_file
     for batch, res_by_batch, ranks_by_batch in zip(batches, results, ranks): # per a batch
       for batch_by_art, res_by_art, rank_by_art in zip(self.dataset.batch2text(batch), res_by_batch, ranks_by_batch): # per an article
         wa, ca, pts = batch_by_art
@@ -152,7 +152,7 @@ class GraphManager(BaseManager):
 
     output_path = self.TESTS_PATH + '/g_test.ep%02d' % mtest.epoch.eval()
     with open(output_path, 'w') as f:
-      self.print_results(test_data, results, ranks, output_path=output_path)
+      self.print_results(test_data, results, ranks, output_file=f)
    
     logger.info("Epoch %d (test): MeanRank %f, MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mean_rank, mrr, hits_10))
 

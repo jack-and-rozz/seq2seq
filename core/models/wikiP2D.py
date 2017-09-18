@@ -114,7 +114,6 @@ class WikiP2D(graph.GraphLinkPrediction):
         if not articles:
           raise ValueError('Either FLAGS.wbase or FLAGS.cbase must be True.')
         sent_repls = self.encode_article(articles)
-        print 'sent_repls',sent_repls
         with tf.name_scope('extract_span'):
           span_repls = self.extract_span(sent_repls, self.link_spans)
 
@@ -212,7 +211,6 @@ class WikiP2D(graph.GraphLinkPrediction):
       return word_repls
 
     word_repls = tf.concat([_encode(a) for a in wc_articles], axis=-1)
-    print 'word_repls', word_repls
     # Linearly transformetsu to adjust the vector size if wbase and cbase are both True.
     if word_repls.get_shape()[-1] != self.hidden_size:
       with tf.variable_scope('word_and_chars'):
@@ -345,7 +343,6 @@ class WikiP2D(graph.GraphLinkPrediction):
     batches = data.get_batch(batch_size, 
                              max_sentence_length=self.max_sentence_length, 
                              n_neg_triples=None, n_pos_triples=None)
-    print 'get_batch', time.time() - t
 
     results = []
     ranks = []
@@ -353,14 +350,14 @@ class WikiP2D(graph.GraphLinkPrediction):
       input_feed = self.get_input_feed(raw_batch)
       t = time.time()
       outputs = self.sess.run(output_feed, input_feed)
-      print 'run', time.time() - t
       loss, positives, negatives = outputs
       t = time.time()
       _results = self.summarize_results(positives, negatives, raw_batch)
-
       _ranks = [[evaluation.get_rank([score for _, score in res_by_pt]) for res_by_pt in res_by_art] for res_by_art in _results]
+
       results.append(_results)
       ranks.append(_ranks)
+      #break
 
     f_ranks = common.flatten(common.flatten(ranks)) # batch-loop, article-loop
     mean_rank = sum(f_ranks) / len(f_ranks)
@@ -389,7 +386,8 @@ class WikiP2D(graph.GraphLinkPrediction):
     res = [] 
     if not n_triples:
       return [[[(pt, p)] for p, pt  in zip(positives[j], p_triples[j])] for j in xrange(len(positives))]
-    for j in xrange(len(positives)): # per an article
+    batch_size = len(p_triples)
+    for j in xrange(batch_size): # per an article
       res_by_pt = []
       n_neg = int(len(negatives[j]) / len(positives[j]))
       negatives_by_p = [negatives[j][i*n_neg:(i+1)*n_neg] for i in xrange(len(positives[j]))]
