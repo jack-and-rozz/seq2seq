@@ -115,7 +115,7 @@ class GraphManager(BaseManager):
         #logger.info("Epoch %d (valid): MRR %f, Hits@10 %f" % (epoch, mrr, hits_10))
       mtrain.add_epoch()
 
-
+  @common.timewatch()
   def print_results(self, data, scores, ranks, output_file=None):
     FLAGS = self.FLAGS
     batches = data.get_batch(FLAGS.batch_size, 

@@ -1,20 +1,20 @@
 #coding: utf-8
 from core.utils import common
+#from collections import OrderedDict
+import numpy as np
 
 def get_rank(scores):
   '''
   r : a list of link connection probabilities where a correct one is inserted at the beginning of the corresponding candidates.
   '''
-  #if scores[0] <= 0.0:
-  #  return None
-  ranks = sorted([(idx, p) for idx, p in enumerate(scores)], 
-                 key=lambda x: -x[1])
-  return [rank for rank, (idx, _) in enumerate(ranks) if idx == 0][0] + 1
+  # ranks = sorted([(idx, p) for idx, p in enumerate(scores)], 
+  #                key=lambda x: -x[1])
+  # return [rank for rank, (idx, _) in enumerate(ranks) if idx == 0][0] + 1
+  rank = np.where(np.argsort(scores)[::-1] == 0)[0][0] + 1
+  return rank
 
 
-def mrr(_ranks):
-  #ranks = _ranks if _ranks[0] == int else common.flatten(_ranks)
-  ranks = _ranks
+def mrr(ranks):
   return sum([1.0 / r for r in ranks]) / float(len(ranks))
 
 def hits_k(ranks, k=10):

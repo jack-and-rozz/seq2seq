@@ -441,7 +441,9 @@ class WikiP2D(graph.GraphLinkPrediction):
 
     scores = []
     ranks = []
+    t = time.time()
     for i, raw_batch in enumerate(batches):
+      t0 = time.time() - t
       input_feed = self.get_input_feed(raw_batch)
       t = time.time()
       outputs = self.sess.run(output_feed, input_feed)
@@ -453,12 +455,13 @@ class WikiP2D(graph.GraphLinkPrediction):
       t = time.time()
       _ranks = [[evaluation.get_rank(scores_by_pt) for scores_by_pt in scores_by_art] for scores_by_art in _scores]
       t3 = time.time() - t
-      print '<%d> t1, t2, t3 = %f %f %f' % (i, t1, t2, t3)
+      print '<%d> t0, t1, t2, t3 = %f %f %f %f' % (i, t0, t1, t2, t3)
       sys.stdout.flush()
       scores.append(_scores)
       ranks.append(_ranks)
-      #if i == 100:
-      break
+      t = time.time()
+      #if i == 5:
+      #  break
 
     f_ranks = common.flatten(common.flatten(ranks)) # batch-loop, article-loop
     mean_rank = sum(f_ranks) / len(f_ranks)
@@ -492,7 +495,8 @@ class WikiP2D(graph.GraphLinkPrediction):
       negatives_by_p = [negatives[b][i*n_neg:(i+1)*n_neg] for i in xrange(len(positives[b]))]
       for p, ns in zip(positives[b], negatives_by_p):
         if p > 0.0: # Remove the results of padding triples.
-          scores_by_pt.append([p] + ns)
+          scores_by_pt.append(np.insert(ns, 0, p))
+          #scores_by_pt.append(np.array([p] + list(ns)))
       scores.append(scores_by_pt)
     return scores #[batch_size, p]
 
