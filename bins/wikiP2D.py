@@ -116,7 +116,7 @@ class GraphManager(BaseManager):
       mtrain.add_epoch()
 
 
-  def print_results(self, data, results, ranks, output_file=None):
+  def print_results(self, data, scores, ranks, output_file=None):
     FLAGS = self.FLAGS
     batches = data.get_batch(FLAGS.batch_size, 
                              max_sentence_length=FLAGS.max_sentence_length, 
@@ -124,16 +124,16 @@ class GraphManager(BaseManager):
     cnt = 0
     if output_file:
       sys.stdout = output_file
-    for batch, res_by_batch, ranks_by_batch in zip(batches, results, ranks): # per a batch
-      for batch_by_art, res_by_art, rank_by_art in zip(self.dataset.batch2text(batch), res_by_batch, ranks_by_batch): # per an article
+    for batch, score_by_batch, ranks_by_batch in zip(batches, scores, ranks): # per a batch
+      for batch_by_art, score_by_art, rank_by_art in zip(self.dataset.batch2text(batch), score_by_batch, ranks_by_batch): # per an article
         wa, ca, pts = batch_by_art
         print '<%d>' % cnt
         print  "Article(word):\t%s" % wa
         print  "Article(char):\t%s" % ca
         print  "Triple, Score, Rank:"
-        for pt, res_by_pt, rank in zip(pts, res_by_art, rank_by_art): # per a positive triple
-          _, score = res_by_pt[0] # the first element of a result is the positive's.
-          print "(%s, %s) - %f, %d" % (pt[0], pt[1], score, int(rank)) 
+        for (r, o), scores, rank in zip(pts, score_by_art, rank_by_art): # per a positive triple
+          s = scores[0] # scores = [pos, neg_0, neg_1, ...]
+          print "(%s, %s) - %f, %d" % (r, o, s, int(rank)) 
         print
         cnt += 1 
     sys.stdout = sys.__stdout__
@@ -148,11 +148,12 @@ class GraphManager(BaseManager):
       if not mtest:
         mtest= self.create_model(FLAGS, 'test', reuse=False)
       res = mtest.test(test_data, FLAGS.batch_size)
-      results, ranks, mean_rank, mrr, hits_10 = res
+      scores, ranks, mean_rank, mrr, hits_10 = res
 
     output_path = self.TESTS_PATH + '/g_test.ep%02d' % mtest.epoch.eval()
     with open(output_path, 'w') as f:
-      self.print_results(test_data, results, ranks, output_file=f)
+      self.print_results(test_data, scores, ranks, output_file=f)
+      #self.print_results(test_data, results, ranks, output_file=f)
    
     logger.info("Epoch %d (test): MeanRank %f, MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mean_rank, mrr, hits_10))
 

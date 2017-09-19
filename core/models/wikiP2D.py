@@ -278,10 +278,11 @@ class WikiP2D(graph.GraphLinkPrediction):
 
     PAD_TRIPLE = [0, 0]
     def padding_triples(triples):
-      max_n_triples = max([len(t) for t in triples])
-      padded = [([1.0 for _ in xrange(len(t))] + [0.0 for _ in xrange((max_n_triples - len(t)))], list(t) + [PAD_TRIPLE for _ in xrange(max_n_triples - len(t))])
-                for t in triples]
+      max_num_pt = max([len(t) for t in triples])
+      padded = [([1.0] * len(t) + [0.0] * (max_num_pt - len(t)),
+                 list(t) + [PAD_TRIPLE] * (max_num_pt - len(t))) for t in triples]
       return map(list, zip(*padded)) # weights, padded_triples
+
     def fake_triples(batch_size):
       padded = [([0.0], [PAD_TRIPLE]) for i in xrange(batch_size)]
       weights, padded_triples = map(list, zip(*padded))
@@ -344,7 +345,7 @@ class WikiP2D(graph.GraphLinkPrediction):
                              max_sentence_length=self.max_sentence_length, 
                              n_neg_triples=None, n_pos_triples=None)
 
-    results = []
+    scores = []
     ranks = []
     for i, raw_batch in enumerate(batches):
       input_feed = self.get_input_feed(raw_batch)
@@ -353,20 +354,17 @@ class WikiP2D(graph.GraphLinkPrediction):
       loss, positives, negatives = outputs
       t1 = time.time() - t
       t = time.time()
-      _results = self.summarize_results(positives, negatives, raw_batch)
+      _scores = self.summarize_results(positives, negatives)
       t2 = time.time() - t
       t = time.time()
-      _ranks = [[evaluation.get_rank([score for _, score in res_by_pt]) for res_by_pt in res_by_art] for res_by_art in _results]
+      _ranks = [[evaluation.get_rank(scores_by_pt) for scores_by_pt in scores_by_art] for scores_by_art in _scores]
       t3 = time.time() - t
-      #t = time.time()
-      #print "%d %d" % (int(sys.getsizeof(results)), int(sys.getsizeof(ranks)))
-      #t4 = time.time() - t
       print '<%d> t1, t2, t3 = %f %f %f' % (i, t1, t2, t3)
       sys.stdout.flush()
-      results.append(_results)
+      scores.append(_scores)
       ranks.append(_ranks)
-      if i == 100:
-        break
+      #if i == 100:
+      break
 
     f_ranks = common.flatten(common.flatten(ranks)) # batch-loop, article-loop
     mean_rank = sum(f_ranks) / len(f_ranks)
@@ -386,27 +384,23 @@ class WikiP2D(graph.GraphLinkPrediction):
       ])
       summary = self.sess.run(summary_ops, input_feed)
       self.summary_writer.add_summary(summary, self.epoch.eval())
-    return results, ranks, mean_rank, mrr, hits_10
+    return scores, ranks, mean_rank, mrr, hits_10
 
-  def summarize_results(self, positives, negatives, raw_batch):
+  def summarize_results(self, positives, negatives):
+    if negatives is None:
+      return positives
 
-    p_triples = raw_batch['p_triples']
-    n_triples = raw_batch['n_triples']
-    res = [] 
-    if not n_triples:
-      return [[[(pt, p)] for p, pt  in zip(positives[j], p_triples[j])] for j in xrange(len(positives))]
-    batch_size = len(p_triples)
-    for j in xrange(batch_size): # per an article
-      res_by_pt = []
-      n_neg = int(len(negatives[j]) / len(positives[j]))
-      negatives_by_p = [negatives[j][i*n_neg:(i+1)*n_neg] for i in xrange(len(positives[j]))]
-      for p, ns, pt, nts in zip(positives[j], negatives_by_p, 
-                                p_triples[j], n_triples[j]):
-        pp = [(pt, p)]
-        nn = [(nt, n) for nt, n in zip(nts, ns)]
-        res_by_pt.append(pp + nn)
-      res.append(res_by_pt)
-    return res # [batch_size, n_positive_triples, 1+n_neg_triples, 2 (triple, score)]
+    batch_size = len(positives)
+    scores = [] 
+    for b in xrange(batch_size): # per an article
+      scores_by_pt = []
+      n_neg = int(len(negatives[b]) / len(positives[b]))
+      negatives_by_p = [negatives[b][i*n_neg:(i+1)*n_neg] for i in xrange(len(positives[b]))]
+      for p, ns in zip(positives[b], negatives_by_p):
+        if p > 0.0: # Remove the results of padding triples.
+          scores_by_pt.append([p] + ns)
+      scores.append(scores_by_pt)
+    return scores #[batch_size, p]
 
 
 def MultiGPUTrain(objects):

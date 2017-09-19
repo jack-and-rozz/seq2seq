@@ -5,6 +5,8 @@ def get_rank(scores):
   '''
   r : a list of link connection probabilities where a correct one is inserted at the beginning of the corresponding candidates.
   '''
+  #if scores[0] <= 0.0:
+  #  return None
   ranks = sorted([(idx, p) for idx, p in enumerate(scores)], 
                  key=lambda x: -x[1])
   return [rank for rank, (idx, _) in enumerate(ranks) if idx == 0][0] + 1
