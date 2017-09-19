@@ -41,7 +41,7 @@ tf.app.flags.DEFINE_integer("max_word_length", 0, "")
 #tf.app.flags.DEFINE_boolean("share_embedding", False, "Whether to share syn/rel embedding between subjects and objects")
 
 class GraphManager(BaseManager):
-  @common.timewatch(logger)
+  @common.timewatch()
   def __init__(self, FLAGS, sess):
     super(GraphManager, self).__init__(FLAGS, sess)
     self.model_type = getattr(model, FLAGS.model_type)
@@ -50,7 +50,7 @@ class GraphManager(BaseManager):
       FLAGS.source_data_dir, FLAGS.processed_data_dir, 
       FLAGS.dataset, FLAGS.w_vocab_size, FLAGS.c_vocab_size)
 
-  @common.timewatch(logger)
+  @common.timewatch()
   def create_model(self, FLAGS, mode, reuse=False, write_summary=True):
     if mode == 'train':
       do_update = True

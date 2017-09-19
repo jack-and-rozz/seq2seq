@@ -1,5 +1,5 @@
 # coding: utf-8 
-import math, time
+import math, time, sys
 import tensorflow as tf
 from core.utils import common, evaluation, tf_utils
 from core.models.base import ModelBase
@@ -351,13 +351,22 @@ class WikiP2D(graph.GraphLinkPrediction):
       t = time.time()
       outputs = self.sess.run(output_feed, input_feed)
       loss, positives, negatives = outputs
+      t1 = time.time() - t
       t = time.time()
       _results = self.summarize_results(positives, negatives, raw_batch)
+      t2 = time.time() - t
+      t = time.time()
       _ranks = [[evaluation.get_rank([score for _, score in res_by_pt]) for res_by_pt in res_by_art] for res_by_art in _results]
-
+      t3 = time.time() - t
+      #t = time.time()
+      #print "%d %d" % (int(sys.getsizeof(results)), int(sys.getsizeof(ranks)))
+      #t4 = time.time() - t
+      print '<%d> t1, t2, t3 = %f %f %f' % (i, t1, t2, t3)
+      sys.stdout.flush()
       results.append(_results)
       ranks.append(_ranks)
-      #break
+      if i == 100:
+        break
 
     f_ranks = common.flatten(common.flatten(ranks)) # batch-loop, article-loop
     mean_rank = sum(f_ranks) / len(f_ranks)
