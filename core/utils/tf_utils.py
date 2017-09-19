@@ -7,8 +7,6 @@ def batch_dot(t1, t2, n_unk_dims=1):
     t2_ex = tf.expand_dims(t2, n_unk_dims+1)
     return tf.squeeze(tf.matmul(t1_ex, t2_ex), [n_unk_dims, n_unk_dims+1])
 
-
-
 def linear_trans_for_seq(seq_repls, output_size, activation=tf.nn.tanh, scope=None):
   """
   Args:
