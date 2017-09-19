@@ -208,7 +208,6 @@ class WikiP2D(graph.GraphLinkPrediction):
     positives = tf.concat(positives, axis=0)
     negatives = tf.concat(negatives, axis=0)
     with tf.name_scope('cross_entropy'):
-      print positives, negatives
       ce1 = -tf.log(tf.maximum(positives, tf.constant(1e-6)))
       ce2 = -tf.log(tf.maximum(1 - negatives, tf.constant(1e-6)))
       #ce1 = -tf.log(positives + 1e-6)
@@ -294,7 +293,6 @@ class WikiP2D(graph.GraphLinkPrediction):
     relations, objects = tf.unstack(triples, axis=1)
     relations = self.activation(tf.nn.embedding_lookup(self.r_embeddings, relations))
     objects = self.activation(tf.nn.embedding_lookup(self.o_embeddings, objects))
-    print relations, objects
 
     part_rel = tf.dynamic_partition(relations, batch_indices, 
                                     self.max_batch_size)
@@ -306,12 +304,8 @@ class WikiP2D(graph.GraphLinkPrediction):
                                     self.max_batch_size)
     scores = []
     for sbj, rel, obj in zip(part_sbj, part_rel, part_obj):
-      print sbj, rel, obj
       score = self.scoring_function(sbj, rel, obj)
-      print score
       scores.append(score)
-
-    print scores
     return scores
     # print partitioned_sbj
     # exit(1)
