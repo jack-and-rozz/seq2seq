@@ -42,7 +42,6 @@ class WikiP2D(graph.GraphLinkPrediction):
     self.initialize(sess, config, do_update)
     self.cbase = config.cbase
     self.wbase = config.wbase
-    #self.ns_rate = config.negative_sampling_rate
     self.scoring_function = distmult
     self.activation = tf.nn.tanh
     self.w_vocab = w_vocab
@@ -53,27 +52,15 @@ class WikiP2D(graph.GraphLinkPrediction):
     '''
     articles : [batch_size, n_words, [n_characters]]
     link_spans : [batch_size, 2 (start, end)]
-    triples : [batch_size,
-               n_triples, 
-               2 (relation_id, object_id)]
+    triples : [None, 2 (relation_id, object_id)]
     '''
 
     batch_size = None
     self.max_sentence_length = max_sentence_length = config.max_sentence_length
     self.max_word_length = tf.placeholder(tf.int32, name='max_word_length',
                                           shape=[])
-    #max_word_length = config.max_word_length if config.max_word_length else None
-
     self.link_spans = tf.placeholder(tf.int32, shape=[batch_size, 2], 
                                      name='link_spans')
-    # self.p_triples = tf.placeholder(tf.int32, shape=[batch_size, None, 2], 
-    #                                 name='positive_triples')
-    # self.n_triples = tf.placeholder(tf.int32, shape=[batch_size, None, 2],
-    #                                 name='negative_triples')
-    # self.pt_weights = tf.placeholder(tf.float32, shape=[batch_size, None],
-    #                                 name='pt_weights')
-    # self.nt_weights = tf.placeholder(tf.float32, shape=[batch_size, None],
-    #                                 name='nt_weights')
     self.p_triples = tf.placeholder(tf.int32, shape=[None, 2], 
                                     name='positive_triples')
     self.n_triples = tf.placeholder(tf.int32, shape=[None, 2],
@@ -141,15 +128,11 @@ class WikiP2D(graph.GraphLinkPrediction):
           span_repls = self.extract_span(sent_repls, self.link_spans)
 
       with tf.name_scope('positives'):
-        #self.positives = self.inference(span_repls, self.p_triples)
         self.positives = self.inference(span_repls, self.p_triples,
                                         self.pt_indices)
       with tf.name_scope('negatives'):
-        #self.negatives = self.inference(span_repls, self.n_triples)
         self.negatives = self.inference(span_repls, self.n_triples, 
                                         self.nt_indices)
-      #self.loss = self.cross_entropy(self.positives, self.negatives,
-      #                               self.pt_weights, self.nt_weights)
       self.loss = self.cross_entropy(self.positives, self.negatives)
 
     self.summary_writer = None
@@ -182,15 +165,11 @@ class WikiP2D(graph.GraphLinkPrediction):
         self.loss,
         self.positives,
         self.negatives,
-        #self.positives * self.pt_weights,
-        #self.negatives * self.nt_weights,
       ],
       'test' : [
         self.loss,
         self.positives,
         self.negatives,
-        #self.positives * self.pt_weights,
-        #self.negatives * self.nt_weights,
       ]
     }
     if self.do_update:
@@ -203,30 +182,16 @@ class WikiP2D(graph.GraphLinkPrediction):
                                  initializer=initializer)
     return embeddings
 
-  #def cross_entropy(self, positives, negatives, pt_weights, nt_weights):
   def cross_entropy(self, positives, negatives):
     positives = tf.concat(positives, axis=0)
     negatives = tf.concat(negatives, axis=0)
+
+    # # calculate cross-entropy by hand.
     with tf.name_scope('cross_entropy'):
       ce1 = -tf.log(tf.maximum(positives, tf.constant(1e-6)))
       ce2 = -tf.log(tf.maximum(1 - negatives, tf.constant(1e-6)))
-      #ce1 = -tf.log(positives + 1e-6)
-      #ce2 = -tf.log(1 - negatives + 1e-6)
       c_ent = tf.reduce_mean(tf.concat([ce1, ce2], 0))
     return c_ent
-
-    # # calculate cross-entropy by hand.
-    # with tf.name_scope('cross_entropy'):
-    #   positives = tf.reshape(positives, [-1])
-    #   negatives = tf.reshape(negatives, [-1])
-    #   pt_weights = tf.reshape(pt_weights, [-1])
-    #   nt_weights = tf.reshape(nt_weights, [-1])
-    #   N = tf.count_nonzero(
-    #     tf.concat([pt_weights, nt_weights], axis=0), dtype=tf.float32) 
-    #   ce1 = -tf.log(positives + 1e-6) * pt_weights
-    #   ce2 = -tf.log(1 - negatives + 1e-6) * nt_weights
-    #   c_ent = tf.reduce_sum(tf.concat([ce1, ce2], axis=0)) / (N + 1e-6)
-    # return c_ent
 
   def encode_article(self, wc_articles):
     def _encode(articles):
@@ -285,8 +250,6 @@ class WikiP2D(graph.GraphLinkPrediction):
       shape_invariants=[idx.get_shape(), 
                         tf.TensorShape([None, self.hidden_size])])
     return res
-    #span_repls = extract_span(sent_repls, link_spans)
-    #return sent_repls, span_repls
 
   def inference(self, span_repls, triples, batch_indices):
     #relations, objects = tf.unstack(triples, axis=2)
@@ -294,42 +257,19 @@ class WikiP2D(graph.GraphLinkPrediction):
     relations = self.activation(tf.nn.embedding_lookup(self.r_embeddings, relations))
     objects = self.activation(tf.nn.embedding_lookup(self.o_embeddings, objects))
 
+    part_sbj = tf.dynamic_partition(span_repls, 
+                                    tf.range(tf.shape(span_repls)[0]), 
+                                    self.max_batch_size)
     part_rel = tf.dynamic_partition(relations, batch_indices, 
                                     self.max_batch_size)
     part_obj = tf.dynamic_partition(objects, batch_indices, 
                                     self.max_batch_size)
 
-    part_sbj = tf.dynamic_partition(span_repls, 
-                                    tf.range(tf.shape(span_repls)[0]), 
-                                    self.max_batch_size)
     scores = []
     for sbj, rel, obj in zip(part_sbj, part_rel, part_obj):
       score = self.scoring_function(sbj, rel, obj)
       scores.append(score)
     return scores
-    # print partitioned_sbj
-    # exit(1)
-    # def dynamic_scoring(subjects, partitioned_rel, partitioned_obj):
-    #   batch_size = tf.shape(subjects)[0]
-    #   idx = tf.zeros((), dtype=tf.int32)
-    #   scores = []
-    #   def loop_func(idx):
-    #     score = self.scoring_function(subjects[idx], 
-    #                                   partitioned_rel[idx], 
-    #                                   partitioned_obj[idx])
-    #     scores.append(score)
-    #   cond = lambda idx : idx < batch_size
-    #   body = lambda idx : (idx + 1, loop_func(idx))
-    #   loop_vars = [idx]
-    #   tf.while_loop(
-    #     cond, body, loop_vars,
-    #     shape_invariants=[idx.get_shape()])
-    #   return scores
-    # scores = dynamic_scoring(span_repls, partitioned_rel, partitioned_obj)
-    # print scores
-    # exit(1)
-    #score = self.scoring_function(span_repls, relations, objects)
-    return score
 
   def get_input_feed(self, batch):
     input_feed = {}
@@ -370,21 +310,9 @@ class WikiP2D(graph.GraphLinkPrediction):
       weights, triples = map(list, zip(*res))
       return weights, triples
 
-    #pt_weights, p_triples = padding_triples(p_triples)
-    #input_feed[self.p_triples] = np.array(p_triples)
-    #input_feed[self.pt_weights] = np.array(pt_weights)
-
     pt_indices, p_triples = flatten_triples(p_triples)
     input_feed[self.p_triples] = np.array(p_triples)
     input_feed[self.pt_indices] = np.array(pt_indices)
-
-    # if n_triples:
-    #   n_triples = [common.flatten(t) for t in n_triples] # negative triples are divided by the corresponding positive triples.
-    #   nt_weights, n_triples = padding_triples(n_triples)
-    # else:
-    #   nt_weights, n_triples = fake_triples(len(p_triples))
-    # input_feed[self.n_triples] = np.array(n_triples)
-    # input_feed[self.nt_weights] = np.array(nt_weights)
 
     if n_triples:
       n_triples = [common.flatten(t) for t in n_triples] # negative triples are divided by the corresponding positive triples.
@@ -393,15 +321,8 @@ class WikiP2D(graph.GraphLinkPrediction):
     nt_indices, n_triples = flatten_triples(n_triples)
     input_feed[self.n_triples] = np.array(n_triples)
     input_feed[self.nt_indices] = np.array(nt_indices)
-    
-
-    # # DEBUG
-    #for ca, wa, ls in zip(c_articles, w_articles, link_spans):
-    #   print self.c_vocab.ids2tokens(ca, ls)
-    #   print self.w_vocab.ids2tokens(wa, ls)
     return input_feed
 
-  
   def train_or_valid(self, data, batch_size, do_shuffle=False):
     start_time = time.time()
     loss = 0.0
@@ -443,25 +364,14 @@ class WikiP2D(graph.GraphLinkPrediction):
     ranks = []
     t = time.time()
     for i, raw_batch in enumerate(batches):
-      #t0 = time.time() - t
       input_feed = self.get_input_feed(raw_batch)
-      #t = time.time()
       outputs = self.sess.run(output_feed, input_feed)
       loss, positives, negatives = outputs
-      #t1 = time.time() - t
-      #t = time.time()
       _scores = self.summarize_results(positives, negatives)
-      #t2 = time.time() - t
-      #t = time.time()
       _ranks = [[evaluation.get_rank(scores_by_pt) for scores_by_pt in scores_by_art] for scores_by_art in _scores]
-      #t3 = time.time() - t
-      #print '<%d.test> t0, t1, t2, t3 = %f %f %f %f' % (i, t0, t1, t2, t3)
-      #sys.stdout.flush()
       scores.append(_scores)
       ranks.append(_ranks)
       t = time.time()
-      #if i == 4:
-      #  break
 
     f_ranks = common.flatten(common.flatten(ranks)) # batch-loop, article-loop
     mean_rank = sum(f_ranks) / len(f_ranks)
