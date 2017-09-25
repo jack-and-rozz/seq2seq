@@ -133,7 +133,7 @@ class WikiP2D(graph.GraphLinkPrediction):
       with tf.name_scope('negatives'):
         self.negatives = self.inference(span_repls, self.n_triples, 
                                         self.nt_indices)
-      self.loss = self.cross_entropy(self.positives, self.negatives)
+      self.g_loss = self.cross_entropy(self.positives, self.negatives)
 
     self.summary_writer = None
     if summary_path:
@@ -152,7 +152,7 @@ class WikiP2D(graph.GraphLinkPrediction):
       with tf.name_scope("update"):
         params = tf.trainable_variables()
         opt = tf.train.AdamOptimizer(self.learning_rate)
-        gradients = [grad for grad, _ in opt.compute_gradients(self.loss)]
+        gradients = [grad for grad, _ in opt.compute_gradients(self.g_loss)]
         clipped_gradients, _ = tf.clip_by_global_norm(gradients, 
                                                   self.max_gradient_norm)
         grad_and_vars = [(g, v) for g, v in zip(clipped_gradients, params)]
@@ -162,12 +162,12 @@ class WikiP2D(graph.GraphLinkPrediction):
     ## About outputs
     self.output_feed = {
       'train' : [
-        self.loss,
+        self.g_loss,
         self.positives,
         self.negatives,
       ],
       'test' : [
-        self.loss,
+        self.g_loss,
         self.positives,
         self.negatives,
       ]
@@ -369,11 +369,13 @@ class WikiP2D(graph.GraphLinkPrediction):
       loss, positives, negatives = outputs
       _scores = self.summarize_results(positives, negatives)
       _ranks = [[evaluation.get_rank(scores_by_pt) for scores_by_pt in scores_by_art] for scores_by_art in _scores]
+      sys.stderr.write(i , time.time() - t)
       scores.append(_scores)
       ranks.append(_ranks)
       t = time.time()
+      #break
 
-    f_ranks = common.flatten(common.flatten(ranks)) # batch-loop, article-loop
+    f_ranks = [x[0] for x in common.flatten(common.flatten(ranks))] # batch-loop, article-loop
     mean_rank = sum(f_ranks) / len(f_ranks)
     mrr = evaluation.mrr(f_ranks)
     hits_10 = evaluation.hits_k(f_ranks)
@@ -391,7 +393,7 @@ class WikiP2D(graph.GraphLinkPrediction):
       ])
       summary = self.sess.run(summary_ops, input_feed)
       self.summary_writer.add_summary(summary, self.epoch.eval())
-    return scores, ranks, mean_rank, mrr, hits_10
+    return scores, ranks, mrr, hits_10
 
   def summarize_results(self, positives, negatives):
     if negatives is None:
@@ -401,7 +403,7 @@ class WikiP2D(graph.GraphLinkPrediction):
     scores = [] 
     for b in xrange(batch_size): # per an article
       scores_by_pt = []
-      if len(positives[b]) == 0 :
+      if len(positives[b]) == 0:
         continue
       n_neg = int(len(negatives[b]) / len(positives[b]))
       negatives_by_p = [negatives[b][i*n_neg:(i+1)*n_neg] for i in xrange(len(positives[b]))]

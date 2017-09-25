@@ -2,6 +2,7 @@
 import sys, os, random, copy
 import tensorflow as tf
 from pprint import pprint
+import numpy as np
 
 from base import BaseManager, logger
 from core.utils import common
@@ -133,7 +134,15 @@ class GraphManager(BaseManager):
         print  "Triple, Score, Rank:"
         for (r, o), scores, rank in zip(pts, score_by_art, rank_by_art): # per a positive triple
           s = scores[0] # scores = [pos, neg_0, neg_1, ...]
-          print "(%s, %s) - %f, %d" % (r, o, s, int(rank)) 
+          N = 5
+          pos_rank, sorted_idx = rank
+          pos_id = self.dataset.o_vocab.name2id(o)
+          idx2id = [pos_id] + [x for x in xrange(self.dataset.o_vocab.size) if x != pos_id] # pos_objectを先頭に持ってきているのでidxを並び替え
+
+          top_n_scores = [x for x in sorted_idx[:N]]
+          top_n = [self.dataset.o_vocab.id2name(idx2id[x]) for x in sorted_idx[:N]]
+          top_n = ", ".join(["%s:%.4f" % (x, score)for x, score in zip(sorted_idx[:N], top_n_scores[:N])])
+          print "(%s, %s) - %f, %d, [Top-%d Objects]: %s" % (r, o, s, pos_rank, N, top_n) 
         print
         cnt += 1 
     sys.stdout = sys.__stdout__
@@ -148,14 +157,14 @@ class GraphManager(BaseManager):
       if not mtest:
         mtest= self.create_model(FLAGS, 'test', reuse=False)
       res = mtest.test(test_data, FLAGS.batch_size)
-      scores, ranks, mean_rank, mrr, hits_10 = res
+      scores, ranks, mrr, hits_10 = res
 
     output_path = self.TESTS_PATH + '/g_test.ep%02d' % mtest.epoch.eval()
     with open(output_path, 'w') as f:
       self.print_results(test_data, scores, ranks, output_file=f)
       #self.print_results(test_data, results, ranks, output_file=f)
    
-    logger.info("Epoch %d (test): MeanRank %f, MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mean_rank, mrr, hits_10))
+    logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mrr, hits_10))
 
   def demo(self):
     with tf.name_scope('demo'):

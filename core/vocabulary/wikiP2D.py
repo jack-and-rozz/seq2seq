@@ -165,7 +165,7 @@ class WikiP2DRelVocabulary(WikiP2DVocabulary):
     if os.path.exists(vocab_path) or not data:
       self.vocab, self.rev_vocab = self.load_vocab(vocab_path)
     else:
-      vocab_with_freq = sorted([(k,v['freq'])for k, v in data.items()],
+      vocab_with_freq = sorted([(k, v['freq'])for k, v in data.items()],
                                key=lambda x:-x[1])
       self.rev_vocab = [k for k,_ in vocab_with_freq]
       if vocab_size:
@@ -173,9 +173,13 @@ class WikiP2DRelVocabulary(WikiP2DVocabulary):
       self.vocab = OrderedDict({t:i for i,t in enumerate(self.rev_vocab)})
       self.save_vocab(vocab_with_freq, vocab_path)
     self.size = len(self.vocab)
+    self.names = OrderedDict([(self.id2name(_id), _id) for _id in xrange(len(self.data))])
 
   def token2id(self, token):
     return self.vocab.get(token, ERROR_ID)
+
+  def name2id(self, name):
+    return self.names.get(name, ERROR_ID)
 
   def id2token(self, _id):
     return self.rev_vocab[_id]
@@ -191,6 +195,9 @@ class WikiP2DRelVocabulary(WikiP2DVocabulary):
 
 
 class WikiP2DObjVocabulary(WikiP2DRelVocabulary):
+  pass
+
+class WikiP2DSubjVocabulary(WikiP2DRelVocabulary):
   pass
 
 

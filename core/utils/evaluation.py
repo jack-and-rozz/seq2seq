@@ -10,8 +10,9 @@ def get_rank(scores):
   # ranks = sorted([(idx, p) for idx, p in enumerate(scores)], 
   #                key=lambda x: -x[1])
   # return [rank for rank, (idx, _) in enumerate(ranks) if idx == 0][0] + 1
-  rank = np.where(np.argsort(scores)[::-1] == 0)[0][0] + 1
-  return rank
+  sorted_idx = np.argsort(scores)[::-1]
+  pos_rank = np.where(sorted_idx == 0)[0][0] + 1
+  return pos_rank, sorted_idx
 
 
 def mrr(ranks):
