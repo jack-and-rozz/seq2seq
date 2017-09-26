@@ -4,7 +4,7 @@ import tensorflow as tf
 from core.utils import common, evaluation, tf_utils
 from core.models.base import ModelBase
 import core.models.graph as graph
-from core.seq2seq import encoders, rnn
+from core.seq2seq import encoders, rnn, decoders, seq2seq
 import numpy as np
 ##############################
 ##    Scoring Functions
@@ -56,9 +56,9 @@ class WikiP2D(graph.GraphLinkPrediction):
     '''
 
     batch_size = None
-    self.max_sentence_length = max_sentence_length = config.max_sentence_length
-    self.max_word_length = tf.placeholder(tf.int32, name='max_word_length',
-                                          shape=[])
+    self.max_a_sent_length = max_a_sent_length = config.max_a_sent_length
+    self.max_a_word_length = tf.placeholder(tf.int32, shape=[], 
+                                            name='max_a_word_length')
     self.link_spans = tf.placeholder(tf.int32, shape=[batch_size, 2], 
                                      name='link_spans')
     self.p_triples = tf.placeholder(tf.int32, shape=[None, 2], 
@@ -74,64 +74,78 @@ class WikiP2D(graph.GraphLinkPrediction):
     ## Embeddings
     if self.wbase:
       self.w_articles = tf.placeholder(tf.int32, name='w_articles',
-                                       shape=[batch_size, max_sentence_length+2])
+                                       shape=[batch_size, max_a_sent_length+2])
       self.w_embeddings = self.initialize_embeddings('w_vocab', w_vocab)
     if self.cbase:
       self.c_embeddings = self.initialize_embeddings('c_vocab', c_vocab)
       self.c_articles = tf.placeholder(tf.int32, name='c_articles',
-                                shape=[batch_size, max_sentence_length+2, None])
+                                shape=[batch_size, max_a_sent_length+2, None])
     self.o_embeddings = self.initialize_embeddings('o_vocab', o_vocab)
     self.r_embeddings = self.initialize_embeddings('r_vocab', r_vocab)
 
-    ## Encoder
-    with tf.variable_scope('sentence_encoder') as scope:
-      self.sentence_length = tf.placeholder(
-        tf.int32, shape=[batch_size], name="sentence_length")
-      self.s_encoder_cell = rnn.setup_cell(config.cell_type, config.hidden_size, 
-                                           num_layers=config.num_layers, 
-                                           in_keep_prob=config.in_keep_prob, 
-                                           out_keep_prob=config.out_keep_prob,
-                                           state_is_tuple=config.state_is_tuple)
-      self.sent_encoder = getattr(encoders, config.encoder_type)(
-        self.s_encoder_cell, scope=scope)
+    with tf.name_scope('Encoder'):
+      ## Word-based Encoder
+      with tf.variable_scope('sentence_encoder') as scope:
+        self.sentence_length = tf.placeholder(
+          tf.int32, shape=[batch_size], name="sentence_length")
+        self.s_encoder_cell = rnn.setup_cell(config.cell_type, config.hidden_size, 
+                                             num_layers=config.num_layers, 
+                                             in_keep_prob=config.in_keep_prob, 
+                                             out_keep_prob=config.out_keep_prob,
+                                             state_is_tuple=config.state_is_tuple)
+        self.sent_encoder = getattr(encoders, config.encoder_type)(
+          self.s_encoder_cell, scope=scope)
 
-    self.word_length = tf.placeholder(
-      tf.int32, shape=[batch_size, max_sentence_length+2], name="word_length")
-    if self.cbase:
-      with tf.variable_scope('word_encoder') as scope:
-        word_encoder = getattr(encoders, config.c_encoder_type)
-      if word_encoder in [encoders.RNNEncoder, encoders.BidirectionalRNNEncoder]:
-        self.w_encoder_cell = rnn.setup_cell(
-          config.cell_type, config.hidden_size,
-          num_layers=config.num_layers, 
-          in_keep_prob=config.in_keep_prob, 
-          out_keep_prob=config.out_keep_prob,
-          state_is_tuple=config.state_is_tuple)
-        self.word_encoder = word_encoder(
-          self.w_encoder_cell, embedding=self.c_embeddings, scope=scope)
-      elif word_encoder in [encoders.NoneEncoder]:
-        self.word_encoder = word_encoder(
-          embedding=self.c_embeddings, scope=scope)
+      ## Char-based Encoder
+      self.a_word_length = tf.placeholder(
+        tf.int32, shape=[batch_size, max_a_sent_length+2], name="a_word_length")
+      if self.cbase:
+        with tf.variable_scope('word_encoder') as scope:
+          word_encoder = getattr(encoders, config.c_encoder_type)
+          if word_encoder in [encoders.RNNEncoder, 
+                              encoders.BidirectionalRNNEncoder]:
+            self.w_encoder_cell = rnn.setup_cell(
+              config.cell_type, config.hidden_size,
+              num_layers=config.num_layers, 
+              in_keep_prob=config.in_keep_prob, 
+              out_keep_prob=config.out_keep_prob,
+              state_is_tuple=config.state_is_tuple)
+            self.word_encoder = word_encoder(
+              self.w_encoder_cell, embedding=self.c_embeddings, scope=scope)
+          elif word_encoder in [encoders.NoneEncoder]:
+            self.word_encoder = word_encoder(
+              embedding=self.c_embeddings, scope=scope)
+
+    with tf.name_scope('encode_article'):
+      articles = []
+      if self.wbase:
+        articles.append(self.w_articles)
+      if self.cbase:
+        articles.append(self.c_articles)
+      if not articles:
+        raise ValueError('Either FLAGS.wbase or FLAGS.cbase must be True.')
+
+      sent_outputs, sent_states = self.encode_article(articles)
+      with tf.name_scope('extract_span'):
+        span_outputs = self.extract_span(sent_outputs, self.link_spans)
+
+    with tf.name_scope('Decoder') as scope:
+      ## Seq2Seq for description generation
+      self.d_decoder_cell = rnn.setup_cell(
+        config.cell_type, config.hidden_size,
+        num_layers=config.num_layers, 
+        in_keep_prob=config.in_keep_prob, 
+        out_keep_prob=config.out_keep_prob,
+        state_is_tuple=config.state_is_tuple)
+      #self.d_decoder =decoders.RNNDecoder()
 
     ## Loss and Update
     with tf.name_scope("loss"):
-      with tf.name_scope('encode_article'):
-        articles = []
-        if self.wbase:
-          articles.append(self.w_articles)
-        if self.cbase:
-          articles.append(self.c_articles)
-        if not articles:
-          raise ValueError('Either FLAGS.wbase or FLAGS.cbase must be True.')
-        sent_repls = self.encode_article(articles)
-        with tf.name_scope('extract_span'):
-          span_repls = self.extract_span(sent_repls, self.link_spans)
-
       with tf.name_scope('positives'):
-        self.positives = self.inference(span_repls, self.p_triples,
+        self.positives = self.inference(span_outputs, self.p_triples,
                                         self.pt_indices)
       with tf.name_scope('negatives'):
-        self.negatives = self.inference(span_repls, self.n_triples, 
+        self.negatives = self.inference(span_outputs, self.n_triples, 
                                         self.nt_indices)
       self.g_loss = self.cross_entropy(self.positives, self.negatives)
 
@@ -167,7 +181,6 @@ class WikiP2D(graph.GraphLinkPrediction):
         self.negatives,
       ],
       'test' : [
-        self.g_loss,
         self.positives,
         self.negatives,
       ]
@@ -194,18 +207,18 @@ class WikiP2D(graph.GraphLinkPrediction):
     return c_ent
 
   def encode_article(self, wc_articles):
-    def _encode(articles):
+    def encode_word(articles):
       if len(articles.get_shape()) == 3: # char-based
         char_repls = tf.nn.embedding_lookup(self.c_embeddings, articles)
         word_repls = []
         for i, (c, wl) in enumerate(zip(tf.unstack(char_repls, axis=1), 
-                                        tf.unstack(self.word_length, axis=1))):
+                                        tf.unstack(self.a_word_length, axis=1))):
           reuse = True if i > 0 else None
           with tf.variable_scope("word_encoder", reuse=reuse) as scope:
             outputs, state = self.word_encoder(c, sequence_length=wl, scope=scope)
             if wl != None:
               mask = tf.sequence_mask(wl, dtype=tf.float32,
-                                      maxlen=self.max_word_length)
+                                      maxlen=self.max_a_word_length)
               outputs = tf.expand_dims(mask, axis=2) * outputs
               outputs = tf.reduce_sum(outputs, axis=1) / (tf.expand_dims(tf.cast(wl, tf.float32), axis=1) + 1e-6)
             else:
@@ -217,8 +230,9 @@ class WikiP2D(graph.GraphLinkPrediction):
         word_repls = tf.nn.embedding_lookup(self.w_embeddings, articles)
       return word_repls
 
-    word_repls = tf.concat([_encode(a) for a in wc_articles], axis=-1)
-    # Linearly transformetsu to adjust the vector size if wbase and cbase are both True.
+    word_repls = tf.concat([encode_word(a) for a in wc_articles], axis=-1)
+
+    # Linearly transform to adjust the vector size if wbase and cbase are both True
     if word_repls.get_shape()[-1] != self.hidden_size:
       with tf.variable_scope('word_and_chars'):
         word_repls = tf_utils.linear_trans_for_seq(word_repls, self.hidden_size,
@@ -228,7 +242,7 @@ class WikiP2D(graph.GraphLinkPrediction):
       outputs, state = self.sent_encoder(word_repls, scope=scope,
                                          sequence_length=self.sentence_length,
                                          merge_type='avg')
-    return outputs
+    return outputs, state
 
   # https://stackoverflow.com/questions/44940767/how-to-get-slices-of-different-dimensions-from-tensorflow-tensor
   def extract_span(self, repls, span):
@@ -278,23 +292,23 @@ class WikiP2D(graph.GraphLinkPrediction):
     link_spans = batch['link_spans']
     p_triples = batch['p_triples'] 
     n_triples = batch['n_triples']
-    
+
     link_spans = [(s+1, e+1) for (s, e) in link_spans] # Shifted back one position by BOS.
     if self.cbase:
       c_articles, sentence_length, word_length = self.c_vocab.padding(
-        c_articles, self.max_sentence_length)
+        c_articles, self.max_a_sent_length)
       input_feed[self.c_articles] = np.array(c_articles)
-      input_feed[self.word_length] = np.array(word_length)
-      input_feed[self.max_word_length] = np.array(c_articles).shape[-1]
+      input_feed[self.a_word_length] = np.array(word_length)
+      input_feed[self.max_a_word_length] = np.array(c_articles).shape[-1]
     if self.wbase:
       w_articles, sentence_length = self.w_vocab.padding(
-        w_articles, self.max_sentence_length)
+        w_articles, self.max_a_sent_length)
       input_feed[self.w_articles] = np.array(w_articles)
       input_feed[self.sentence_length] = np.array(sentence_length)
 
     input_feed[self.link_spans] = np.array(link_spans)
 
-    PAD_TRIPLE = [0, 0]
+    PAD_TRIPLE = (0, 0)
     def padding_triples(triples):
       max_num_pt = max([len(t) for t in triples])
       padded = [([1.0] * len(t) + [0.0] * (max_num_pt - len(t)),
@@ -317,7 +331,8 @@ class WikiP2D(graph.GraphLinkPrediction):
     if n_triples:
       n_triples = [common.flatten(t) for t in n_triples] # negative triples are divided by the corresponding positive triples.
     else:
-      _, n_triples = fake_triples(len(p_triples))
+      #_, n_triples = fake_triples(len(p_triples))
+      _, n_triples = fake_triples(1)
     nt_indices, n_triples = flatten_triples(n_triples)
     input_feed[self.n_triples] = np.array(n_triples)
     input_feed[self.nt_indices] = np.array(nt_indices)
@@ -330,7 +345,7 @@ class WikiP2D(graph.GraphLinkPrediction):
     batches = data.get_batch(batch_size,
                              do_shuffle=do_shuffle,
                              min_sentence_length=None,
-                             max_sentence_length=self.max_sentence_length,
+                             max_sentence_length=self.max_a_sent_length,
                              n_pos_triples=self.num_triples)
     for i, raw_batch in enumerate(batches):
       input_feed = self.get_input_feed(raw_batch)
@@ -357,7 +372,7 @@ class WikiP2D(graph.GraphLinkPrediction):
     output_feed = self.output_feed['test']
     t = time.time()
     batches = data.get_batch(batch_size, 
-                             max_sentence_length=self.max_sentence_length, 
+                             max_sentence_length=self.max_a_sent_length, 
                              n_neg_triples=None, n_pos_triples=None)
 
     scores = []
@@ -366,14 +381,15 @@ class WikiP2D(graph.GraphLinkPrediction):
     for i, raw_batch in enumerate(batches):
       input_feed = self.get_input_feed(raw_batch)
       outputs = self.sess.run(output_feed, input_feed)
-      loss, positives, negatives = outputs
-      _scores = self.summarize_results(positives, negatives)
+      #loss, positives, negatives = outputs
+      positives, negatives = outputs
+      _scores = self.summarize_results(raw_batch, positives, negatives)
       _ranks = [[evaluation.get_rank(scores_by_pt) for scores_by_pt in scores_by_art] for scores_by_art in _scores]
-      sys.stderr.write(i , time.time() - t)
+      sys.stderr.write("%i\t%.3f" % (i, time.time() - t))
       scores.append(_scores)
       ranks.append(_ranks)
       t = time.time()
-      #break
+      break
 
     f_ranks = [x[0] for x in common.flatten(common.flatten(ranks))] # batch-loop, article-loop
     mean_rank = sum(f_ranks) / len(f_ranks)
@@ -395,11 +411,14 @@ class WikiP2D(graph.GraphLinkPrediction):
       self.summary_writer.add_summary(summary, self.epoch.eval())
     return scores, ranks, mrr, hits_10
 
-  def summarize_results(self, positives, negatives):
-    if negatives is None:
-      return positives
+  def summarize_results(self, raw_batch, positives, negatives):
+    p_triples = raw_batch['p_triples']
+    n_triples = raw_batch['n_triples']
+    #batch_size = len(positives)
+    batch_size = len(p_triples)
+    if not n_triples:
+      n_triples = [[[] for _ in xrange(len(p_triples[b]))] for b in xrange(batch_size)]
 
-    batch_size = len(positives)
     scores = [] 
     for b in xrange(batch_size): # per an article
       scores_by_pt = []
@@ -407,9 +426,23 @@ class WikiP2D(graph.GraphLinkPrediction):
         continue
       n_neg = int(len(negatives[b]) / len(positives[b]))
       negatives_by_p = [negatives[b][i*n_neg:(i+1)*n_neg] for i in xrange(len(positives[b]))]
-      for p, ns in zip(positives[b], negatives_by_p):
+
+
+      for p, ns, pt, nts in zip(positives[b], negatives_by_p, 
+                                 p_triples[b], n_triples[b]):
+        print p, ns
+        print pt, nts
         if p > 0.0: # Remove the results of padding triples.
-          scores_by_pt.append(np.insert(ns, 0, p))
+          print pt
+          print nts
+          print len(_triples)
+          print len(_scores)
+          _triples = [pt] + nts
+          _scores = np.insert(ns, 0, p)
+          scores_by_pt.append((_triples, _scores[:len(_triples)]))
+          print _triples
+          print _scores
+          exit(1)
           #scores_by_pt.append(np.array([p] + list(ns)))
       scores.append(scores_by_pt)
     return scores #[batch_size, p]

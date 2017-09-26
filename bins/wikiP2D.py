@@ -1,5 +1,6 @@
 #coding: utf-8
 import sys, os, random, copy
+import socket
 import tensorflow as tf
 from pprint import pprint
 import numpy as np
@@ -36,8 +37,9 @@ tf.app.flags.DEFINE_boolean("cbase", True,  "Whether to make the model character
 tf.app.flags.DEFINE_boolean("wbase", True,  "Whether to make the model word-based or not.")
 
 tf.app.flags.DEFINE_boolean("state_is_tuple", True,  "")
-tf.app.flags.DEFINE_integer("max_sentence_length", 40, "")
-tf.app.flags.DEFINE_integer("max_word_length", 0, "")
+tf.app.flags.DEFINE_integer("max_a_sent_length", 40, "")
+tf.app.flags.DEFINE_integer("max_d_sent_length", 40, "")
+tf.app.flags.DEFINE_integer("max_a_word_length", 0, "")
 
 #tf.app.flags.DEFINE_boolean("share_embedding", False, "Whether to share syn/rel embedding between subjects and objects")
 
@@ -120,7 +122,7 @@ class GraphManager(BaseManager):
   def print_results(self, data, scores, ranks, output_file=None):
     FLAGS = self.FLAGS
     batches = data.get_batch(FLAGS.batch_size, 
-                             max_sentence_length=FLAGS.max_sentence_length, 
+                             max_sentence_length=FLAGS.max_a_sent_length, 
                              n_neg_triples=None, n_pos_triples=None)
     cnt = 0
     if output_file:
@@ -202,17 +204,26 @@ class GraphManager(BaseManager):
         oo = "%s (%s)" % (oid, oname)
         return (rr, oo)
       return [(id2text(r, o), score) for (r, o), score in results]
-
-    inputs = get_inputs()
-    while inputs:
-      article, link_span = inputs
-      results = get_result(article, link_span)
-      print article
-      print " ".join(article.split()[link_span[0]:link_span[1]+1])
-      print results
-      break
-      #exit(1)
-      inputs = get_inputs()
+    print get_result(*get_inputs())
+    exit(1)
+    #inputs = get_inputs()
+    #print inputs
+    HOST = '127.0.0.1'
+    PORT = 50007
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind((HOST, PORT))
+    s.listen(1)
+    while True:
+      print '-----------------'
+      conn, addr = s.accept()
+      print 'Connected by', addr
+      data = conn.recv(1024)
+      article, start, end = data.split('\t')
+      results = get_result(article, (int(start), int(end)))
+      print results[:10]
+      conn.send(str(results))
+      conn.close()
+    return
 
 @common.timewatch(logger)
 def main(_):
