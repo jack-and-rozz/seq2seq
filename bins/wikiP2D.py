@@ -7,7 +7,8 @@ import numpy as np
 
 from base import BaseManager, logger
 from core.utils import common
-import core.models.wikiP2D as model
+#import core.models.wikiP2D as model
+import core.models.wikiP2D.mtl as model
 from core.dataset.wikiP2D import WikiP2DDataset, DemoBatch
 
 tf.app.flags.DEFINE_string("source_data_dir", "dataset/wikiP2D/source", "")
@@ -86,29 +87,41 @@ class GraphManager(BaseManager):
 
   @common.timewatch(logger)
   def train(self):
-    config = self.FLAGS
+    FLAGS = self.FLAGS
     train_data = self.dataset.train
-    #train_data = self.dataset.test
     valid_data = self.dataset.valid
     test_data = self.dataset.test
-    
+
     with tf.name_scope('train'):
-      mtrain = self.create_model(config, 'train', reuse=False)
+      mtrain = self.create_model(FLAGS, 'train', reuse=False)
 
     with tf.name_scope('valid'):
-      mvalid = self.create_model(config, 'valid', reuse=True)
+      FLAGS.in_keep_prob = 1.0
+      FLAGS.out_keep_prob = 1.0
+      mvalid = self.create_model(FLAGS, 'valid', reuse=True)
 
     if mtrain.epoch.eval() == 0:
       logger.info("(train) articles, triples, subjects = (%d, %d, %d)" % (train_data.size))
       logger.info("(valid) articles, triples, subjects = (%d, %d, %d)" % (valid_data.size))
       logger.info("(test)  articles, triples, subjects = (%d, %d, %d)" % (test_data.size))
 
-    for epoch in xrange(mtrain.epoch.eval(), config.max_epoch):
+    for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
       #logger.info("Epoch %d: Start training." % epoch)
-      epoch_time, step_time, train_loss = mtrain.train_or_valid(train_data, config.batch_size, do_shuffle=True)
+      batches = train_data.get_batch(FLAGS.batch_size,
+                                     do_shuffle=True,
+                                     min_sentence_length=None,
+                                     max_sentence_length=FLAGS.max_a_sent_length,
+                                     n_pos_triples=FLAGS.n_triples)
+
+      epoch_time, step_time, train_loss = mtrain.train_or_valid(batches)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, train_loss))
 
-      epoch_time, step_time, valid_loss = mvalid.train_or_valid(valid_data, config.batch_size, do_shuffle=False)
+      batches = valid_data.get_batch(FLAGS.batch_size,
+                                     do_shuffle=True,
+                                     min_sentence_length=None,
+                                     max_sentence_length=FLAGS.max_a_sent_length,
+                                     n_pos_triples=FLAGS.n_triples)
+      epoch_time, step_time, valid_loss = mvalid.train_or_valid(batches)
       logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, valid_loss))
 
       checkpoint_path = self.CHECKPOINTS_PATH + "/model.ckpt"
@@ -157,8 +170,14 @@ class GraphManager(BaseManager):
 
     with tf.name_scope('test'):
       if not mtest:
+        FLAGS.in_keep_prob = 1.0
+        FLAGS.out_keep_prob = 1.0
         mtest= self.create_model(FLAGS, 'test', reuse=False)
-      res = mtest.test(test_data, FLAGS.batch_size)
+      batches = test_data.get_batch(FLAGS.batch_size, 
+                                    max_sentence_length=FLAGS.max_a_sent_length, 
+                                    n_neg_triples=None, n_pos_triples=None)
+
+      res = mtest.test(batches)
       scores, ranks, mrr, hits_10 = res
 
     output_path = self.TESTS_PATH + '/g_test.ep%02d' % mtest.epoch.eval()

@@ -1,4 +1,5 @@
 # coding: utf-8
+import math
 import tensorflow as tf
 
 class ModelBase(object):
@@ -23,3 +24,10 @@ class ModelBase(object):
 
   def add_epoch(self):
     self.sess.run(tf.assign(self.epoch, tf.add(self.epoch, tf.constant(1, dtype=tf.int32))))
+
+  def initialize_embeddings(self, name, vocab_size, hidden_size, initializer=None):
+    if not initializer:
+      initializer = tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3))
+    embeddings = tf.get_variable(name, [vocab_size, hidden_size],
+                                 initializer=initializer)
+    return embeddings
