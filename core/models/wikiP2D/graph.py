@@ -40,6 +40,7 @@ triples : [None, 2 (relation_id, object_id)]
 class GraphLinkPrediction(ModelBase):
   def __init__(self, config, encoder, o_vocab, r_vocab,
                activation=tf.nn.tanh):
+    self.name = 'graph'
     self.hidden_size = config.hidden_size
     self.encoder = encoder
     self.activation = activation

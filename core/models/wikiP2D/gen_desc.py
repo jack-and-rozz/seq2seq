@@ -19,7 +19,7 @@ class DescriptionGeneration(ModelBase):
     """
     Args:
     """
-
+    self.name = "desc"
     self.activation = activation
     self.encoder = encoder
     self.embeddings = encoder.w_embeddings
