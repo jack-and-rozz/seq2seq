@@ -7,8 +7,8 @@ from core.vocabulary.base import VocabularyBase
 
 _DIGIT_RE = re.compile(r"\d")
 
-# todo: process special_words (e.g. @entity0)
-def word_tokenizer(special_words=None, lowercase=False, normalize_digits=False):
+# TODO: process parentheses "()[]{}"
+def word_tokenizer(lowercase=False, normalize_digits=False):
   def _tokenizer(sent):
     if normalize_digits:
       sent = re.sub(_DIGIT_RE, "0", sent) 
@@ -17,7 +17,8 @@ def word_tokenizer(special_words=None, lowercase=False, normalize_digits=False):
     return sent.replace('\n', '').split()
   return _tokenizer
 
-def char_tokenizer(special_words=None, lowercase=False, normalize_digits=False):
+def char_tokenizer(special_words=set([_PAD, _BOS, _UNK, _EOS]), 
+                   lowercase=False, normalize_digits=False):
   def _tokenizer(sent):
     if normalize_digits:
       sent = re.sub(_DIGIT_RE, "0", sent) 
@@ -26,7 +27,7 @@ def char_tokenizer(special_words=None, lowercase=False, normalize_digits=False):
     def word2chars(word):
       if not special_words or word not in special_words:
         return [c.encode('utf-8') for c in word.decode('utf-8')]
-      return word
+      return [word]
     words = sent.replace('\n', '').split()
     chars = [word2chars(w) for w in words]
     return chars
@@ -41,8 +42,7 @@ class WikiP2DVocabulary(VocabularyBase):
                                       lowercase=lowercase,
                                       normalize_digits=normalize_digits) 
     else: 
-      self.tokenizer = word_tokenizer(special_words=special_words, 
-                                      lowercase=lowercase,
+      self.tokenizer = word_tokenizer(lowercase=lowercase,
                                       normalize_digits=normalize_digits) 
 
     self.cbase = cbase

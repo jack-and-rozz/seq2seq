@@ -1,11 +1,13 @@
 import copy
 import tensorflow as tf
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
+from core.extensions import rnn_cell as shared_rnn_cell
 
-def setup_cell(cell_type, hidden_size, num_layers=1, 
+def setup_cell(cell_type, hidden_size, num_layers=1, shared=False,
                in_keep_prob=1.0, out_keep_prob=1.0, state_is_tuple=True):
-  cell = getattr(rnn_cell, cell_type)(hidden_size, 
-                                      reuse=tf.get_variable_scope().reuse) 
+  cell_module = rnn_cell if not shared else shared_rnn_cell
+  cell = getattr(cell_module, cell_type)(hidden_size, 
+                                         reuse=tf.get_variable_scope().reuse) 
   if in_keep_prob < 1.0 or out_keep_prob < 1.0:
     cell = rnn_cell.DropoutWrapper(cell, 
                                    input_keep_prob=in_keep_prob,

@@ -33,9 +33,9 @@ class WikiP2D(ModelBase):
     with tf.variable_scope("Description") as scope:
       self.desc = DescriptionGeneration(config, self.encoder, w_vocab,
                                         activation=self.activation)
+    self.losses = [self.graph.loss, self.desc.loss]
+    self.loss, self.updates = self.get_loss_and_updates(self.losses, do_update)
 
-    self.loss = self.graph.loss
-    
     if summary_path:
       with tf.name_scope("summary"):
         self.summary_writer = tf.summary.FileWriter(summary_path,
@@ -48,24 +48,9 @@ class WikiP2D(ModelBase):
                                           name='summary_mrr')
         self.summary_hits_10 = tf.placeholder(tf.float32, shape=[],
                                               name='summary_hits_10')
-    if do_update:
-      with tf.name_scope("update"):
-        params = tf.trainable_variables()
-        opt = tf.train.AdamOptimizer(self.learning_rate)
-        gradients = [grad for grad, _ in opt.compute_gradients(self.loss)]
-        clipped_gradients, _ = tf.clip_by_global_norm(gradients, 
-                                                  self.max_gradient_norm)
-        grad_and_vars = [(g, v) for g, v in zip(clipped_gradients, params)]
-        self.updates = opt.apply_gradients(
-          grad_and_vars, global_step=self.global_step)
-
     ## About outputs
     self.output_feed = {
-      'train' : [
-        self.loss,
-        self.graph.positives,
-        self.graph.negatives,
-      ],
+      'train' : [self.loss] + [l for l in self.losses],
       'test' : [
         self.graph.positives,
         self.graph.negatives,
@@ -74,20 +59,24 @@ class WikiP2D(ModelBase):
     if self.do_update:
       self.output_feed['train'].append(self.updates)
 
+
   def get_input_feed(self, batch):
     input_feed = {}
     input_feed.update(self.encoder.get_input_feed(batch))
     input_feed.update(self.graph.get_input_feed(batch))
+    input_feed.update(self.desc.get_input_feed(batch))
     return input_feed
 
   def train_or_valid(self, batches):
     start_time = time.time()
-    loss = 0.0
+    n_losses = len(self.losses) + 1
+    loss = np.array([0.0] * n_losses)
     output_feed = self.output_feed['train']
     for i, raw_batch in enumerate(batches):
       input_feed = self.get_input_feed(raw_batch)
       outputs = self.sess.run(output_feed, input_feed)
-      step_loss = math.exp(outputs[0])
+      step_loss = np.array([math.exp(l) for l in outputs[:n_losses]])
+      print step_loss
       loss += step_loss
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)
@@ -95,14 +84,14 @@ class WikiP2D(ModelBase):
 
     if self.summary_writer:
       input_feed = {
-        self.summary_loss: loss
+        self.summary_loss: loss[0]
       }
       summary_ops = tf.summary.merge([
         tf.summary.scalar('loss', self.summary_loss),
       ])
       summary = self.sess.run(summary_ops, input_feed)
       self.summary_writer.add_summary(summary, self.epoch.eval())
-
+    loss = " ".join(["%.3f" % l for l in loss])
     return epoch_time, step_time, loss
 
   def test(self, batches):
@@ -170,11 +159,50 @@ class WikiP2D(ModelBase):
       scores.append(scores_by_pt)
     return scores #[batch_size, p]
 
+  def get_loss_and_updates(self, losses, do_update):
+    raise NotImplementedError()
 
-def MultiGPUTrain(objects):
+class MeanLoss(WikiP2D):
+  def get_loss_and_updates(self, losses, do_update):
+    loss = tf.reduce_mean(losses)
+    updates = None
+    if do_update:
+      with tf.name_scope("update"):
+        params = tf.trainable_variables()
+        opt = tf.train.AdamOptimizer(self.learning_rate)
+        gradients = [grad for grad, _ in opt.compute_gradients(loss)]
+        clipped_gradients, _ = tf.clip_by_global_norm(gradients, 
+                                                      self.max_gradient_norm)
+        grad_and_vars = [(g, v) for g, v in zip(clipped_gradients, params)]
+        updates = opt.apply_gradients(
+          grad_and_vars, global_step=self.global_step)
+    return loss, updates
+
+class WeightedLoss(WikiP2D):
+  def get_loss_and_updates(self, losses, do_update):
+    weights = tf.get_variable("loss_weights", [len(losses)])
+    loss = tf.reduce_sum(tf.nn.softmax(weights) * losses)
+    updates = None
+    if do_update:
+      with tf.name_scope("update"):
+        params = tf.trainable_variables()
+        opt = tf.train.AdamOptimizer(self.learning_rate)
+        gradients = [grad for grad, _ in opt.compute_gradients(loss)]
+        clipped_gradients, _ = tf.clip_by_global_norm(gradients, 
+                                                      self.max_gradient_norm)
+        grad_and_vars = [(g, v) for g, v in zip(clipped_gradients, params)]
+        updates = opt.apply_gradients(
+          grad_and_vars, global_step=self.global_step)
+    return loss, updates
+
+
+
+def MultiGPUTrainWrapper(objects):
   def __init__(self, sess, config, do_update,
                w_vocab, c_vocab, o_vocab, r_vocab,
                summary_path=None):
     pass
   def train_or_valid(self):
     pass
+
+

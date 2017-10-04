@@ -13,7 +13,7 @@ from core.dataset.wikiP2D import WikiP2DDataset, DemoBatch
 
 tf.app.flags.DEFINE_string("source_data_dir", "dataset/wikiP2D/source", "")
 tf.app.flags.DEFINE_string("processed_data_dir", "dataset/wikiP2D/processed", "")
-tf.app.flags.DEFINE_string("model_type", "WikiP2D", "")
+tf.app.flags.DEFINE_string("model_type", "MeanLoss", "")
 tf.app.flags.DEFINE_string("dataset", "Q5O15000R300.micro.bin", "")
 
 ## Hyperparameters
@@ -114,7 +114,7 @@ class GraphManager(BaseManager):
                                      n_pos_triples=FLAGS.n_triples)
 
       epoch_time, step_time, train_loss = mtrain.train_or_valid(batches)
-      logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, train_loss))
+      logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, train_loss))
 
       batches = valid_data.get_batch(FLAGS.batch_size,
                                      do_shuffle=True,
@@ -122,7 +122,7 @@ class GraphManager(BaseManager):
                                      max_sentence_length=FLAGS.max_a_sent_length,
                                      n_pos_triples=FLAGS.n_triples)
       epoch_time, step_time, valid_loss = mvalid.train_or_valid(batches)
-      logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, valid_loss))
+      logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, valid_loss))
 
       checkpoint_path = self.CHECKPOINTS_PATH + "/model.ckpt"
       if epoch == 0 or (epoch+1) % 5 == 0:

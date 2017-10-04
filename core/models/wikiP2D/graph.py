@@ -46,11 +46,6 @@ class GraphLinkPrediction(ModelBase):
     self.scoring_function = distmult
     self.max_batch_size = config.batch_size # for tf.dynamic_partition
 
-    batch_size = None # can be dynamic.
-    self.link_spans = tf.placeholder(tf.int32, shape=[batch_size, 2], 
-                                     name='link_spans')
-    with tf.name_scope('extract_span'):
-      span_outputs = self.extract_span(encoder.outputs, self.link_spans)
 
     self.o_embeddings = self.initialize_embeddings('o_vocab', o_vocab.size, 
                                                    config.hidden_size)
@@ -68,6 +63,7 @@ class GraphLinkPrediction(ModelBase):
                                     name='nt_indices')
     ## Loss and Update
     with tf.name_scope("loss"):
+      span_outputs = encoder.link_outputs
       with tf.name_scope('positives'):
         self.positives = self.inference(span_outputs, self.p_triples,
                                         self.pt_indices)
@@ -76,26 +72,7 @@ class GraphLinkPrediction(ModelBase):
                                         self.nt_indices)
       self.loss = self.cross_entropy(self.positives, self.negatives)
 
-  # https://stackoverflow.com/questions/44940767/how-to-get-slices-of-different-dimensions-from-tensorflow-tensor
-  def extract_span(self, repls, span):
-    def loop_func(idx, span_repls, start, end):
-      res = tf.reduce_mean(span_repls[idx][start[idx]:end[idx]+1], axis=0)
-      return tf.expand_dims(res, axis=0)
 
-    sol, eol = tf.unstack(span, axis=1)
-    batch_size = tf.shape(repls)[0]
-    idx = tf.zeros((), dtype=tf.int32)
-
-    # Continue concatenating the obtained representation of one span in a row of the batch with the results of previous loop (=res).
-    res = tf.zeros((0, self.hidden_size))
-    cond = lambda idx, res: idx < batch_size
-    body = lambda idx, res: (idx + 1, tf.concat([res, loop_func(idx, repls, sol, eol)], axis=0))
-    loop_vars = [idx, res]
-    _, res = tf.while_loop(
-      cond, body, loop_vars,
-      shape_invariants=[idx.get_shape(), 
-                        tf.TensorShape([None, self.hidden_size])])
-    return res
 
   def inference(self, span_repls, triples, batch_indices):
     #relations, objects = tf.unstack(triples, axis=2)
@@ -130,12 +107,8 @@ class GraphLinkPrediction(ModelBase):
 
   def get_input_feed(self, batch):
     input_feed = {}
-    link_spans = batch['link_spans']
     p_triples = batch['p_triples'] 
     n_triples = batch['n_triples']
-
-    link_spans = [(s+1, e+1) for (s, e) in link_spans] # Shifted back one position by BOS.
-    input_feed[self.link_spans] = np.array(link_spans)
 
     PAD_TRIPLE = (0, 0)
     def padding_triples(triples):

@@ -26,6 +26,8 @@ class ArticleEncoder(ModelBase):
     self.max_sent_length = config.max_a_sent_length
     self.max_word_length = tf.placeholder(tf.int32, shape=[], 
                                           name='max_word_length')
+    self.link_spans = tf.placeholder(tf.int32, shape=[batch_size, 2], 
+                                     name='link_spans')
 
     ## Embeddings (BOS and EOS are inserted at the start and the end of a sent.)
     if self.wbase:
@@ -47,7 +49,8 @@ class ArticleEncoder(ModelBase):
                                            num_layers=config.num_layers, 
                                            in_keep_prob=config.in_keep_prob, 
                                            out_keep_prob=config.out_keep_prob,
-                                           state_is_tuple=config.state_is_tuple)
+                                           state_is_tuple=config.state_is_tuple,
+                                           shared=True)
       self.sent_encoder = getattr(encoders, config.encoder_type)(
         self.s_encoder_cell, scope=scope)
 
@@ -66,7 +69,8 @@ class ArticleEncoder(ModelBase):
             num_layers=config.num_layers, 
             in_keep_prob=config.in_keep_prob, 
             out_keep_prob=config.out_keep_prob,
-            state_is_tuple=config.state_is_tuple)
+            state_is_tuple=config.state_is_tuple,
+            shared=True)
           self.word_encoder = word_encoder(
             self.w_encoder_cell, embedding=self.c_embeddings, scope=scope)
         elif word_encoder in [encoders.NoneEncoder]:
@@ -83,7 +87,7 @@ class ArticleEncoder(ModelBase):
       if not articles:
         raise ValueError('Either FLAGS.wbase or FLAGS.cbase must be True.')
       self.outputs, self.states = self.encode_article(articles)
-
+      self.link_outputs = self.extract_span(self.outputs, self.link_spans)
 
   def encode_article(self, wc_articles):
     def encode_word(articles):
@@ -123,22 +127,46 @@ class ArticleEncoder(ModelBase):
                                          merge_type='avg')
     return outputs, state
 
+  # https://stackoverflow.com/questions/44940767/how-to-get-slices-of-different-dimensions-from-tensorflow-tensor
+  def extract_span(self, repls, span):
+    def loop_func(idx, span_repls, start, end):
+      res = tf.reduce_mean(span_repls[idx][start[idx]:end[idx]+1], axis=0)
+      return tf.expand_dims(res, axis=0)
+
+    sol, eol = tf.unstack(span, axis=1)
+    batch_size = tf.shape(repls)[0]
+    idx = tf.zeros((), dtype=tf.int32)
+
+    # Continue concatenating the obtained representation of one span in a row of the batch with the results of previous loop (=res).
+    res = tf.zeros((0, self.hidden_size))
+    cond = lambda idx, res: idx < batch_size
+    body = lambda idx, res: (idx + 1, tf.concat([res, loop_func(idx, repls, sol, eol)], axis=0))
+    loop_vars = [idx, res]
+    _, res = tf.while_loop(
+      cond, body, loop_vars,
+      shape_invariants=[idx.get_shape(), 
+                        tf.TensorShape([None, self.hidden_size])])
+    return res
 
   def get_input_feed(self, batch):
     input_feed = {}
-    w_articles = batch['w_articles']
-    c_articles = batch['c_articles']
     if self.cbase:
+      c_articles = batch['c_articles']
       c_articles, sentence_length, word_length = self.c_vocab.padding(
         c_articles, self.max_sent_length)
       input_feed[self.c_articles] = np.array(c_articles)
       input_feed[self.word_length] = np.array(word_length)
       input_feed[self.max_word_length] = np.array(c_articles).shape[-1]
+
     if self.wbase:
+      w_articles = batch['w_articles']
       w_articles, sentence_length = self.w_vocab.padding(
         w_articles, self.max_sent_length)
       input_feed[self.w_articles] = np.array(w_articles)
       input_feed[self.sentence_length] = np.array(sentence_length)
-    return input_feed
- 
 
+    link_spans = batch['link_spans']
+    link_spans = [(s+1, e+1) for (s, e) in link_spans] # Shifted back one position by BOS.
+    input_feed[self.link_spans] = np.array(link_spans)
+
+    return input_feed

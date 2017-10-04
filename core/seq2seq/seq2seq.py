@@ -94,6 +94,11 @@ def projection_and_sampled_loss(target_vocab_size, hidden_size, num_samples):
     softmax_loss_function = sampled_loss
   return output_projection, softmax_loss_function
 
+def to_logits(outputs, projection):
+  return [tf.nn.xw_plus_b(output, projection[0], projection[1])
+          for output in outputs]
+
+
 class BasicSeq2Seq(object):
   def __init__(self, encoder, decoder, num_samples, batch_size,
                feed_previous=False, beam_size=1):
@@ -128,11 +133,12 @@ class BasicSeq2Seq(object):
 
 
   def __call__(self, encoder_inputs, decoder_inputs, targets, weights,
-               per_example_loss=False):
-    encoder_inputs = [tf.nn.embedding_lookup(
-      self.encoder.embedding, inp) for inp in encoder_inputs]
-    decoder_inputs = [tf.nn.embedding_lookup(
-      self.decoder.embedding, inp) for inp in decoder_inputs]
+               per_example_loss=False, embedded=False):
+    if not embedded:
+      encoder_inputs = [tf.nn.embedding_lookup(
+        self.encoder.embedding, inp) for inp in encoder_inputs]
+      decoder_inputs = [tf.nn.embedding_lookup(
+        self.decoder.embedding, inp) for inp in decoder_inputs]
 
     if self.do_beam_decode:
       beam_paths, beam_symbols, decoder_states = self.seq2seq(encoder_inputs, 
@@ -140,7 +146,6 @@ class BasicSeq2Seq(object):
       return beam_paths, beam_symbols, decoder_states
     else:
       outputs, decoder_states = self.seq2seq(encoder_inputs, decoder_inputs)
-
       def to_logits(outputs):
         return [tf.nn.xw_plus_b(output, self.projection[0], self.projection[1])
                 for output in outputs]

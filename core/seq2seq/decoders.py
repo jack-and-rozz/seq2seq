@@ -8,10 +8,6 @@ import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 from six.moves import zip  # pylint: disable=redefined-builtin
 
-# from tensorflow.python.framework import dtypes
-# from tensorflow.python.ops import control_flow_ops
-# from tensorflow.python.ops import nn_ops
-# from tensorflow.python.util import nest
 import inspect
 import tensorflow as tf
 from tensorflow.python.ops import rnn
@@ -48,9 +44,12 @@ class RNNDecoder(Decoder):
   def output_size(self):
     return self.cell.output_size
 
-  def __call__(self, inputs, init_state, encoder_outputs,
+  def __call__(self, inputs, init_state, _,
                loop_function=None, scope=None):
     with variable_scope.variable_scope(scope or "rnn_decoder") as scope:
+      inputs = tf.nn.embedding_lookup(self.embedding, inputs)
+      if not nest.is_sequence(inputs):
+        inputs = tf.unstack(inputs, axis=1)
       return self.decoder_func(inputs, init_state, self.cell,
                               scope=scope, loop_function=loop_function)
 
