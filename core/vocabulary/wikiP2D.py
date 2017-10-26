@@ -10,6 +10,12 @@ _DIGIT_RE = re.compile(r"\d")
 # TODO: process parentheses "()[]{}"
 def word_tokenizer(lowercase=False, normalize_digits=False):
   def _tokenizer(sent):
+    # if type(sent) == list:
+    #   if normalize_digits:
+    #     sent = [re.sub(_DIGIT_RE, "0", t) for t in sent]
+    #   if lowercase:
+    #     sent = [t.lower for t in sent]
+    # else:
     if normalize_digits:
       sent = re.sub(_DIGIT_RE, "0", sent) 
     if lowercase:
@@ -26,7 +32,9 @@ def char_tokenizer(special_words=set([_PAD, _BOS, _UNK, _EOS]),
       sent = sent.lower()
     def word2chars(word):
       if not special_words or word not in special_words:
-        return [c.encode('utf-8') for c in word.decode('utf-8')]
+        if not type(word) == unicode:
+          word = word.decode('utf-8')
+        return [c.encode('utf-8') for c in word]
       return [word]
     words = sent.replace('\n', '').split()
     chars = [word2chars(w) for w in words]
@@ -86,7 +94,9 @@ class WikiP2DVocabulary(VocabularyBase):
       f.write('\n'.join(["%s\t%d"% tuple(x) for x in vocab_with_freq]) + '\n')
 
   def sent2ids(self, sentence):
-    tokens = self.tokenizer(sentence)
+    if type(sentence) == list:
+      sentence = " ".join(sentence)
+    tokens = self.tokenizer(sentence) 
     if self.cbase:
       res = [[self.vocab.get(char, UNK_ID) for char in word] for word in tokens]
     else:
@@ -109,7 +119,7 @@ class WikiP2DVocabulary(VocabularyBase):
       sent_tokens = [self.id2token(word_id) for word_id in ids]
     if link_span:
       for i in xrange(link_span[0], link_span[1]+1):
-        sent_tokens[i] = common.colored(sent_tokens[i], 'bold')
+        sent_tokens[i] = common.colored(sent_tokens[i], 'link')
       sent_tokens = [w for w in sent_tokens if w]
     return " ".join(sent_tokens)
 

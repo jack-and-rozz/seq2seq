@@ -316,7 +316,12 @@ def find_first(predicate, l):
 
 
 def flatten(l):
-    return list(chain.from_iterable(l))
+  return list(chain.from_iterable(l))
+
+
+def flatten_with_idx(tensor):
+  res = flatten([[(i, x) for x in t] for i, t in enumerate(tensor)])
+  return map(list, zip(*res)) # in-batch indices, tensor
 
 def max_elem( lis ):
   L = lis[:]#copy
@@ -486,7 +491,8 @@ def colored(str_, color):
     'blue': "\033[34m",
     'purple': "\033[35m",
     'underline': '\033[4m',
-    'bold': "\033[31m" + '\033[4m',
+    'link': "\033[31m" + '\033[4m',
+    'bold': '\033[30m' + "\033[1m",
   }
   if type(color) == str:
     res = ctable[color] + str_ + RESET

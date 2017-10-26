@@ -6,7 +6,13 @@ from core.seq2seq import encoders, rnn
 import numpy as np
 from core.models.base import ModelBase
 
-class ArticleEncoder(ModelBase):
+class WordEncoder(ModelBase):
+  pass
+
+class ParagraphEncoder(ModelBase):
+  pass
+
+class SentenceEncoder(ModelBase):
   def __init__(self, config, w_vocab, c_vocab,
                activation=tf.nn.tanh):
     self.activation = activation
@@ -15,36 +21,35 @@ class ArticleEncoder(ModelBase):
     self.w_vocab = w_vocab
     self.c_vocab = c_vocab
     self.hidden_size = config.hidden_size
+    self.max_batch_size = config.batch_size
 
-    ## Placeholder
-    '''
-    articles : [batch_size, n_words, [n_characters]]
-    link_spans : [batch_size, 2 (start, end)]
-    triples : [None, 2 (relation_id, object_id)]
-    '''
-    batch_size = None
+    # Placeholders
     self.max_sent_length = config.max_a_sent_length
     self.max_word_length = tf.placeholder(tf.int32, shape=[], 
                                           name='max_word_length')
-    self.link_spans = tf.placeholder(tf.int32, shape=[batch_size, 2], 
+
+    ## Sentences of each entity are fed as a 2D Tensor (this is because the number of sentences are different depending on the linked entity), so we need to dynamically sort them.
+    self.entity_indices = tf.placeholder(tf.int32, shape=[None], 
+                                     name='entity_indices')
+    self.link_spans = tf.placeholder(tf.int32, shape=[None, 2], 
                                      name='link_spans')
 
-    ## Embeddings (BOS and EOS are inserted at the start and the end of a sent.)
+    ## The length of placeholders is increased by 2, because BOS and EOS are inserted at the start and the end of a sent.
     if self.wbase:
       self.w_embeddings = self.initialize_embeddings('w_vocab', w_vocab.size, 
                                                      config.hidden_size)
-      self.w_articles = tf.placeholder(tf.int32, name='w_articles',
-                                       shape=[batch_size, self.max_sent_length+2])
+      self.w_sentences = tf.placeholder(tf.int32, name='w_sentences',
+                                       shape=[None, self.max_sent_length+2])
     if self.cbase:
       self.c_embeddings = self.initialize_embeddings('c_vocab', c_vocab.size,
                                                      config.hidden_size)
-      self.c_articles = tf.placeholder(tf.int32, name='c_articles',
-                                shape=[batch_size, self.max_sent_length+2, None])
+      self.c_sentences = tf.placeholder(tf.int32, name='c_sentences',
+                                shape=[None, self.max_sent_length+2, None])
 
     ## Word-based Encoder
     with tf.variable_scope('SentenceEncoder') as scope:
       self.sentence_length = tf.placeholder(
-        tf.int32, shape=[batch_size], name="sentence_length")
+        tf.int32, shape=[None], name="sentence_length")
       self.s_encoder_cell = rnn.setup_cell(config.cell_type, config.hidden_size, 
                                            num_layers=config.num_layers, 
                                            in_keep_prob=config.in_keep_prob, 
@@ -56,9 +61,9 @@ class ArticleEncoder(ModelBase):
 
     ## Char-based Encoder
     #self.word_length = tf.placeholder(
-    #  tf.int32, shape=[batch_size, self.max_sent_length+2], name="word_length")
+    #  tf.int32, shape=[None, self.max_sent_length+2], name="word_length")
     self.word_length = tf.placeholder(
-      tf.int32, shape=[batch_size, self.max_sent_length+2], name="word_length")
+      tf.int32, shape=[None, self.max_sent_length+2], name="word_length")
     if self.cbase:
       with tf.variable_scope('WordEncoder') as scope:
         word_encoder = getattr(encoders, config.c_encoder_type)
@@ -78,21 +83,21 @@ class ArticleEncoder(ModelBase):
             embedding=self.c_embeddings, scope=scope)
 
 
-    with tf.name_scope('EncodeArticle'):
-      articles = []
+    with tf.name_scope('EncodeSentence'):
+      sentences = []
       if self.wbase:
-        articles.append(self.w_articles)
+        sentences.append(self.w_sentences)
       if self.cbase:
-        articles.append(self.c_articles)
-      if not articles:
+        sentences.append(self.c_sentences)
+      if not sentences:
         raise ValueError('Either FLAGS.wbase or FLAGS.cbase must be True.')
-      self.outputs, self.states = self.encode_article(articles)
+      self.outputs, self.states = self.encode_sentence(sentences)
       self.link_outputs = self.extract_span(self.outputs, self.link_spans)
 
-  def encode_article(self, wc_articles):
-    def encode_word(articles):
-      if len(articles.get_shape()) == 3: # char-based
-        char_repls = tf.nn.embedding_lookup(self.c_embeddings, articles)
+  def encode_sentence(self, wc_sentences):
+    def encode_word(sentences):
+      if len(sentences.get_shape()) == 3: # char-based
+        char_repls = tf.nn.embedding_lookup(self.c_embeddings, sentences)
         word_repls = []
         for i, (c, wl) in enumerate(zip(tf.unstack(char_repls, axis=1), 
                                         tf.unstack(self.word_length, axis=1))):
@@ -110,10 +115,10 @@ class ArticleEncoder(ModelBase):
           word_repls.append(outputs)
         word_repls = tf.stack(word_repls, axis=1) 
       else: # word-based
-        word_repls = tf.nn.embedding_lookup(self.w_embeddings, articles)
+        word_repls = tf.nn.embedding_lookup(self.w_embeddings, sentences)
       return word_repls
 
-    word_repls = tf.concat([encode_word(a) for a in wc_articles], axis=-1)
+    word_repls = tf.concat([encode_word(a) for a in wc_sentences], axis=-1)
 
     # Linearly transform to adjust the vector size if wbase and cbase are both True
     if word_repls.get_shape()[-1] != self.hidden_size:
@@ -146,26 +151,36 @@ class ArticleEncoder(ModelBase):
       cond, body, loop_vars,
       shape_invariants=[idx.get_shape(), 
                         tf.TensorShape([None, self.hidden_size])])
-    return res
+    spans_by_subj = tf.dynamic_partition(res, self.entity_indices, 
+                                         self.max_batch_size)
+
+    # Apply max-pooling for spans of an entity.
+    spans_by_subj = tf.stack([tf.reduce_max(s, axis=0) for s in spans_by_subj], 
+                             axis=0)
+    return spans_by_subj
 
   def get_input_feed(self, batch):
     input_feed = {}
+    if len(batch['c_articles']) != len(batch['w_articles']) or len(batch['link_spans']) != len(batch['w_articles']):
+      raise ValueError('The length of \'w_articles\', \'c_articles\', and \'link_spans\' must be equal (must have the same number of entity)')
+
     if self.cbase:
-      c_articles = batch['c_articles']
-      c_articles, sentence_length, word_length = self.c_vocab.padding(
-        c_articles, self.max_sent_length)
-      input_feed[self.c_articles] = np.array(c_articles)
+      entity_indices, c_sentences = common.flatten_with_idx(batch['c_articles'])
+      c_sentences, sentence_length, word_length = self.c_vocab.padding(
+        c_sentences, self.max_sent_length)
+      input_feed[self.c_sentences] = np.array(c_sentences)
       input_feed[self.word_length] = np.array(word_length)
-      input_feed[self.max_word_length] = np.array(c_articles).shape[-1]
+      input_feed[self.max_word_length] = np.array(c_sentences).shape[-1]
 
     if self.wbase:
-      w_articles = batch['w_articles']
-      w_articles, sentence_length = self.w_vocab.padding(
-        w_articles, self.max_sent_length)
-      input_feed[self.w_articles] = np.array(w_articles)
+      entity_indices, w_sentences = common.flatten_with_idx(batch['w_articles'])
+      w_sentences, sentence_length = self.w_vocab.padding(
+        w_sentences, self.max_sent_length)
+      input_feed[self.w_sentences] = np.array(w_sentences)
       input_feed[self.sentence_length] = np.array(sentence_length)
 
-    link_spans = batch['link_spans']
+    input_feed[self.entity_indices] = np.array(entity_indices)
+    entity_indices, link_spans = common.flatten_with_idx(batch['link_spans'])
     link_spans = [(s+1, e+1) for (s, e) in link_spans] # Shifted back one position by BOS.
     input_feed[self.link_spans] = np.array(link_spans)
 

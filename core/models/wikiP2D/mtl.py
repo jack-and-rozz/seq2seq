@@ -4,9 +4,9 @@ import tensorflow as tf
 from core.utils import common, evaluation, tf_utils
 from core.models.base import ModelBase
 #import core.models.graph as graph
-from core.models.wikiP2D.encoder import ArticleEncoder
-from core.models.wikiP2D.gen_desc import DescriptionGeneration
-from core.models.wikiP2D.graph import GraphLinkPrediction
+from core.models.wikiP2D.encoder import SentenceEncoder
+from core.models.wikiP2D.gen_desc.gen_desc import DescriptionGeneration
+from core.models.wikiP2D.graph.graph import GraphLinkPrediction
 
 import numpy as np
 
@@ -17,40 +17,58 @@ import numpy as np
 class WikiP2D(ModelBase):
   def __init__(self, sess, config, do_update,
                w_vocab, c_vocab, o_vocab, r_vocab,
+               speaker_vocab, genre_vocab,
                activation=tf.nn.tanh, summary_path=None):
     self.initialize(sess, config, do_update)
     self.activation = activation
     self.summary_writer = None
 
     with tf.variable_scope("Encoder") as scope:
-      self.encoder = ArticleEncoder(config, w_vocab, c_vocab,
-                                    activation=self.activation)
+      self.encoder = SentenceEncoder(config, w_vocab, c_vocab,
+                                     activation=self.activation)
 
-    with tf.variable_scope("Graph") as scope:
-      self.graph = GraphLinkPrediction(config, self.encoder, o_vocab, r_vocab,
-                                       activation=self.activation)
+    ## About subtasks
+    self.tasks = []
+    self.coref, self.graph, self.desc = None, None, None
+    if config.coref_task:
+      with tf.variable_scope("Coreference") as scope:
+        self.coref = CoreferenceResolution(config, self.encoder, 
+                                           speaker_vocab, genre_vocab)
+        self.tasks.append(self.coref)
 
-    with tf.variable_scope("Description") as scope:
-      self.desc = DescriptionGeneration(config, self.encoder, w_vocab,
-                                        activation=self.activation)
-    self.losses = [self.graph.loss, self.desc.loss]
-    self.loss, self.updates = self.get_loss_and_updates(self.losses, do_update)
+    if config.graph_task:
+      with tf.variable_scope("Graph") as scope:
+        self.graph = GraphLinkPrediction(config, self.encoder, o_vocab, r_vocab,
+                                         activation=self.activation)
+        self.tasks.append(self.graph)
+
+    if config.desc_task:
+      with tf.variable_scope("Description") as scope:
+        self.desc = DescriptionGeneration(config, self.encoder, w_vocab,
+                                          activation=self.activation)
+        self.tasks.append(self.desc)
+    self.loss, self.updates = self.get_loss_and_updates(
+      [t.loss for t in self.tasks], do_update)
 
     if summary_path:
       with tf.name_scope("summary"):
         self.summary_writer = tf.summary.FileWriter(summary_path,
                                                     self.sess.graph)
-        self.summary_loss = tf.placeholder(tf.float32, shape=[],
-                                           name='summary_loss')
-        self.summary_mean_rank = tf.placeholder(tf.float32, shape=[],
-                                               name='summary_mean_rank')
-        self.summary_mrr = tf.placeholder(tf.float32, shape=[],
-                                          name='summary_mrr')
-        self.summary_hits_10 = tf.placeholder(tf.float32, shape=[],
-                                              name='summary_hits_10')
+        if self.graph:
+          self.summary_loss = tf.placeholder(tf.float32, shape=[],
+                                             name='summary_loss')
+          self.summary_mean_rank = tf.placeholder(tf.float32, shape=[],
+                                                  name='summary_mean_rank')
+          self.summary_mrr = tf.placeholder(tf.float32, shape=[],
+                                            name='summary_mrr')
+          self.summary_hits_10 = tf.placeholder(tf.float32, shape=[],
+                                                name='summary_hits_10')
+        if self.desc:
+          pass
+
     ## About outputs
     self.output_feed = {
-      'train' : [self.loss] + [l for l in self.losses],
+      'train' : [self.loss] + [t.loss for t in self.tasks] + [self.graph.positives, self.graph.negatives, self.encoder.link_outputs, self.graph.positives],
       'test' : [
         self.graph.positives,
         self.graph.negatives,
@@ -63,21 +81,23 @@ class WikiP2D(ModelBase):
   def get_input_feed(self, batch):
     input_feed = {}
     input_feed.update(self.encoder.get_input_feed(batch))
-    input_feed.update(self.graph.get_input_feed(batch))
-    input_feed.update(self.desc.get_input_feed(batch))
+    for t in self.tasks:
+      input_feed.update(t.get_input_feed(batch))
     return input_feed
 
   def train_or_valid(self, batches):
     start_time = time.time()
-    n_losses = len(self.losses) + 1
+    n_losses = len(self.tasks) + 1
     loss = np.array([0.0] * n_losses)
     output_feed = self.output_feed['train']
     for i, raw_batch in enumerate(batches):
       input_feed = self.get_input_feed(raw_batch)
       outputs = self.sess.run(output_feed, input_feed)
       step_loss = np.array([math.exp(l) for l in outputs[:n_losses]])
-      print step_loss
       loss += step_loss
+      if math.isnan(step_loss[0]):
+        raise ValueError("Nan loss is detected.")
+
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)
     loss /= (i+1)
@@ -96,7 +116,6 @@ class WikiP2D(ModelBase):
 
   def test(self, batches):
     output_feed = self.output_feed['test']
-    t = time.time()
     scores = []
     ranks = []
     t = time.time()
@@ -105,9 +124,9 @@ class WikiP2D(ModelBase):
       outputs = self.sess.run(output_feed, input_feed)
       #loss, positives, negatives = outputs
       positives, negatives = outputs
-      _scores = self.summarize_results(raw_batch, positives, negatives)
-      _ranks = [[evaluation.get_rank(scores_by_pt) for scores_by_pt in scores_by_art] for scores_by_art in _scores]
-      sys.stderr.write("%i\t%.3f" % (i, time.time() - t))
+      _scores, _ranks = self.graph.summarize_results(raw_batch, positives, negatives)
+
+      #sys.stderr.write("%i\t%.3f\n" % (i, time.time() - t))
       scores.append(_scores)
       ranks.append(_ranks)
       t = time.time()
@@ -133,34 +152,9 @@ class WikiP2D(ModelBase):
       self.summary_writer.add_summary(summary, self.epoch.eval())
     return scores, ranks, mrr, hits_10
 
-  def summarize_results(self, raw_batch, positives, negatives):
-    p_triples = raw_batch['p_triples']
-    n_triples = raw_batch['n_triples']
-    batch_size = len(p_triples)
-    if not n_triples:
-      n_triples = [[[] for _ in xrange(len(p_triples[b]))] for b in xrange(batch_size)]
-
-    scores = [] 
-    for b in xrange(batch_size): # per an article
-      scores_by_pt = []
-      if len(positives[b]) == 0:
-        continue
-      n_neg = int(len(negatives[b]) / len(positives[b]))
-      negatives_by_p = [negatives[b][i*n_neg:(i+1)*n_neg] for i in xrange(len(positives[b]))]
-
-
-      for p, ns, pt, nts in zip(positives[b], negatives_by_p, 
-                                 p_triples[b], n_triples[b]):
-        if p > 0.0: # Remove the results of padding triples.
-          _triples = [pt] + nts
-          _scores = np.insert(ns, 0, p)
-          scores_by_pt.append((_triples, _scores[:len(_triples)]))
-          #scores_by_pt.append(np.array([p] + list(ns)))
-      scores.append(scores_by_pt)
-    return scores #[batch_size, p]
-
   def get_loss_and_updates(self, losses, do_update):
     raise NotImplementedError()
+
 
 class MeanLoss(WikiP2D):
   def get_loss_and_updates(self, losses, do_update):

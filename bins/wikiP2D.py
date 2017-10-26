@@ -10,16 +10,17 @@ from core.utils import common
 #import core.models.wikiP2D as model
 import core.models.wikiP2D.mtl as model
 from core.dataset.wikiP2D import WikiP2DDataset, DemoBatch
+from core.dataset.coref import CoNLL2012CorefDataset
 
-tf.app.flags.DEFINE_string("source_data_dir", "dataset/wikiP2D/source", "")
-tf.app.flags.DEFINE_string("processed_data_dir", "dataset/wikiP2D/processed", "")
+#tf.app.flags.DEFINE_string("source_data_dir", "dataset/wikiP2D/source", "")
+#tf.app.flags.DEFINE_string("processed_data_dir", "dataset/wikiP2D/processed", "")
 tf.app.flags.DEFINE_string("model_type", "MeanLoss", "")
-tf.app.flags.DEFINE_string("dataset", "Q5O15000R300.micro.bin", "")
+tf.app.flags.DEFINE_string("w2p_dataset", "Q5O15000R300.micro.bin", "")
 
 ## Hyperparameters
 tf.app.flags.DEFINE_integer("max_epoch", 50, "")
 tf.app.flags.DEFINE_integer("batch_size", 128, "")
-tf.app.flags.DEFINE_integer("w_vocab_size", 30000, "")
+tf.app.flags.DEFINE_integer("w_vocab_size", 50000, "")
 tf.app.flags.DEFINE_integer("c_vocab_size", 1000, "")
 tf.app.flags.DEFINE_integer("hidden_size", 100, "")
 tf.app.flags.DEFINE_float("learning_rate", 1e-4, "Learning rate.")
@@ -34,13 +35,19 @@ tf.app.flags.DEFINE_integer("n_triples", 0, "If 0, all positive triples are used
 tf.app.flags.DEFINE_string("cell_type", "GRUCell", "Cell type")
 tf.app.flags.DEFINE_string("encoder_type", "BidirectionalRNNEncoder", "")
 tf.app.flags.DEFINE_string("c_encoder_type", "BidirectionalRNNEncoder", "")
-tf.app.flags.DEFINE_boolean("cbase", True,  "Whether to make the model character-based or not.")
+tf.app.flags.DEFINE_boolean("cbase", False,  "Whether to make the model character-based or not.")
 tf.app.flags.DEFINE_boolean("wbase", True,  "Whether to make the model word-based or not.")
+tf.app.flags.DEFINE_boolean("lowercase", True,  "")
 
 tf.app.flags.DEFINE_boolean("state_is_tuple", True,  "")
 tf.app.flags.DEFINE_integer("max_a_sent_length", 40, "")
 tf.app.flags.DEFINE_integer("max_d_sent_length", 40, "")
 tf.app.flags.DEFINE_integer("max_a_word_length", 0, "")
+
+tf.app.flags.DEFINE_boolean("graph_task", True,  "Whether to run graph link predction task.")
+tf.app.flags.DEFINE_boolean("desc_task", False,  "Whether to run description generation task.")
+tf.app.flags.DEFINE_boolean("coref_task", False,  "Whether to run description coreference resolution task.")
+
 
 #tf.app.flags.DEFINE_boolean("share_embedding", False, "Whether to share syn/rel embedding between subjects and objects")
 
@@ -50,9 +57,20 @@ class GraphManager(BaseManager):
     super(GraphManager, self).__init__(FLAGS, sess)
     self.model_type = getattr(model, FLAGS.model_type)
     self.FLAGS = FLAGS
-    self.dataset = WikiP2DDataset(
-      FLAGS.source_data_dir, FLAGS.processed_data_dir, 
-      FLAGS.dataset, FLAGS.w_vocab_size, FLAGS.c_vocab_size)
+    self.w2p_dataset = WikiP2DDataset(
+      FLAGS.w_vocab_size, FLAGS.c_vocab_size,
+      filename=FLAGS.w2p_dataset,
+      lowercase=FLAGS.lowercase)
+    self.w_vocab = self.w2p_dataset.w_vocab
+    self.c_vocab = self.w2p_dataset.c_vocab
+    self.r_vocab = self.w2p_dataset.r_vocab
+    self.o_vocab = self.w2p_dataset.o_vocab
+
+    self.coref_dataset = CoNLL2012CorefDataset(
+      self.w_vocab, self.c_vocab
+    )
+    self.speaker_vocab = self.coref_dataset.speaker_vocab
+    self.genre_vocab = self.coref_dataset.genre_vocab
 
   @common.timewatch()
   def create_model(self, FLAGS, mode, reuse=False, write_summary=True):
@@ -63,12 +81,12 @@ class GraphManager(BaseManager):
     else:
       raise ValueError("The argument \'mode\' must be \'train\', \'valid\', or \'test\'.")
     summary_path = os.path.join(self.SUMMARIES_PATH, mode) if write_summary else None
-
     with tf.variable_scope("Model", reuse=reuse):
       m = self.model_type(
         self.sess, FLAGS, do_update,
-        self.dataset.w_vocab, self.dataset.c_vocab,
-        self.dataset.o_vocab, self.dataset.r_vocab,
+        self.w_vocab, self.c_vocab, # for encoder
+        self.o_vocab, self.r_vocab, # for graph
+        self.speaker_vocab, self.genre_vocab, # for coref
         summary_path=summary_path)
 
     ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
@@ -88,13 +106,13 @@ class GraphManager(BaseManager):
   @common.timewatch(logger)
   def train(self):
     FLAGS = self.FLAGS
-    train_data = self.dataset.train
-    valid_data = self.dataset.valid
-    test_data = self.dataset.test
+    train_data = self.w2p_dataset.train
+    valid_data = self.w2p_dataset.valid
+    test_data = self.w2p_dataset.test
 
     with tf.name_scope('train'):
       mtrain = self.create_model(FLAGS, 'train', reuse=False)
-
+    exit(1)
     with tf.name_scope('valid'):
       FLAGS.in_keep_prob = 1.0
       FLAGS.out_keep_prob = 1.0
@@ -132,41 +150,45 @@ class GraphManager(BaseManager):
       mtrain.add_epoch()
 
   @common.timewatch()
-  def print_results(self, data, scores, ranks, output_file=None):
+  def print_g_results(self, batches, scores, ranks, output_file=None):
     FLAGS = self.FLAGS
-    batches = data.get_batch(FLAGS.batch_size, 
-                             max_sentence_length=FLAGS.max_a_sent_length, 
-                             n_neg_triples=None, n_pos_triples=None)
+
     cnt = 0
     if output_file:
       sys.stdout = output_file
+
     for batch, score_by_batch, ranks_by_batch in zip(batches, scores, ranks): # per a batch
-      for batch_by_art, score_by_art, rank_by_art in zip(self.dataset.batch2text(batch), score_by_batch, ranks_by_batch): # per an article
-        wa, ca, pts = batch_by_art
-        print '<%d>' % cnt
-        print  "Article(word):\t%s" % wa
-        print  "Article(char):\t%s" % ca
-        print  "Triple, Score, Rank:"
+      for batch_by_art, score_by_art, rank_by_art in zip(self.w2p_dataset.batch2text(batch), score_by_batch, ranks_by_batch): # per an article
+        ent_name, wa, ca, pts = batch_by_art
+        print common.colored('<%d> : %s' % (cnt, ent_name), 'bold')
+        #print common.colored("Article(word):", 'bold')
+        #print "\n".join(wa) + '\n'
+        print common.colored("Article(char):", 'bold')
+        print "\n".join(ca) + '\n'
+        print common.colored("Triple, Score, Rank:", 'bold')
         for (r, o), scores, rank in zip(pts, score_by_art, rank_by_art): # per a positive triple
           s = scores[0] # scores = [pos, neg_0, neg_1, ...]
           N = 5
           pos_rank, sorted_idx = rank
-          pos_id = self.dataset.o_vocab.name2id(o)
-          idx2id = [pos_id] + [x for x in xrange(self.dataset.o_vocab.size) if x != pos_id] # pos_objectを先頭に持ってきているのでidxを並び替え
 
-          top_n_scores = [x for x in sorted_idx[:N]]
-          top_n = [self.dataset.o_vocab.id2name(idx2id[x]) for x in sorted_idx[:N]]
-          top_n = ", ".join(["%s:%.4f" % (x, score)for x, score in zip(sorted_idx[:N], top_n_scores[:N])])
+          pos_id = self.o_vocab.name2id(o)
+          idx2id = [pos_id] + [x for x in xrange(self.o_vocab.size) if x != pos_id] # pos_objectを先頭に持ってきているのでidxを並び替え
+
+          top_n_scores = [scores[idx] for idx in sorted_idx[:N]]
+          top_n_objs = [self.o_vocab.id2name(idx2id[x]) 
+                        for x in sorted_idx[:N]]
+          top_n = ", ".join(["%s:%.3f" % (x, score) for x, score in 
+                             zip(top_n_objs, top_n_scores)])
           print "(%s, %s) - %f, %d, [Top-%d Objects]: %s" % (r, o, s, pos_rank, N, top_n) 
         print
         cnt += 1 
     sys.stdout = sys.__stdout__
 
   @common.timewatch(logger)
-  def test(self, test_data=None, mtest=None):
+  def g_test(self, test_data=None, mtest=None):
     FLAGS = self.FLAGS
     if not test_data:
-      test_data = self.dataset.test
+      test_data = self.w2p_dataset.test
 
     with tf.name_scope('test'):
       if not mtest:
@@ -182,7 +204,7 @@ class GraphManager(BaseManager):
 
     output_path = self.TESTS_PATH + '/g_test.ep%02d' % mtest.epoch.eval()
     with open(output_path, 'w') as f:
-      self.print_results(test_data, scores, ranks, output_file=f)
+      self.print_g_results(batches, scores, ranks, output_file=None)
       #self.print_results(test_data, results, ranks, output_file=f)
    
     logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mrr, hits_10))
@@ -201,25 +223,25 @@ class GraphManager(BaseManager):
 
     def get_result(article, link_span):
       article = " ".join(parser(article))
-      w_article = self.dataset.w_vocab.sent2ids(article)
-      c_article =  self.dataset.c_vocab.sent2ids(article)
+      w_article = self.w_vocab.sent2ids(article)
+      c_article =  self.c_vocab.sent2ids(article)
       p_triples = [(0, i) for i in xrange(10)]
       batch = {
         'w_articles': [w_article],
         'c_articles': [c_article],
         'link_spans': [link_span],
-        'p_triples': [p_triples], #self.dataset.get_all_triples(),
+        'p_triples': [p_triples], #self.w2p_dataset.get_all_triples(),
         'n_triples': None
       }
       demo_data = DemoBatch(batch)
       results = mtest.test(demo_data, 1)[0][0]
       results = common.flatten(results)
       def id2text(r, o):
-        rid = self.dataset.r_vocab.id2token(r)
-        rname = self.dataset.r_vocab.id2name(r)
+        rid = self.r_vocab.id2token(r)
+        rname = self.r_vocab.id2name(r)
         rr = "%s(%s)" % (rid, rname)
-        oid = self.dataset.o_vocab.id2token(o)
-        oname = self.dataset.o_vocab.id2name(o)
+        oid = self.o_vocab.id2token(o)
+        oname = self.o_vocab.id2name(o)
         oo = "%s (%s)" % (oid, oname)
         return (rr, oo)
       return [(id2text(r, o), score) for (r, o), score in results]
@@ -261,8 +283,8 @@ def main(_):
     if FLAGS.mode == "train":
       manager.save_config()
       manager.train()
-    elif FLAGS.mode == "test":
-      manager.test()
+    elif FLAGS.mode == "g_test":
+      manager.g_test()
     elif FLAGS.mode == "demo":
       manager.demo()
     else:

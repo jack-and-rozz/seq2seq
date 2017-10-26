@@ -7,9 +7,6 @@ def get_rank(scores):
   '''
   r : a list of link connection probabilities where a correct one is inserted at the beginning of the corresponding candidates.
   '''
-  # ranks = sorted([(idx, p) for idx, p in enumerate(scores)], 
-  #                key=lambda x: -x[1])
-  # return [rank for rank, (idx, _) in enumerate(ranks) if idx == 0][0] + 1
   sorted_idx = np.argsort(scores)[::-1]
   pos_rank = np.where(sorted_idx == 0)[0][0] + 1
   return pos_rank, sorted_idx
