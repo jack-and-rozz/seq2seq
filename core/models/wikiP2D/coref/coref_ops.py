@@ -1,7 +1,8 @@
 import tensorflow as tf
 from tensorflow.python import pywrap_tensorflow
 
-coref_op_library = tf.load_op_library("./coref_kernels.so")
+kernel_path = "./core/models/wikiP2D/coref/coref_kernels.so"
+coref_op_library = tf.load_op_library(kernel_path)
 
 spans = coref_op_library.spans
 tf.NotDifferentiable("Spans")

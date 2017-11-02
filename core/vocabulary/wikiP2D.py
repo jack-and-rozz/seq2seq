@@ -44,7 +44,7 @@ def char_tokenizer(special_words=set([_PAD, _BOS, _UNK, _EOS]),
 class WikiP2DVocabulary(VocabularyBase):
   def __init__(self, sentences, vocab_path, vocab_size,
                cbase=False, lowercase=False, special_words=None,
-               normalize_digits=False):
+               normalize_digits=False, add_bos=False, add_eos=False):
     if cbase:
       self.tokenizer = char_tokenizer(special_words=special_words, 
                                       lowercase=lowercase,
@@ -56,6 +56,10 @@ class WikiP2DVocabulary(VocabularyBase):
     self.cbase = cbase
     self.vocab, self.rev_vocab = self.init_vocab(sentences, vocab_path, vocab_size)
     self.size = len(self.vocab)
+    self.start_offset = [BOS_ID] if add_bos else []
+    self.end_offset = [EOS_ID] if add_eos else []
+    self.n_start_offset = len(self.start_offset)
+    self.n_end_offset = len(self.end_offset)
 
     # Number of additonal tokens (e.g. EOS) when articles are padded.
     # self.n_additional_paddings = 1
@@ -133,9 +137,9 @@ class WikiP2DVocabulary(VocabularyBase):
 
     def wsent_padding(sentences, max_s_length):
       def w_pad(sent):
-        padded_s = [BOS_ID] + sent[:max_s_length] + [EOS_ID]
+        padded_s = self.start_offset + sent[:max_s_length] + self.end_offset
         size = len(padded_s)
-        padded_s += [PAD_ID] * (max_s_length+2 - size)
+        padded_s += [PAD_ID] * (max_s_length + self.n_start_offset + self.n_end_offset - size)
         return padded_s, size
       res = [w_pad(s) for s in sentences]
       return map(list, zip(*res))
@@ -149,12 +153,14 @@ class WikiP2DVocabulary(VocabularyBase):
       def s_pad(s):
         s = s[:max_s_length]
         padded_s, word_lengthes = map(list, zip(*[c_pad(w) for w in s]))
-        padded_s.insert(0, [BOS_ID] + [PAD_ID] * (max_w_length-1))
-        padded_s.append([EOS_ID] + [PAD_ID] * (max_w_length-1))
+        if self.start_offset:
+          padded_s.insert(0, self.start_offset + [PAD_ID] * (max_w_length-1))
+          word_lengthes.insert(0, 1)
+        if self.end_offset:
+          padded_s.append(self.end_offset + [PAD_ID] * (max_w_length-1))
+          word_lengthes.extend([1]+[0] * (max_s_length + self.n_start_offset + self.n_end_offset - sentence_length))
         sentence_length = len(padded_s)
-        padded_s += [[PAD_ID] * max_w_length] * (max_s_length+2 - sentence_length)
-        word_lengthes.insert(0, 1)
-        word_lengthes.extend([1]+[0] * (max_s_length+2 - sentence_length))
+        padded_s += [[PAD_ID] * max_w_length] * (max_s_length + self.n_start_offset + self.n_end_offset - sentence_length)
         return padded_s, sentence_length, word_lengthes
       res = [s_pad(s) for s in sentences]
       return map(list, zip(*res))
