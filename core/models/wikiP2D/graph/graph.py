@@ -42,6 +42,7 @@ class GraphLinkPrediction(ModelBase):
   def __init__(self, sess, config, encoder, o_vocab, r_vocab,
                activation=tf.nn.tanh):
     self.name = 'graph'
+    self.dataset = 'wikiP2D'
     self.sess = sess
     self.encoder = encoder
     self.activation = activation
@@ -188,7 +189,7 @@ class GraphLinkPrediction(ModelBase):
 
     input_feed[self.entity_indices] = np.array(entity_indices)
     entity_indices, link_spans = common.flatten_with_idx(batch['link_spans'])
-    n_start_offset = self.encoder.w_vocab.n_start_offset
+    start_offset = self.encoder.w_vocab.n_start_offset
     link_spans = [(s+start_offset, e+start_offset) for (s, e) in link_spans] # Shifted back one position by BOS.
     input_feed[self.link_spans] = np.array(link_spans)
 

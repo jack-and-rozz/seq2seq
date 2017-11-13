@@ -513,9 +513,13 @@ def get_parser():
     return paragraph
   return _parse
 
+
 ###################################
 ##        Evaluation
 ###################################
+def maybe_divide(x, y):
+  return 0 if y == 0 else x / float(y)
+
 class RetrievalEvaluator(object):
   def __init__(self):
     self._num_correct = 0

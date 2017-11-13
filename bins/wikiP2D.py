@@ -11,19 +11,15 @@ from core.utils import common
 import core.models.wikiP2D.mtl as model
 from core.dataset.wikiP2D import WikiP2DDataset, DemoBatch
 from core.dataset.coref import CoNLL2012CorefDataset
+from core.vocabulary.base import VocabularyWithEmbedding
 
-#tf.app.flags.DEFINE_string("source_data_dir", "dataset/wikiP2D/source", "")
-#tf.app.flags.DEFINE_string("processed_data_dir", "dataset/wikiP2D/processed", "")
+
 tf.app.flags.DEFINE_string("model_type", "MeanLoss", "")
 tf.app.flags.DEFINE_string("w2p_dataset", "Q5O15000R300.micro.bin", "")
 
 ## Hyperparameters
 tf.app.flags.DEFINE_integer("max_epoch", 50, "")
 tf.app.flags.DEFINE_integer("batch_size", 128, "")
-tf.app.flags.DEFINE_integer("w_vocab_size", 50000, "")
-tf.app.flags.DEFINE_integer("c_vocab_size", 1000, "")
-tf.app.flags.DEFINE_integer("w_embedding_size", 300, "")
-tf.app.flags.DEFINE_integer("c_embedding_size", 8, "")
 tf.app.flags.DEFINE_integer("hidden_size", 100, "")
 tf.app.flags.DEFINE_float("learning_rate", 1e-4, "Learning rate.")
 tf.app.flags.DEFINE_float("in_keep_prob", 1.0, "Dropout rate.")
@@ -32,18 +28,25 @@ tf.app.flags.DEFINE_integer("num_layers", 1, "")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
                           "Clip gradients to this norm.")
 tf.app.flags.DEFINE_string("cell_type", "GRUCell", "Cell type")
+tf.app.flags.DEFINE_boolean("state_is_tuple", True,  "")
 #tf.app.flags.DEFINE_string("encoder_type", "BidirectionalRNNEncoder", "")
 #tf.app.flags.DEFINE_string("c_encoder_type", "BidirectionalRNNEncoder", "")
+
+tf.app.flags.DEFINE_boolean("graph_task", False,  "Whether to run graph link predction task.")
+tf.app.flags.DEFINE_boolean("desc_task", False,  "Whether to run description generation task.")
+tf.app.flags.DEFINE_boolean("coref_task", True,  "Whether to run description coreference resolution task.")
+
 
 ## Text processing methods
 tf.app.flags.DEFINE_boolean("cbase", True,  "Whether to make the model character-based or not.")
 tf.app.flags.DEFINE_boolean("wbase", True,  "Whether to make the model word-based or not.")
+tf.app.flags.DEFINE_integer("w_vocab_size", 50000, "")
+tf.app.flags.DEFINE_integer("c_vocab_size", 1000, "")
+tf.app.flags.DEFINE_integer("w_embedding_size", 300, "This parameter is ignored when using pretrained embeddings.")
+tf.app.flags.DEFINE_integer("c_embedding_size", 8, "")
 tf.app.flags.DEFINE_boolean("lowercase", True,  "")
-
-tf.app.flags.DEFINE_boolean("state_is_tuple", True,  "")
-tf.app.flags.DEFINE_boolean("graph_task", True,  "Whether to run graph link predction task.")
-tf.app.flags.DEFINE_boolean("desc_task", False,  "Whether to run description generation task.")
-tf.app.flags.DEFINE_boolean("coref_task", True,  "Whether to run description coreference resolution task.")
+tf.app.flags.DEFINE_boolean("use_pretrained_emb", True,  "")
+tf.app.flags.DEFINE_string("embeddings", "glove.840B.300d.txt.filtered,turian.50d.txt",  "")
 
 
 ## Coref
@@ -63,8 +66,6 @@ tf.app.flags.DEFINE_integer("n_triples", 0, "If 0, all positive triples are used
 ##Desc
 tf.app.flags.DEFINE_integer("max_d_sent_length", 40, "")
 
-
-
 #tf.app.flags.DEFINE_boolean("share_embedding", False, "Whether to share syn/rel embedding between subjects and objects")
 
 class MTLManager(BaseManager):
@@ -73,6 +74,14 @@ class MTLManager(BaseManager):
     super(MTLManager, self).__init__(FLAGS, sess)
     self.model_type = getattr(model, FLAGS.model_type)
     self.FLAGS = FLAGS
+    if FLAGS.use_pretrained_emb:
+      emb_files = FLAGS.embeddings.split(',')
+      self.w_vocab = VocabularyWithEmbedding(emb_files)
+      print self.w_vocab
+      exit(1)
+    else:
+      self.w_vocab = None
+
     self.w2p_dataset = WikiP2DDataset(
       FLAGS.w_vocab_size, FLAGS.c_vocab_size,
       filename=FLAGS.w2p_dataset,
@@ -87,6 +96,32 @@ class MTLManager(BaseManager):
     )
     self.speaker_vocab = self.coref_dataset.speaker_vocab
     self.genre_vocab = self.coref_dataset.genre_vocab
+
+  def get_batch(self, batch_type):
+    batches = {}
+    FLAGS = self.FLAGS
+    if batch_type == 'train':
+      do_shuffle = True
+      batches['wikiP2D'] = self.w2p_dataset.train.get_batch(
+        FLAGS.batch_size, do_shuffle=do_shuffle,
+        min_sentence_length=None, max_sentence_length=FLAGS.max_a_sent_length,
+      n_pos_triples=FLAGS.n_triples)
+      batches['coref'] = self.coref_dataset.train.get_batch(1, do_shuffle=do_shuffle)
+    elif batch_type == 'valid':
+      do_shuffle = False
+      batches['wikiP2D'] = self.w2p_dataset.valid.get_batch(
+        FLAGS.batch_size, do_shuffle=do_shuffle,
+        min_sentence_length=None, max_sentence_length=FLAGS.max_a_sent_length,
+        n_pos_triples=FLAGS.n_triples)
+      batches['coref'] = self.coref_dataset.valid.get_batch(1, do_shuffle=do_shuffle)
+    elif batch_type == 'test':
+      do_shuffle = False
+      batches['wikiP2D'] = self.w2p_dataset.test.get_batch(
+        FLAGS.batch_size, do_shuffle=do_shuffle,
+        min_sentence_length=None, max_sentence_length=None,
+        n_pos_triples=FLAGS.n_triples)
+      batches['coref'] = self.coref_dataset.test.get_batch(1, do_shuffle=do_shuffle)
+    return batches
 
   @common.timewatch()
   def create_model(self, FLAGS, mode, reuse=False, write_summary=True):
@@ -129,30 +164,18 @@ class MTLManager(BaseManager):
     FLAGS.in_keep_prob = 1.0
     FLAGS.out_keep_prob = 1.0
     mvalid = self.create_model(FLAGS, 'valid', reuse=True)
-    return
+
     if mtrain.epoch.eval() == 0:
       logger.info("Dataset stats (WikiP2D)")
       logger.info("(train) articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.train.size))
       logger.info("(valid) articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.valid.size))
       logger.info("(test)  articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.test.size))
     for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
-      batches = {}
-      batches['wikiP2D'] = self.w2p_dataset.train.get_batch(
-        FLAGS.batch_size, do_shuffle=True,
-        min_sentence_length=None, max_sentence_length=FLAGS.max_a_sent_length,
-        n_pos_triples=FLAGS.n_triples)
-      batches['coref'] = self.coref_dataset.train.get_batch(1, do_shuffle=True)
-
+      batches = self.get_batch('train')
       epoch_time, step_time, train_loss = mtrain.train_or_valid(batches)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, train_loss))
 
-
-      batches = {}
-      batches['wikiP2D'] = self.w2p_dataset.valid.get_batch(
-        FLAGS.batch_size, do_shuffle=True,
-        min_sentence_length=None, max_sentence_length=FLAGS.max_a_sent_length,
-        n_pos_triples=FLAGS.n_triples)
-      batches['coref'] = self.coref_dataset.valid.get_batch(1, do_shuffle=True)
+      batches = self.get_batch('valid')
       epoch_time, step_time, valid_loss = mvalid.train_or_valid(batches)
 
       logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, valid_loss))
@@ -168,46 +191,37 @@ class MTLManager(BaseManager):
   def c_test(self, mtest=None):
     FLAGS = self.FLAGS
 
-    with tf.name_scope('test'):
-      if not mtest:
-        FLAGS.in_keep_prob = 1.0
-        FLAGS.out_keep_prob = 1.0
-        mtest= self.create_model(FLAGS, 'test', reuse=False)
-      batches['coref'] = self.coref_dataset.test.get_batch(1, do_shuffle=False)
-
-      summary, res = mtest.graph.test(batches)
-    #   scores, ranks, mrr, hits_10 = res
-    #   mtest.summary_writer.add_summary(summary, mtest.epoch.eval())
-
-    # output_path = self.TESTS_PATH + '/g_test.ep%02d' % mtest.epoch.eval()
-    # with open(output_path, 'w') as f:
-    #   mtest.graph.print_results(batches, scores, ranks, output_file=None)
-
-    # logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mrr, hits_10))
+    #with tf.name_scope('test'):
+    if not mtest:
+      FLAGS.in_keep_prob = 1.0
+      FLAGS.out_keep_prob = 1.0
+      mtest = self.create_model(FLAGS, 'test', reuse=False)
+    batches = self.get_batch('test')[mtest.coref.dataset]
+    #conll_eval_path = 'dataset/coref/source/test.english.dev.english.v4_auto_conll'
+    conll_eval_path = 'dataset/coref/source/test.english.v4_gold_conll'
+    summary, res = mtest.coref.test(batches, conll_eval_path)
 
   @common.timewatch(logger)
   def g_test(self, mtest=None):
     test_data = self.w2p_dataset.test
 
-    with tf.name_scope('test'):
-      if not mtest:
-        FLAGS.in_keep_prob = 1.0
-        FLAGS.out_keep_prob = 1.0
-        mtest= self.create_model(FLAGS, 'test', reuse=False)
-      batches = test_data.get_batch(FLAGS.batch_size, 
-                                    max_sentence_length=FLAGS.max_a_sent_length, 
-                                    n_neg_triples=None, n_pos_triples=None)
+    #with tf.name_scope('test'):
+    if not mtest:
+      FLAGS.in_keep_prob = 1.0
+      FLAGS.out_keep_prob = 1.0
+      mtest= self.create_model(FLAGS, 'test', reuse=False)
 
-      summary, res = mtest.graph.test(batches)
-      scores, ranks, mrr, hits_10 = res
-      mtest.summary_writer.add_summary(summary, mtest.epoch.eval())
+    batches = self.get_batch('test')[mtest.dataset]
+    summary, res = mtest.graph.test(batches)
+    scores, ranks, mrr, hits_10 = res
+    mtest.summary_writer.add_summary(summary, mtest.epoch.eval())
 
     output_path = self.TESTS_PATH + '/g_test.ep%02d' % mtest.epoch.eval()
     with open(output_path, 'w') as f:
-      mtest.graph.print_results(batches, scores, ranks, output_file=None)
+      #mtest.graph.print_results(batches, scores, ranks, output_file=None)
+      mtest.graph.print_results(batches, scores, ranks, output_file=f)
 
     logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mrr, hits_10))
-
 
   def demo(self):
     with tf.name_scope('demo'):

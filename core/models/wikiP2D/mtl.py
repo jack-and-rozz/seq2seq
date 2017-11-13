@@ -1,6 +1,7 @@
 # coding: utf-8 
 import math, time, sys
 import tensorflow as tf
+from orderedset import OrderedSet
 from core.utils import common, evaluation, tf_utils
 from core.models.base import ModelBase
 #import core.models.graph as graph
@@ -77,8 +78,15 @@ class WikiP2D(ModelBase):
     loss = np.array([0.0] * n_losses)
     output_feed = self.output_feed['train']
 
-    for i, (w2p, coref) in enumerate(zip(batches['wikiP2D'], batches['coref'])):
-      raw_batch = {'coref': coref, 'desc':w2p, 'graph': w2p}
+    # Automatically associate the batch that is necessary for each task.
+    dataset_names = list(OrderedSet([t.dataset for t in self.tasks]))
+    datasets = OrderedSet([batches[d] for d in dataset_names]) 
+
+    for i, data in enumerate(zip(*datasets)):
+      raw_batch = {t.name:data[dataset_names.index(t.dataset)] 
+                   for t in self.tasks}
+    #for i, (w2p, coref) in enumerate(zip(batches['wikiP2D'], batches['coref'])):
+    #  raw_batch = {'coref': coref, 'desc':w2p, 'graph': w2p}
       input_feed = self.get_input_feed(raw_batch)
       try:
         outputs = self.sess.run(output_feed, input_feed)

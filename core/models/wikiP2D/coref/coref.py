@@ -1,4 +1,5 @@
 # coding: utf-8 
+import operator
 import math, time, sys
 import tensorflow as tf
 from core.utils import common, tf_utils
@@ -11,6 +12,7 @@ class CoreferenceResolution(ModelBase):
   def __init__(self, sess, config, encoder, speaker_vocab, genre_vocab,
                activation=tf.nn.tanh):
     self.name = 'coref'
+    self.dataset = 'coref'
     self.sess = sess
     self.encoder = encoder
     self.activation = activation
@@ -58,9 +60,7 @@ class CoreferenceResolution(ModelBase):
 
     self.outputs = [self.predictions]
 
-
   def get_predictions_and_loss(self, text_emb, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids):
-    
     with tf.name_scope('ReshapeEncoderOutputs'):
       num_sentences = tf.shape(text_emb)[0]
       max_sentence_length = tf.shape(text_emb)[1]
@@ -224,11 +224,11 @@ class CoreferenceResolution(ModelBase):
 
   def get_input_feed(self, batch):
     input_feed = {}
-    clusters = batch["clusters"][0]
-    c_sentences = batch['c_sentences'][0]
-    w_sentences = batch['w_sentences'][0]
-    speaker_ids = common.flatten(batch['speakers'][0])
-    genre = batch['doc_key'][0]
+    clusters = batch["clusters"]
+    c_sentences = batch['c_sentences']
+    w_sentences = batch['w_sentences']
+    speaker_ids = common.flatten(batch['speakers'])
+    genre = batch["genre"]
     if self.encoder.cbase:
       c_sentences, sentence_length, word_length = self.encoder.c_vocab.padding(c_sentences)
       input_feed[self.c_sentences] = np.array(c_sentences)
@@ -256,9 +256,14 @@ class CoreferenceResolution(ModelBase):
 
     return input_feed
 
-  def evaluate(self, batches, official_stdout=False):
-    #self.load_eval_data()
+  ##############################################
+  ##           Evaluation
+  ##############################################
 
+  def test(self, batches, conll_eval_path, official_stdout=False):
+    return self.evaluate(batches, conll_eval_path, official_stdout)
+
+  def evaluate(self, batches, conll_eval_path, official_stdout=False):
     def _k_to_tag(k):
       if k == -3:
         return "oracle"
@@ -274,14 +279,16 @@ class CoreferenceResolution(ModelBase):
 
     coref_predictions = {}
     coref_evaluator = metrics.CorefEvaluator()
-
-    #for example_num, (tensorized_example, example) in enumerate(self.eval_data):
-    #  _, _, _, _, _, _, gold_starts, gold_ends, _ = tensorized_example
+    #n_data = '?'
+    n_data = str(len(list(batches)))
     for example_num, example in enumerate(batches):
-      print example
-      exit(1)
-      feed_dict = {i:t for i,t in zip(self.input_tensors, tensorized_example)}
-      candidate_starts, candidate_ends, mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores = session.run(self.predictions, feed_dict=feed_dict)
+      feed_dict = self.get_input_feed(example)
+      gold_starts = feed_dict[self.gold_starts]
+      gold_ends = feed_dict[self.gold_ends]
+      #  _, _, _, _, _, _, gold_starts, gold_ends, _ = tensorized_example
+      #feed_dict = {i:t for i,t in zip(self.input_tensors, tensorized_example)}
+      
+      candidate_starts, candidate_ends, mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores = self.sess.run(self.predictions, feed_dict=feed_dict)
 
       self.evaluate_mentions(candidate_starts, candidate_ends, mention_starts, mention_ends, mention_scores, gold_starts, gold_ends, example, mention_evaluators)
       predicted_antecedents = self.get_predicted_antecedents(antecedents, antecedent_scores)
@@ -289,7 +296,8 @@ class CoreferenceResolution(ModelBase):
       coref_predictions[example["doc_key"]] = self.evaluate_coref(mention_starts, mention_ends, predicted_antecedents, example["clusters"], coref_evaluator)
 
       if example_num % 10 == 0:
-        print "Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data))
+        #print "Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data))
+        print "Evaluated {}/{} examples.".format(example_num + 1, n_data)
 
     summary_dict = {}
     for k, evaluator in sorted(mention_evaluators.items(), key=operator.itemgetter(0)):
@@ -300,7 +308,7 @@ class CoreferenceResolution(ModelBase):
         summary_dict[t] = v
       print ", ".join(results_to_print)
 
-    conll_results = conll.evaluate_conll(self.config["conll_eval_path"], coref_predictions, official_stdout)
+    conll_results = conll.evaluate_conll(conll_eval_path, coref_predictions, official_stdout)
     average_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
     summary_dict["Average F1 (conll)"] = average_f1
     print "Average F1 (conll): {:.2f}%".format(average_f1)
@@ -316,7 +324,7 @@ class CoreferenceResolution(ModelBase):
     return tf_utils.make_summary(summary_dict), average_f1
 
   def evaluate_mentions(self, candidate_starts, candidate_ends, mention_starts, mention_ends, mention_scores, gold_starts, gold_ends, example, evaluators):
-    text_length = sum(len(s) for s in example["sentences"])
+    text_length = sum(len(s) for s in example["w_sentences"])
     gold_spans = set(zip(gold_starts, gold_ends))
 
     if len(candidate_starts) > 0:
@@ -346,3 +354,46 @@ class CoreferenceResolution(ModelBase):
         predicted_spans = set(zip(predicted_starts, predicted_ends))
       evaluator.update(gold_set=gold_spans, predicted_set=predicted_spans)
 
+  def get_predicted_antecedents(self, antecedents, antecedent_scores):
+    predicted_antecedents = []
+    for i, index in enumerate(np.argmax(antecedent_scores, axis=1) - 1):
+      if index < 0:
+        predicted_antecedents.append(-1)
+      else:
+        predicted_antecedents.append(antecedents[i, index])
+    return predicted_antecedents
+
+  def get_predicted_clusters(self, mention_starts, mention_ends, predicted_antecedents):
+    mention_to_predicted = {}
+    predicted_clusters = []
+    for i, predicted_index in enumerate(predicted_antecedents):
+      if predicted_index < 0:
+        continue
+      assert i > predicted_index
+      predicted_antecedent = (int(mention_starts[predicted_index]), int(mention_ends[predicted_index]))
+      if predicted_antecedent in mention_to_predicted:
+        predicted_cluster = mention_to_predicted[predicted_antecedent]
+      else:
+        predicted_cluster = len(predicted_clusters)
+        predicted_clusters.append([predicted_antecedent])
+        mention_to_predicted[predicted_antecedent] = predicted_cluster
+
+      mention = (int(mention_starts[i]), int(mention_ends[i]))
+      predicted_clusters[predicted_cluster].append(mention)
+      mention_to_predicted[mention] = predicted_cluster
+
+    predicted_clusters = [tuple(pc) for pc in predicted_clusters]
+    mention_to_predicted = { m:predicted_clusters[i] for m,i in mention_to_predicted.items() }
+
+    return predicted_clusters, mention_to_predicted
+
+  def evaluate_coref(self, mention_starts, mention_ends, predicted_antecedents, gold_clusters, evaluator):
+    gold_clusters = [tuple(tuple(m) for m in gc) for gc in gold_clusters]
+    mention_to_gold = {}
+    for gc in gold_clusters:
+      for mention in gc:
+        mention_to_gold[mention] = gc
+
+    predicted_clusters, mention_to_predicted = self.get_predicted_clusters(mention_starts, mention_ends, predicted_antecedents)
+    evaluator.update(predicted_clusters, gold_clusters, mention_to_predicted, mention_to_gold)
+    return predicted_clusters

@@ -54,6 +54,8 @@ class SentenceEncoder(ModelBase):
     self.word_encoder = word_encoder
     self.w_vocab = word_encoder.w_vocab
     self.c_vocab = word_encoder.c_vocab
+    self.w_embeddings = word_encoder.w_embeddings
+    self.c_embeddings = word_encoder.c_embeddings
     self.activation = activation
     self.shared_scope = shared_scope
     do_sharing = True if self.shared_scope else False

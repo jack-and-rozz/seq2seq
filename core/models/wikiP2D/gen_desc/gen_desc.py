@@ -20,22 +20,22 @@ class DescriptionGeneration(ModelBase):
     Args:
     """
     self.name = "desc"
+    self.dataset = 'wikiP2D'
     self.activation = activation
     self.encoder = encoder
     self.embeddings = encoder.w_embeddings
     self.w_vocab = w_vocab
 
-    batch_size = None
     self.max_sent_length = config.max_d_sent_length
 
     # BOS + sentence_length + EOS.
     self.descriptions = desc = tf.placeholder(
-      tf.int32, name='descriptions', shape=[batch_size, self.max_sent_length+2])
+      tf.int32, name='descriptions', shape=[None, self.max_sent_length+2])
     # BOS + sentence_length
     self.decoder_inputs = tf.stack(tf.unstack(desc, axis=1)[:-1], axis=1)
     self.targets = tf.stack(tf.unstack(desc, axis=1)[1:], axis=1)
     self.weights = tf.placeholder(tf.float32, name='weights',
-                                  shape=[batch_size, self.max_sent_length+1])
+                                  shape=[None, self.max_sent_length+1])
 
     ## Seq2Seq for description generation.
     with tf.variable_scope('Decoder') as scope:
@@ -46,7 +46,10 @@ class DescriptionGeneration(ModelBase):
         out_keep_prob=config.out_keep_prob,
         state_is_tuple=config.state_is_tuple)
       self.decoder = RNNDecoder(self.cell, self.encoder.w_embeddings, scope=scope)
-
+      ########## DEBUG
+      self.loss = tf.constant(1.0)
+      self.outputs = tf.constant(1.0)
+    return
     with tf.variable_scope('Seq2Seq') as scope:
       self.projection, loss_func = projection_and_sampled_loss(
         self.embeddings.shape[0], self.cell.output_size, num_samples)
