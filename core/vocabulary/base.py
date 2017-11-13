@@ -49,14 +49,11 @@ class VocabularyBase(object):
   def save_vocab(self, vocab_with_freq, vocab_path):
     raise NotImplementedError
 
-  def id2token(self, _id):
-    if _id < 0 or _id > len(self.rev_vocab):
-      raise ValueError('Token ID must be between 0 and %d' % len(self.rev_vocab))
-    elif _id in set([PAD_ID, EOS_ID, BOS_ID]):
-      return ''
-    else:
-      return self.rev_vocab[_id]
+class WordVocabularyBase(VocabularyBase):
+  pass
 
+class CharVocabularyBase(VocabularyBase):
+  pass
 
 class VocabularyWithEmbedding(VocabularyBase):
   def __init__(self, emb_files, source_dir="dataset/embeddings"):
@@ -64,10 +61,10 @@ class VocabularyWithEmbedding(VocabularyBase):
     All pretrained embeddings must be under the source_dir.'
     '''
     embedding_path = [os.path.join(source_dir, f) for f in emb_files]
-    self.embeddings = [PretrainedEmbeddings(p) for p in embedding_path]
+    self.embeddings = [self.load(p) for p in embedding_path]
     for e in self.embeddings:
       print e
-  def to_tokens(self, ids)
+
   def load(self, embedding_path, embedding_format='txt'):
     '''
     Load pretrained vocabularies.

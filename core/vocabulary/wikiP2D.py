@@ -3,7 +3,7 @@ import os, time, re, sys
 from collections import defaultdict, OrderedDict, Counter
 import core.utils.common as common
 from core.vocabulary.base import ERROR_ID, PAD_ID, BOS_ID, EOS_ID, UNK_ID, _PAD, _BOS, _EOS, _UNK 
-from core.vocabulary.base import VocabularyBase
+from core.vocabulary.base import WordVocabularyBase, CharVocabularyBase
 
 _DIGIT_RE = re.compile(r"\d")
 
@@ -41,7 +41,8 @@ def char_tokenizer(special_words=set([_PAD, _BOS, _UNK, _EOS]),
     return chars
   return _tokenizer
 
-class WikiP2DVocabulary(VocabularyBase):
+
+class WikiP2DVocabulary(WordVocabularyBase):
   def __init__(self, sentences, vocab_path, vocab_size,
                cbase=False, lowercase=False, special_words=None,
                normalize_digits=False, add_bos=False, add_eos=False):
@@ -97,6 +98,14 @@ class WikiP2DVocabulary(VocabularyBase):
     with open(vocab_path, 'w') as f:
       f.write('\n'.join(["%s\t%d"% tuple(x) for x in vocab_with_freq]) + '\n')
 
+  def id2token(self, _id):
+    if _id < 0 or _id > len(self.rev_vocab):
+      raise ValueError('Token ID must be between 0 and %d' % len(self.rev_vocab))
+    elif _id in set([PAD_ID, EOS_ID, BOS_ID]):
+      return ''
+    else:
+      return self.rev_vocab[_id]
+
   def sent2ids(self, sentence):
     if type(sentence) == list:
       sentence = " ".join(sentence)
@@ -106,14 +115,6 @@ class WikiP2DVocabulary(VocabularyBase):
     else:
       res = [self.vocab.get(word, UNK_ID) for word in tokens]
     return res
-
-  def id2token(self, _id):
-    if _id < 0 or _id > len(self.rev_vocab):
-      raise ValueError('Token ID must be between 0 and %d' % len(self.rev_vocab))
-    elif _id in set([PAD_ID, EOS_ID, BOS_ID]):
-      return ''
-    else:
-      return self.rev_vocab[_id]
 
   def ids2tokens(self, ids, link_span=None):
     if self.cbase:
@@ -171,6 +172,7 @@ class WikiP2DVocabulary(VocabularyBase):
       return csent_padding(sentences, max_sentence_length, max_word_length)
     else:
       return wsent_padding(sentences, max_sentence_length)
+
 
 class WikiP2DRelVocabulary(WikiP2DVocabulary):
   def __init__(self, data, vocab_path, vocab_size=None):
