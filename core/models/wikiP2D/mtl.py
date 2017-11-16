@@ -73,11 +73,12 @@ class WikiP2D(ModelBase):
     return input_feed
 
   def train_or_valid(self, batches):
+    print self.tasks
+
     start_time = time.time()
     n_losses = len(self.tasks) + 1
     loss = np.array([0.0] * n_losses)
     output_feed = self.output_feed['train']
-
     # Automatically associate the batch that is necessary for each task.
     dataset_names = list(OrderedSet([t.dataset for t in self.tasks]))
     datasets = OrderedSet([batches[d] for d in dataset_names]) 
@@ -104,13 +105,19 @@ class WikiP2D(ModelBase):
     step_time = epoch_time / (i+1)
     loss /= (i+1)
 
-    if self.summary_writer and False:
-      input_feed = {
-        self.graph.summary_loss: loss[0]
-      }
-      summary_ops = tf.summary.merge([
-        tf.summary.scalar('loss', self.graph.summary_loss),
-      ])
+    assert len(self.tasks)+1 == len(loss)
+
+    if self.summary_writer:
+      input_feed = {t.summary_loss:l for t, l in zip(self.tasks, loss[1:])}
+      input_feed = {t.summary_loss:l for t, l in zip(self.tasks, loss[1:])}
+      summary_ops = tf.summary.merge([tf.summary.scalar(t.summary_loss.name, t.summary_loss) for t in self.tasks])
+      # input_feed = {
+      #   self.graph.summary_loss: loss[0]
+      # }
+      # summary_ops = tf.summary.merge([
+      #   tf.summary.scalar(self.graph.summary_loss.name, self.graph.summary_loss),
+      #   tf.summary.scalar('loss', self.graph.summary_loss),
+      # ])
       summary = self.sess.run(summary_ops, input_feed)
       self.summary_writer.add_summary(summary, self.epoch.eval())
     loss = " ".join(["%.3f" % l for l in loss])

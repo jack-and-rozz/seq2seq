@@ -103,13 +103,13 @@ class GraphLinkPrediction(ModelBase):
 
     with tf.name_scope("Summary"):
       self.summary_loss = tf.placeholder(tf.float32, shape=[],
-                                         name='summary_loss')
+                                         name='graph_loss')
       self.summary_mean_rank = tf.placeholder(tf.float32, shape=[],
-                                              name='summary_mean_rank')
+                                              name='graph_mean_rank')
       self.summary_mrr = tf.placeholder(tf.float32, shape=[],
-                                        name='summary_mrr')
+                                        name='graph_mrr')
       self.summary_hits_10 = tf.placeholder(tf.float32, shape=[],
-                                            name='summary_hits_10')
+                                            name='graph_hits_10')
 
   def inference(self, span_repls, triples, batch_indices):
     with tf.name_scope('inference'):

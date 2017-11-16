@@ -60,6 +60,11 @@ class CoreferenceResolution(ModelBase):
 
     self.outputs = [self.predictions]
 
+    with tf.name_scope("Summary"):
+      self.summary_loss = tf.placeholder(tf.float32, shape=[],
+                                         name='coref_loss')
+
+
   def get_predictions_and_loss(self, text_emb, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids):
     with tf.name_scope('ReshapeEncoderOutputs'):
       num_sentences = tf.shape(text_emb)[0]
