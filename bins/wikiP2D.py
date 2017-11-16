@@ -28,7 +28,6 @@ tf.app.flags.DEFINE_integer("num_layers", 1, "")
 tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
                           "Clip gradients to this norm.")
 tf.app.flags.DEFINE_string("cell_type", "GRUCell", "Cell type")
-tf.app.flags.DEFINE_boolean("state_is_tuple", True,  "")
 
 tf.app.flags.DEFINE_boolean("graph_task", False,  "Whether to run graph link predction task.")
 tf.app.flags.DEFINE_boolean("desc_task", False,  "Whether to run description generation task.")
@@ -232,19 +231,23 @@ class MTLManager(BaseManager):
         mtest = self.create_model(self.FLAGS, 'test')
         print "Found a new checkpoint: %s" % ckpt.model_checkpoint_path
         output_path = self.TESTS_PATH + '/c_test.ep%02d' % mtest.epoch.eval()
-        batches = self.get_batch('test')[mtest.coref.dataset]
-        #conll_eval_path = 'dataset/coref/source/test.english.dev.english.v4_auto_conll'
-        conll_eval_path = 'dataset/coref/source/test.english.v4_gold_conll'
+
+        #batches = self.get_batch('test')[mtest.coref.dataset]
+        #conll_eval_path = 'dataset/coref/source/test.english.v4_gold_conll'
+
+        batches = self.get_batch('valid')[mtest.coref.dataset]
+        conll_eval_path = 'dataset/coref/source/dev.english.v4_auto_conll'
         with open(output_path, 'w') as f:
           sys.stdout = f
           eval_summary, f1 = mtest.coref.test(batches, conll_eval_path)
-          sys.stdout = sys.__stdout__
 
           if f1 > max_f1:
             max_f1 = f1
             max_checkpoint_path = os.path.join(self.CHECKPOINTS_PATH, "model.cmax.ckpt")
             tf_utils.copy_checkpoint(tmp_checkpoint_path, max_checkpoint_path)
             print "Current max F1: {:.2f}".format(max_f1)
+          sys.stdout = sys.__stdout__
+
         self.summary_writer['test'].add_summary(eval_summary, mtest.global_step.eval())
         #print "Evaluation written to {} at step {}".format(self.CHECKPOINTS_PATH, global_step)
         print "Evaluation written to {} at epoch {}".format(self.CHECKPOINTS_PATH, mtest.global_step.eval())

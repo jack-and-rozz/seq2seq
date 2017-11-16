@@ -67,13 +67,11 @@ class SentenceEncoder(ModelBase):
                               num_layers=config.num_layers, 
                               in_keep_prob=config.in_keep_prob, 
                               out_keep_prob=config.out_keep_prob,
-                              state_is_tuple=config.state_is_tuple,
                               shared=do_sharing)
     self.cell_bw = setup_cell(config.cell_type, config.hidden_size, 
                               num_layers=config.num_layers, 
                               in_keep_prob=config.in_keep_prob, 
                               out_keep_prob=config.out_keep_prob,
-                              state_is_tuple=config.state_is_tuple,
                               shared=do_sharing)
     self.reuse = None # to reuse variables defined in encode()
 

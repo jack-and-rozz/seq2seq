@@ -266,9 +266,6 @@ class CoreferenceResolution(ModelBase):
   ##############################################
 
   def test(self, batches, conll_eval_path, official_stdout=False):
-    return self.evaluate(batches, conll_eval_path, official_stdout)
-
-  def evaluate(self, batches, conll_eval_path, official_stdout=False):
     def _k_to_tag(k):
       if k == -3:
         return "oracle"
