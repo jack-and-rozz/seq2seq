@@ -284,9 +284,6 @@ class CoreferenceResolution(ModelBase):
 
     coref_predictions = {}
     coref_evaluator = metrics.CorefEvaluator()
-    n_data = '?'
-    #n_data = str(len(list(batches)))
-    #print n_data
     for example_num, example in enumerate(batches):
       feed_dict = self.get_input_feed(example)
       gold_starts = feed_dict[self.gold_starts]
@@ -298,8 +295,8 @@ class CoreferenceResolution(ModelBase):
       coref_predictions[example["doc_key"]] = self.evaluate_coref(mention_starts, mention_ends, predicted_antecedents, example["clusters"], coref_evaluator)
       if example_num % 10 == 0:
         #print "Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data))
-        print "Evaluated {} examples.".format(example_num + 1)
-
+        #print "Evaluated {} examples.".format(example_num + 1)
+        pass
     summary_dict = {}
     for k, evaluator in sorted(mention_evaluators.items(), key=operator.itemgetter(0)):
       tags = ["{} @ {}".format(t, _k_to_tag(k)) for t in ("R", "P", "F")]

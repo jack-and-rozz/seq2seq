@@ -4,9 +4,9 @@ import socket
 import tensorflow as tf
 from pprint import pprint
 import numpy as np
-
+import collections
 from base import BaseManager, logger
-from core.utils import common
+from core.utils import common, tf_utils
 #import core.models.wikiP2D as model
 import core.models.wikiP2D.mtl as model
 from core.dataset.wikiP2D import WikiP2DDataset, DemoBatch
@@ -44,7 +44,7 @@ tf.app.flags.DEFINE_integer("w_embedding_size", 300, "This parameter is ignored 
 tf.app.flags.DEFINE_integer("c_embedding_size", 8, "")
 tf.app.flags.DEFINE_boolean("lowercase", True,  "")
 tf.app.flags.DEFINE_boolean("use_pretrained_emb", True,  "")
-tf.app.flags.DEFINE_boolean("trainable_emb", True,  "")
+tf.app.flags.DEFINE_boolean("trainable_emb", False,  "Whether to train pretrained embeddings (if not pretrained, this parameter always becomes True)")
 tf.app.flags.DEFINE_string("embeddings", "glove.840B.300d.txt.filtered,turian.50d.txt",  "")
 
 ## Coref
@@ -72,9 +72,12 @@ tf.app.flags.DEFINE_integer("max_d_sent_length", 40, "")
 class MTLManager(BaseManager):
   @common.timewatch()
   def __init__(self, FLAGS, sess):
+    # If embeddings are not pretrained, make trainable True.
+    FLAGS.trainable_emb = FLAGS.trainable_emb or not FLAGS.use_pretrained_emb
     super(MTLManager, self).__init__(FLAGS, sess)
     self.model_type = getattr(model, FLAGS.model_type)
     self.FLAGS = FLAGS
+    self.reuse = None
 
     if FLAGS.use_pretrained_emb:
       emb_files = FLAGS.embeddings.split(',')
@@ -100,6 +103,11 @@ class MTLManager(BaseManager):
     )
     self.speaker_vocab = self.coref_dataset.speaker_vocab
     self.genre_vocab = self.coref_dataset.genre_vocab
+
+    # Defined after the computational graph is completely constracted.
+    # self.summary_writer = None
+    self.summary_writer = {'train': None, 'valid':None, 'test':None}
+    self.saver = None
 
   def get_batch(self, batch_type):
     batches = {}
@@ -128,7 +136,7 @@ class MTLManager(BaseManager):
     return batches
 
   @common.timewatch()
-  def create_model(self, FLAGS, mode, reuse=False, write_summary=True):
+  def create_model(self, FLAGS, mode, write_summary=True):
     if mode == 'train':
       config = FLAGS
       do_update = True
@@ -140,28 +148,34 @@ class MTLManager(BaseManager):
     else:
       raise ValueError("The argument \'mode\' must be \'train\', \'valid\', or \'test\'.")
     #summary_path = os.path.join(self.SUMMARIES_PATH, mode) if write_summary else None
-    summary_path = self.SUMMARIES_PATH  if write_summary else None
-    with tf.variable_scope("Model", reuse=reuse):
-      with tf.name_scope(mode):
+    summary_path = self.SUMMARIES_PATH if write_summary else None
+    with tf.name_scope(mode):
+      with tf.variable_scope("Model", reuse=self.reuse):
         m = self.model_type(
-          self.sess, config, do_update,
+          self.sess, config, do_update, mode,
           self.w_vocab, self.c_vocab, # for encoder
           self.o_vocab, self.r_vocab, # for graph
           self.speaker_vocab, self.genre_vocab, # for coref
-          summary_path=summary_path)
+        )
 
     ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
-    self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
+    if not self.saver:
+      self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
     if ckpt and os.path.exists(ckpt.model_checkpoint_path + '.index'):
-      if reuse==None:
+      if not self.reuse:
         logger.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
       self.saver.restore(self.sess, ckpt.model_checkpoint_path)
     else:
-      if reuse==None:
+      if not self.reuse:
         logger.info("Created model with fresh parameters.")
       tf.global_variables_initializer().run()
       with open(FLAGS.checkpoint_path + '/variables/variables.list', 'w') as f:
         f.write('\n'.join([v.name for v in tf.global_variables()]) + '\n')
+    #if not self.summary_writer:
+    if not self.summary_writer[mode]:
+      #self.summary_writer = tf.summary.FileWriter(self.SUMMARIES_PATH, self.sess.graph)
+      self.summary_writer[mode] = tf.summary.FileWriter(os.path.join(self.SUMMARIES_PATH, mode), self.sess.graph)
+    self.reuse = True
     return m
 
   @common.timewatch(logger)
@@ -169,9 +183,9 @@ class MTLManager(BaseManager):
     FLAGS = self.FLAGS
 
     #with tf.name_scope('train'):
-    mtrain = self.create_model(FLAGS, 'train', reuse=False)
+    mtrain = self.create_model(FLAGS, 'train')
     #with tf.name_scope('valid'):
-    mvalid = self.create_model(FLAGS, 'valid', reuse=True)
+    mvalid = self.create_model(FLAGS, 'valid')
 
     if mtrain.epoch.eval() == 0:
       logger.info("Dataset stats (WikiP2D)")
@@ -180,19 +194,24 @@ class MTLManager(BaseManager):
       logger.info("(test)  articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.test.size))
     for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
       batches = self.get_batch('train')
-      epoch_time, step_time, train_loss = mtrain.train_or_valid(batches)
+      epoch_time, step_time, train_loss, summary = mtrain.train_or_valid(batches)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, train_loss))
-      ##debug
-      batches = self.get_batch('valid')
-      epoch_time, step_time, valid_loss = mvalid.train_or_valid(batches)
 
+      #self.summary_writer.add_summary(summary, mtrain.global_step.eval())
+      self.summary_writer['train'].add_summary(summary, mtrain.global_step.eval())
+      batches = self.get_batch('valid')
+      epoch_time, step_time, valid_loss, summary = mvalid.train_or_valid(batches)
+      #self.summary_writer.add_summary(summary, mvalid.global_step.eval())
+      self.summary_writer['valid'].add_summary(summary, mvalid.global_step.eval())
       logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, valid_loss))
 
-      mtrain.add_epoch()
-      continue
+      ##debug
+      #mtrain.add_epoch()
+      #continue
+      ##debug
 
       checkpoint_path = self.CHECKPOINTS_PATH + "/model.ckpt"
-      if epoch == 0 or (epoch+1) % 5 == 0:
+      if epoch == 0 or (epoch+1) % 1 == 0:
         self.saver.save(self.sess, checkpoint_path, global_step=mtrain.epoch)
         #results, ranks, mrr, hits_10 = mvalid.test(test_data, 20)
         #logger.info("Epoch %d (valid): MRR %f, Hits@10 %f" % (epoch, mrr, hits_10))
@@ -202,27 +221,33 @@ class MTLManager(BaseManager):
   def c_test(self):
     evaluated_checkpoints = set()
     max_f1 = 0.0
+      
     while True:
-      ckpt = tf.train.get_checkpoint_state(log_dir)
+      ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
       if ckpt and ckpt.model_checkpoint_path and ckpt.model_checkpoint_path not in evaluated_checkpoints:
         # Move it to a temporary location to avoid being deleted by the training supervisor.
         tmp_checkpoint_path = os.path.join(self.CHECKPOINTS_PATH, 
                                            "model.ctmp.ckpt")
-        tf.utils.copy_checkpoint(ckpt.model_checkpoint_path, tmp_checkpoint_path)
-        mtest = self.create_model(self.FLAGS, 'test', reuse=False)
-
+        tf_utils.copy_checkpoint(ckpt.model_checkpoint_path, tmp_checkpoint_path)
+        mtest = self.create_model(self.FLAGS, 'test')
+        print "Found a new checkpoint: %s" % ckpt.model_checkpoint_path
+        output_path = self.TESTS_PATH + '/c_test.ep%02d' % mtest.epoch.eval()
         batches = self.get_batch('test')[mtest.coref.dataset]
         #conll_eval_path = 'dataset/coref/source/test.english.dev.english.v4_auto_conll'
         conll_eval_path = 'dataset/coref/source/test.english.v4_gold_conll'
-        eval_summary, f1 = mtest.coref.test(batches, conll_eval_path)
+        with open(output_path, 'w') as f:
+          sys.stdout = f
+          eval_summary, f1 = mtest.coref.test(batches, conll_eval_path)
+          sys.stdout = sys.__stdout__
 
-        if f1 > max_f1:
-          max_f1 = f1
-          tf_utils.copy_checkpoint(tmp_checkpoint_path, os.path.join(self.CHECKPOINTS_PATH, "model.cmax.ckpt"))
-        print "Current max F1: {:.2f}".format(max_f1)
-        mtest.summary_writer.add_summary(eval_summary, mtest.epoch.eval())
+          if f1 > max_f1:
+            max_f1 = f1
+            max_checkpoint_path = os.path.join(self.CHECKPOINTS_PATH, "model.cmax.ckpt")
+            tf_utils.copy_checkpoint(tmp_checkpoint_path, max_checkpoint_path)
+            print "Current max F1: {:.2f}".format(max_f1)
+        self.summary_writer['test'].add_summary(eval_summary, mtest.global_step.eval())
         #print "Evaluation written to {} at step {}".format(self.CHECKPOINTS_PATH, global_step)
-        print "Evaluation written to {} at epoch {}".format(self.CHECKPOINTS_PATH, mtest.epoch.eval())
+        print "Evaluation written to {} at epoch {}".format(self.CHECKPOINTS_PATH, mtest.global_step.eval())
         evaluated_checkpoints.add(ckpt.model_checkpoint_path)
 
   @common.timewatch(logger)
@@ -231,12 +256,12 @@ class MTLManager(BaseManager):
 
     #with tf.name_scope('test'):
     if not mtest:
-      mtest= self.create_model(FLAGS, 'test', reuse=False)
+      mtest= self.create_model(FLAGS, 'test')
 
     batches = self.get_batch('test')[mtest.dataset]
     summary, res = mtest.graph.test(batches)
     scores, ranks, mrr, hits_10 = res
-    mtest.summary_writer.add_summary(summary, mtest.epoch.eval())
+    mtest.summary_writer.add_summary(summary, mtest.global_step.eval())
 
     output_path = self.TESTS_PATH + '/g_test.ep%02d' % mtest.epoch.eval()
     with open(output_path, 'w') as f:
@@ -247,8 +272,7 @@ class MTLManager(BaseManager):
 
   def demo(self):
     with tf.name_scope('demo'):
-      mtest= self.create_model(self.FLAGS, 'test', 
-                               reuse=False, write_summary=False)
+      mtest= self.create_model(self.FLAGS, 'test')
 
     # for debug
     parser = common.get_parser()

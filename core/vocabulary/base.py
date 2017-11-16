@@ -214,6 +214,7 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     rev_vocab = OrderedSet(START_VOCAB + [self.tokenizer(w)[0] for w in rev_vocab])
     vocab = collections.OrderedDict({t:i for i,t in enumerate(rev_vocab)})
 
+    # Merge pretrained embeddings and allocate zero vectors to START_VOCAB.
     embeddings = [common.flatten([emb[w] for emb in pretrained]) for w in vocab]
     embeddings = np.array(embeddings)
     return vocab, rev_vocab, embeddings

@@ -17,14 +17,14 @@ from pprint import pprint
 ##############################
 
 class WikiP2D(ModelBase):
-  def __init__(self, sess, config, do_update,
+  def __init__(self, sess, config, do_update, mode,
                w_vocab, c_vocab, o_vocab, r_vocab,
                speaker_vocab, genre_vocab,
                activation=tf.nn.tanh, summary_path=None):
     self.initialize(sess, config, do_update)
     self.activation = activation
-
-    self.summary_writer = tf.summary.FileWriter(summary_path, self.sess.graph) if summary_path else None
+    self.do_update = do_update
+    self.mode = mode
 
     with tf.variable_scope("Encoder") as scope:
       self.word_encoder = WordEncoder(config, w_vocab, c_vocab)
@@ -98,29 +98,19 @@ class WikiP2D(ModelBase):
       loss += step_loss
       if math.isnan(step_loss[0]):
         raise ValueError("Nan loss is detected.")
-      if i == 10:
-        break
 
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)
     loss /= (i+1)
 
     assert len(self.tasks)+1 == len(loss)
-    print self.summary_writer
-    if self.summary_writer:
-      input_feed = {t.summary_loss:l for t, l in zip(self.tasks, loss[1:])}
-      summary_ops = tf.summary.merge([tf.summary.scalar(t.name + '_loss', t.summary_loss) for t in self.tasks])
-      # input_feed = {
-      #   self.graph.summary_loss: loss[0]
-      # }
-      # summary_ops = tf.summary.merge([
-      #   tf.summary.scalar(self.graph.summary_loss.name, self.graph.summary_loss),
-      #   tf.summary.scalar('loss', self.graph.summary_loss),
-      # ])
-      summary = self.sess.run(summary_ops, input_feed)
-      self.summary_writer.add_summary(summary, self.epoch.eval())
+
+    input_feed = {t.summary_loss:l for t, l in zip(self.tasks, loss[1:])}
+    summary_ops = tf.summary.merge([tf.summary.scalar(t.name + '_loss', t.summary_loss) for t in self.tasks])
+    summary_dict = {'%s_loss' % (t.name): l for t,l in zip(self.tasks, loss[1:])}
+    summary = tf_utils.make_summary(summary_dict)
     loss = " ".join(["%.3f" % l for l in loss])
-    return epoch_time, step_time, loss
+    return epoch_time, step_time, loss, summary
 
 
   def get_loss_and_updates(self, losses):

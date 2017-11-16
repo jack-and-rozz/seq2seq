@@ -31,10 +31,8 @@ class ModelBase(object):
     if embeddings is not None:
       initializer = tf.constant_initializer(embeddings)
       emb_shape = embeddings.shape
-      print emb_shape
     else:
       initializer = tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3))
-
     embeddings = tf.get_variable(name, emb_shape, trainable=trainable,
                                  initializer=initializer)
     return embeddings
