@@ -8,6 +8,7 @@ from tensorflow.python.ops import rnn
 
 import numpy as np
 from core.models.base import ModelBase
+from core.vocabulary.base import VocabularyWithEmbedding
 
 class WordEncoder(ModelBase):
   def __init__(self, config, w_vocab=None, c_vocab=None,
@@ -21,9 +22,12 @@ class WordEncoder(ModelBase):
     self.out_keep_prob = config.out_keep_prob
 
     if self.wbase:
-      self.w_embeddings = self.initialize_embeddings('word_emb', [w_vocab.size, config.w_embedding_size])
+      pretrained = w_vocab.embeddings if w_vocab and isinstance(w_vocab,  VocabularyWithEmbedding) else None
+      self.w_embeddings = self.initialize_embeddings('word_emb', [w_vocab.size, config.w_embedding_size], embeddings=pretrained)
+
     if self.cbase:
-      self.c_embeddings = self.initialize_embeddings('char_emb', [c_vocab.size, config.c_embedding_size])
+      pretrained = c_vocab.embeddings if c_vocab and isinstance(c_vocab,  VocabularyWithEmbedding) else None
+      self.c_embeddings = self.initialize_embeddings('char_emb', [c_vocab.size, config.c_embedding_size], embeddings=pretrained)
 
   def encode(self, word_sequences):
     # word_sequences: [None, max_sentence_length] or [None, max_sentence_length, max_word_length]

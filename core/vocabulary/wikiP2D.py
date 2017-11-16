@@ -1,48 +1,12 @@
 #coding: utf-8
+from pprint import pprint
 import os, time, re, sys
 from collections import defaultdict, OrderedDict, Counter
 import core.utils.common as common
-from core.vocabulary.base import ERROR_ID, PAD_ID, BOS_ID, EOS_ID, UNK_ID, _PAD, _BOS, _EOS, _UNK 
-from core.vocabulary.base import WordVocabularyBase, CharVocabularyBase
+from core.vocabulary.base import ERROR_ID, PAD_ID, BOS_ID, EOS_ID, UNK_ID, _PAD, _BOS, _EOS, _UNK, word_tokenizer, char_tokenizer
+from core.vocabulary.base import WordVocabularyBase, CharVocabularyBase, VocabularyBase
 
-_DIGIT_RE = re.compile(r"\d")
-
-# TODO: process parentheses "()[]{}"
-def word_tokenizer(lowercase=False, normalize_digits=False):
-  def _tokenizer(sent):
-    # if type(sent) == list:
-    #   if normalize_digits:
-    #     sent = [re.sub(_DIGIT_RE, "0", t) for t in sent]
-    #   if lowercase:
-    #     sent = [t.lower for t in sent]
-    # else:
-    if normalize_digits:
-      sent = re.sub(_DIGIT_RE, "0", sent) 
-    if lowercase:
-      sent = sent.lower()
-    return sent.replace('\n', '').split()
-  return _tokenizer
-
-def char_tokenizer(special_words=set([_PAD, _BOS, _UNK, _EOS]), 
-                   lowercase=False, normalize_digits=False):
-  def _tokenizer(sent):
-    if normalize_digits:
-      sent = re.sub(_DIGIT_RE, "0", sent) 
-    if lowercase:
-      sent = sent.lower()
-    def word2chars(word):
-      if not special_words or word not in special_words:
-        if not type(word) == unicode:
-          word = word.decode('utf-8')
-        return [c.encode('utf-8') for c in word]
-      return [word]
-    words = sent.replace('\n', '').split()
-    chars = [word2chars(w) for w in words]
-    return chars
-  return _tokenizer
-
-
-class WikiP2DVocabulary(WordVocabularyBase):
+class WikiP2DVocabulary(VocabularyBase):
   def __init__(self, sentences, vocab_path, vocab_size,
                cbase=False, lowercase=False, special_words=None,
                normalize_digits=False, add_bos=False, add_eos=False):
@@ -56,7 +20,6 @@ class WikiP2DVocabulary(WordVocabularyBase):
 
     self.cbase = cbase
     self.vocab, self.rev_vocab = self.init_vocab(sentences, vocab_path, vocab_size)
-    self.size = len(self.vocab)
     self.start_offset = [BOS_ID] if add_bos else []
     self.end_offset = [EOS_ID] if add_eos else []
     self.n_start_offset = len(self.start_offset)
@@ -84,8 +47,8 @@ class WikiP2DVocabulary(WordVocabularyBase):
     START_VOCAB[UNK_ID] = (_UNK, sum([f for _, f in tokens[vocab_size:]]))
     START_VOCAB[BOS_ID] = (_BOS, len(sentences))
     START_VOCAB[EOS_ID] = (_EOS, len(sentences))
-    vocab_with_freq = START_VOCAB + tokens[:(vocab_size - len(START_VOCAB))]
-    self.save_vocab(vocab_with_freq, vocab_path)
+    restored_data = START_VOCAB + tokens[:(vocab_size - len(START_VOCAB))]
+    self.save_vocab(restored_data, vocab_path)
     return vocab, rev_vocab
 
   def load_vocab(self, vocab_path):
@@ -94,9 +57,9 @@ class WikiP2DVocabulary(WordVocabularyBase):
     vocab = OrderedDict({t:i for i,t in enumerate(rev_vocab)})
     return vocab, rev_vocab
 
-  def save_vocab(self, vocab_with_freq, vocab_path):
+  def save_vocab(self, restored_data, vocab_path):
     with open(vocab_path, 'w') as f:
-      f.write('\n'.join(["%s\t%d"% tuple(x) for x in vocab_with_freq]) + '\n')
+      f.write('\n'.join(["%s\t%d"% tuple(x) for x in restored_data]) + '\n')
 
   def id2token(self, _id):
     if _id < 0 or _id > len(self.rev_vocab):
@@ -106,14 +69,17 @@ class WikiP2DVocabulary(WordVocabularyBase):
     else:
       return self.rev_vocab[_id]
 
+  def token2id(self, token):
+    return self.vocab.get(token, UNK_ID)
+
   def sent2ids(self, sentence):
     if type(sentence) == list:
       sentence = " ".join(sentence)
     tokens = self.tokenizer(sentence) 
     if self.cbase:
-      res = [[self.vocab.get(char, UNK_ID) for char in word] for word in tokens]
+      res = [[self.token2id(char) for char in word] for word in tokens]
     else:
-      res = [self.vocab.get(word, UNK_ID) for word in tokens]
+      res = [self.token2id(word) for word in tokens]
     return res
 
   def ids2tokens(self, ids, link_span=None):
@@ -155,19 +121,16 @@ class WikiP2DVocabulary(WordVocabularyBase):
         s = s[:max_s_length]
         padded_s, word_lengthes = map(list, zip(*[c_pad(w) for w in s]))
         if self.start_offset:
-          padded_s.insert(0, self.start_offset + [PAD_ID] * (max_w_length-1))
+          padded_s.insert(0, self.start_offset + [PAD_ID] * (max_w_length - len(self.start_offset)))
           word_lengthes.insert(0, 1)
         if self.end_offset:
-          padded_s.append(self.end_offset + [PAD_ID] * (max_w_length-1))
+          padded_s.append(self.end_offset + [PAD_ID] * (max_w_length-len(self.end_offset)))
           word_lengthes.extend([1]+[0] * (max_s_length + self.n_start_offset + self.n_end_offset - sentence_length))
         sentence_length = len(padded_s)
         padded_s += [[PAD_ID] * max_w_length] * (max_s_length + self.n_start_offset + self.n_end_offset - sentence_length)
         return padded_s, sentence_length, word_lengthes
       res = [s_pad(s) for s in sentences]
       return map(list, zip(*res))
-
-    sentence_lengthes =  [] # [batch_size]
-    word_lengthes = [] # [batch_size, max_sentence_length]
     if self.cbase:
       return csent_padding(sentences, max_sentence_length, max_word_length)
     else:
@@ -180,18 +143,19 @@ class WikiP2DRelVocabulary(WikiP2DVocabulary):
     data : Ordereddict[Pid] = {'name': str, 'freq': int, 'aka': set, 'desc': str}
     '''
     self.data = data
+
     if os.path.exists(vocab_path) or not data:
-      self.vocab, self.rev_vocab = self.load_vocab(vocab_path)
+      self.vocab, self.rev_vocab, self.rev_names = self.load_vocab(vocab_path)
     else:
-      vocab_with_freq = sorted([(k, v['freq'])for k, v in data.items()],
-                               key=lambda x:-x[1])
-      self.rev_vocab = [k for k,_ in vocab_with_freq]
+      restored_data = sorted([(k, v['freq'], v['name']) for k, v in data.items()], key=lambda x:-x[1])
+      self.rev_vocab = [x[0] for x in restored_data]
+      self.rev_names = [x[2] for x in restored_data]
       if vocab_size:
         self.rev_vocab = self.rev_vocab[:vocab_size]
+        self.rev_names = self.rev_names[:vocab_size]
       self.vocab = OrderedDict({t:i for i,t in enumerate(self.rev_vocab)})
-      self.save_vocab(vocab_with_freq, vocab_path)
-    self.size = len(self.vocab)
-    self.names = OrderedDict([(self.id2name(_id), _id) for _id in xrange(len(self.data))])
+      self.save_vocab(restored_data, vocab_path)
+    self.names = OrderedDict([(self.id2name(_id), _id) for _id in xrange(len(self.rev_names))])
 
   def token2id(self, token):
     return self.vocab.get(token, ERROR_ID)
@@ -203,14 +167,20 @@ class WikiP2DRelVocabulary(WikiP2DVocabulary):
     return self.rev_vocab[_id]
 
   def id2name(self, _id):
-    return self.data[self.id2token(_id)]['name']
+    return self.rev_names[_id] #self.data[self.id2token(_id)]['name']
 
-  def save_vocab(self, vocab_with_freq, vocab_path):
+  def save_vocab(self, restored_data, vocab_path):
     with open(vocab_path, 'w') as f:
-      txt = ["%s\t%d\t%s" % (v, freq, self.data[v]['name']) 
-             for (v, freq) in vocab_with_freq]
+      txt = ["%s\t%d\t%s" % x for x in restored_data]
       f.write('\n'.join(txt) + '\n')
 
+  def load_vocab(self, vocab_path):
+    sys.stderr.write('Loading vocabulary from \'%s\' ...\n' % vocab_path)
+    data = [l.replace('\n', '').split('\t') for l in open(vocab_path, 'r')]
+    rev_vocab = [x[0] for x in data]
+    vocab = OrderedDict({t:i for i,t in enumerate(rev_vocab)})
+    rev_names = [x[2] for x in data]
+    return vocab, rev_vocab, rev_names
 
 class WikiP2DObjVocabulary(WikiP2DRelVocabulary):
   pass

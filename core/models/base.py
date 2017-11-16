@@ -26,10 +26,16 @@ class ModelBase(object):
   def add_epoch(self):
     self.sess.run(tf.assign(self.epoch, tf.add(self.epoch, tf.constant(1, dtype=tf.int32))))
 
-  def initialize_embeddings(self, name, emb_shape, initializer=None):
-    if not initializer:
+  def initialize_embeddings(self, name, emb_shape, #initializer=None, 
+                            embeddings=None, trainable=True):
+    if embeddings is not None:
+      initializer = tf.constant_initializer(embeddings)
+      emb_shape = embeddings.shape
+      print emb_shape
+    else:
       initializer = tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3))
-    embeddings = tf.get_variable(name, emb_shape,
+
+    embeddings = tf.get_variable(name, emb_shape, trainable=trainable,
                                  initializer=initializer)
     return embeddings
 

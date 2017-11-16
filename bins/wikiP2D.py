@@ -29,8 +29,6 @@ tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
                           "Clip gradients to this norm.")
 tf.app.flags.DEFINE_string("cell_type", "GRUCell", "Cell type")
 tf.app.flags.DEFINE_boolean("state_is_tuple", True,  "")
-#tf.app.flags.DEFINE_string("encoder_type", "BidirectionalRNNEncoder", "")
-#tf.app.flags.DEFINE_string("c_encoder_type", "BidirectionalRNNEncoder", "")
 
 tf.app.flags.DEFINE_boolean("graph_task", False,  "Whether to run graph link predction task.")
 tf.app.flags.DEFINE_boolean("desc_task", False,  "Whether to run description generation task.")
@@ -46,8 +44,8 @@ tf.app.flags.DEFINE_integer("w_embedding_size", 300, "This parameter is ignored 
 tf.app.flags.DEFINE_integer("c_embedding_size", 8, "")
 tf.app.flags.DEFINE_boolean("lowercase", True,  "")
 tf.app.flags.DEFINE_boolean("use_pretrained_emb", True,  "")
+tf.app.flags.DEFINE_boolean("trainable_emb", True,  "")
 tf.app.flags.DEFINE_string("embeddings", "glove.840B.300d.txt.filtered,turian.50d.txt",  "")
-
 
 ## Coref
 tf.app.flags.DEFINE_integer("f_embedding_size", 20, "")
@@ -74,18 +72,21 @@ class MTLManager(BaseManager):
     super(MTLManager, self).__init__(FLAGS, sess)
     self.model_type = getattr(model, FLAGS.model_type)
     self.FLAGS = FLAGS
+
     if FLAGS.use_pretrained_emb:
       emb_files = FLAGS.embeddings.split(',')
-      self.w_vocab = VocabularyWithEmbedding(emb_files)
-      print self.w_vocab
-      exit(1)
+      self.w_vocab = VocabularyWithEmbedding(emb_files, lowercase=FLAGS.lowercase)
+      self.c_vocab = None
     else:
       self.w_vocab = None
+      self.c_vocab = None
 
     self.w2p_dataset = WikiP2DDataset(
       FLAGS.w_vocab_size, FLAGS.c_vocab_size,
       filename=FLAGS.w2p_dataset,
-      lowercase=FLAGS.lowercase)
+      lowercase=FLAGS.lowercase,
+      w_vocab=self.w_vocab, c_vocab=self.c_vocab
+    )
     self.w_vocab = self.w2p_dataset.w_vocab
     self.c_vocab = self.w2p_dataset.c_vocab
     self.r_vocab = self.w2p_dataset.r_vocab
