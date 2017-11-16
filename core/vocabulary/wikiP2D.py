@@ -6,11 +6,19 @@ import core.utils.common as common
 from core.vocabulary.base import ERROR_ID, PAD_ID, BOS_ID, EOS_ID, UNK_ID, _PAD, _BOS, _EOS, _UNK, word_tokenizer, char_tokenizer
 from core.vocabulary.base import WordVocabularyBase, CharVocabularyBase, VocabularyBase
 
+class WikiP2DVocabularyBase(VocabularyBase):
+  def __init__(self, sentences, vocab_path, vocab_size,
+               cbase=False, lowercase=False, special_words=None,
+               normalize_digits=False, add_bos=False, add_eos=False):
+    super(WikiP2DVocabularyBase, self).__init__(add_bos=add_bos, add_eos=add_eos)
+
+
 class WikiP2DVocabulary(VocabularyBase):
   def __init__(self, sentences, vocab_path, vocab_size,
                cbase=False, lowercase=False, special_words=None,
                normalize_digits=False, add_bos=False, add_eos=False):
-    if cbase:
+    self.cbase = cbase
+    if self.cbase:
       self.tokenizer = char_tokenizer(special_words=special_words, 
                                       lowercase=lowercase,
                                       normalize_digits=normalize_digits) 
@@ -18,7 +26,6 @@ class WikiP2DVocabulary(VocabularyBase):
       self.tokenizer = word_tokenizer(lowercase=lowercase,
                                       normalize_digits=normalize_digits) 
 
-    self.cbase = cbase
     self.vocab, self.rev_vocab = self.init_vocab(sentences, vocab_path, vocab_size)
     self.start_offset = [BOS_ID] if add_bos else []
     self.end_offset = [EOS_ID] if add_eos else []

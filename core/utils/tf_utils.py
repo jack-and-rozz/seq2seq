@@ -1,5 +1,10 @@
 #coding: utf-8
 import tensorflow as tf
+import shutil
+
+def copy_checkpoint(source, target):
+  for ext in (".index", ".data-00000-of-00001"):
+    shutil.copyfile(source + ext, target + ext)
 
 def make_summary(value_dict):
   return tf.Summary(value=[tf.Summary.Value(tag=k, simple_value=v) for k,v in value_dict.items()])

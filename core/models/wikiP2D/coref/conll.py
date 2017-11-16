@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-
+from pprint import pprint 
 import re
 import os
 import sys
@@ -69,8 +69,10 @@ def output_conll(input_file, output_file, predictions):
       output_file.write("\n")
       word_index += 1
 
-def official_conll_eval(gold_path, predicted_path, metric, official_stdout=False):
-  cmd = ["conll-2012/scorer/v8.01/scorer.pl", metric, gold_path, predicted_path, "none"]
+def official_conll_eval(gold_path, predicted_path, metric, official_stdout=False,
+                        scorer_path="dataset/coref/conll-2012/scorer/v8.01/scorer.pl"):
+  cmd = [scorer_path, metric, gold_path, predicted_path, "none"]
+
   process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
   stdout, stderr = process.communicate()
   process.wait()

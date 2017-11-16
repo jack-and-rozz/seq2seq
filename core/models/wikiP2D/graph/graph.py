@@ -36,7 +36,6 @@ articles : [batch_size, n_words, [n_characters]]
 link_spans : [batch_size, 2 (start, end)]
 triples : [None, 2 (relation_id, object_id)]
 """
-
 class GraphLinkPrediction(ModelBase):
 #class GraphLinkPrediction(object):
   def __init__(self, sess, config, encoder, o_vocab, r_vocab,

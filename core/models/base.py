@@ -10,7 +10,7 @@ class ModelBase(object):
     self.hidden_size = config.hidden_size
     self.max_gradient_norm = config.max_gradient_norm
 
-    with tf.name_scope('variables_for_training'):
+    with tf.name_scope('global_variables'):
       self.learning_rate = tf.get_variable(
         "learning_rate", trainable=False, shape=[],
         initializer=tf.constant_initializer(float(config.learning_rate), 

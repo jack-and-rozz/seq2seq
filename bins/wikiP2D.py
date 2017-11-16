@@ -66,6 +66,9 @@ tf.app.flags.DEFINE_integer("max_d_sent_length", 40, "")
 
 #tf.app.flags.DEFINE_boolean("share_embedding", False, "Whether to share syn/rel embedding between subjects and objects")
 
+
+## The names of dataset and tasks.
+
 class MTLManager(BaseManager):
   @common.timewatch()
   def __init__(self, FLAGS, sess):
@@ -127,19 +130,25 @@ class MTLManager(BaseManager):
   @common.timewatch()
   def create_model(self, FLAGS, mode, reuse=False, write_summary=True):
     if mode == 'train':
+      config = FLAGS
       do_update = True
     elif mode == 'valid' or mode == 'test':
+      config = copy.deepcopy(FLAGS)
+      config.in_keep_prob = 1.0
+      config.out_keep_prob = 1.0
       do_update = False
     else:
       raise ValueError("The argument \'mode\' must be \'train\', \'valid\', or \'test\'.")
-    summary_path = os.path.join(self.SUMMARIES_PATH, mode) if write_summary else None
+    #summary_path = os.path.join(self.SUMMARIES_PATH, mode) if write_summary else None
+    summary_path = self.SUMMARIES_PATH  if write_summary else None
     with tf.variable_scope("Model", reuse=reuse):
-      m = self.model_type(
-        self.sess, FLAGS, do_update,
-        self.w_vocab, self.c_vocab, # for encoder
-        self.o_vocab, self.r_vocab, # for graph
-        self.speaker_vocab, self.genre_vocab, # for coref
-        summary_path=summary_path)
+      with tf.name_scope(mode):
+        m = self.model_type(
+          self.sess, config, do_update,
+          self.w_vocab, self.c_vocab, # for encoder
+          self.o_vocab, self.r_vocab, # for graph
+          self.speaker_vocab, self.genre_vocab, # for coref
+          summary_path=summary_path)
 
     ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
     self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
@@ -162,8 +171,6 @@ class MTLManager(BaseManager):
     #with tf.name_scope('train'):
     mtrain = self.create_model(FLAGS, 'train', reuse=False)
     #with tf.name_scope('valid'):
-    FLAGS.in_keep_prob = 1.0
-    FLAGS.out_keep_prob = 1.0
     mvalid = self.create_model(FLAGS, 'valid', reuse=True)
 
     if mtrain.epoch.eval() == 0:
@@ -175,11 +182,14 @@ class MTLManager(BaseManager):
       batches = self.get_batch('train')
       epoch_time, step_time, train_loss = mtrain.train_or_valid(batches)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, train_loss))
-
+      ##debug
       batches = self.get_batch('valid')
       epoch_time, step_time, valid_loss = mvalid.train_or_valid(batches)
 
       logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, valid_loss))
+
+      mtrain.add_epoch()
+      continue
 
       checkpoint_path = self.CHECKPOINTS_PATH + "/model.ckpt"
       if epoch == 0 or (epoch+1) % 5 == 0:
@@ -189,27 +199,38 @@ class MTLManager(BaseManager):
       mtrain.add_epoch()
 
   @common.timewatch(logger)
-  def c_test(self, mtest=None):
-    FLAGS = self.FLAGS
+  def c_test(self):
+    evaluated_checkpoints = set()
+    max_f1 = 0.0
+    while True:
+      ckpt = tf.train.get_checkpoint_state(log_dir)
+      if ckpt and ckpt.model_checkpoint_path and ckpt.model_checkpoint_path not in evaluated_checkpoints:
+        # Move it to a temporary location to avoid being deleted by the training supervisor.
+        tmp_checkpoint_path = os.path.join(self.CHECKPOINTS_PATH, 
+                                           "model.ctmp.ckpt")
+        tf.utils.copy_checkpoint(ckpt.model_checkpoint_path, tmp_checkpoint_path)
+        mtest = self.create_model(self.FLAGS, 'test', reuse=False)
 
-    #with tf.name_scope('test'):
-    if not mtest:
-      FLAGS.in_keep_prob = 1.0
-      FLAGS.out_keep_prob = 1.0
-      mtest = self.create_model(FLAGS, 'test', reuse=False)
-    batches = self.get_batch('test')[mtest.coref.dataset]
-    #conll_eval_path = 'dataset/coref/source/test.english.dev.english.v4_auto_conll'
-    conll_eval_path = 'dataset/coref/source/test.english.v4_gold_conll'
-    summary, res = mtest.coref.test(batches, conll_eval_path)
+        batches = self.get_batch('test')[mtest.coref.dataset]
+        #conll_eval_path = 'dataset/coref/source/test.english.dev.english.v4_auto_conll'
+        conll_eval_path = 'dataset/coref/source/test.english.v4_gold_conll'
+        eval_summary, f1 = mtest.coref.test(batches, conll_eval_path)
+
+        if f1 > max_f1:
+          max_f1 = f1
+          tf_utils.copy_checkpoint(tmp_checkpoint_path, os.path.join(self.CHECKPOINTS_PATH, "model.cmax.ckpt"))
+        print "Current max F1: {:.2f}".format(max_f1)
+        mtest.summary_writer.add_summary(eval_summary, mtest.epoch.eval())
+        #print "Evaluation written to {} at step {}".format(self.CHECKPOINTS_PATH, global_step)
+        print "Evaluation written to {} at epoch {}".format(self.CHECKPOINTS_PATH, mtest.epoch.eval())
+        evaluated_checkpoints.add(ckpt.model_checkpoint_path)
 
   @common.timewatch(logger)
-  def g_test(self, mtest=None):
+  def g_test(self):
     test_data = self.w2p_dataset.test
 
     #with tf.name_scope('test'):
     if not mtest:
-      FLAGS.in_keep_prob = 1.0
-      FLAGS.out_keep_prob = 1.0
       mtest= self.create_model(FLAGS, 'test', reuse=False)
 
     batches = self.get_batch('test')[mtest.dataset]

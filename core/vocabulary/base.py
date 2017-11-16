@@ -91,7 +91,6 @@ class VocabularyBase(object):
     return len(self.vocab)
 
 
-
 class WordVocabularyBase(VocabularyBase):
   def id2token(self, _id):
     if _id < 0 or _id > len(self.rev_vocab):
@@ -133,7 +132,63 @@ class WordVocabularyBase(VocabularyBase):
 
 
 class CharVocabularyBase(VocabularyBase):
-  pass
+  def id2token(self, _id):
+    if _id < 0 or _id > len(self.rev_vocab):
+      raise ValueError('Token ID must be between 0 and %d' % len(self.rev_vocab))
+    elif _id in set([PAD_ID, EOS_ID, BOS_ID]):
+      return ''
+    else:
+      return self.rev_vocab[_id]
+
+  def token2id(self, token):
+    return self.vocab.get(token, UNK_ID)
+
+  def sent2ids(self, sentence):
+    if type(sentence) == list:
+      sentence = " ".join(sentence)
+    tokens = self.tokenizer(sentence) 
+    res = [[self.token2id(char) for char in word] for word in tokens]
+    return res
+
+  def ids2tokens(self, ids, link_span=None):
+    sent_tokens = ["".join([self.id2token(char_id) for char_id in word]) 
+                   for word in ids]
+    if link_span:
+      for i in xrange(link_span[0], link_span[1]+1):
+        sent_tokens[i] = common.colored(sent_tokens[i], 'link')
+      sent_tokens = [w for w in sent_tokens if w]
+    return " ".join(sent_tokens)
+
+  def padding(self, sentences, max_sentence_length=None, max_word_length=None):
+    '''
+    '''
+    if not max_sentence_length:
+      max_sentence_length = max([len(s) for s in sentences])
+    if not max_word_length and self.cbase:
+      max_word_length = max([max([len(w) for w in s]) for s in sentences])
+
+    def _padding(sentences, max_s_length, max_w_length):
+      def c_pad(w):
+        padded_w = w[:max_w_length] 
+        size = len(padded_w)
+        padded_w += [PAD_ID] * (max_w_length - size)
+        return padded_w, size
+      def s_pad(s):
+        s = s[:max_s_length]
+        padded_s, word_lengthes = map(list, zip(*[c_pad(w) for w in s]))
+        if self.start_offset:
+          padded_s.insert(0, self.start_offset + [PAD_ID] * (max_w_length - len(self.start_offset)))
+          word_lengthes.insert(0, 1)
+        if self.end_offset:
+          padded_s.append(self.end_offset + [PAD_ID] * (max_w_length-len(self.end_offset)))
+          word_lengthes.extend([1]+[0] * (max_s_length + self.n_start_offset + self.n_end_offset - sentence_length))
+        sentence_length = len(padded_s)
+        padded_s += [[PAD_ID] * max_w_length] * (max_s_length + self.n_start_offset + self.n_end_offset - sentence_length)
+        return padded_s, sentence_length, word_lengthes
+      res = [s_pad(s) for s in sentences]
+      return map(list, zip(*res))
+    return _padding(sentences, max_sentence_length, max_word_length)
+
 
 class VocabularyWithEmbedding(WordVocabularyBase):
   def __init__(self, emb_files, source_dir="dataset/embeddings",

@@ -284,25 +284,21 @@ class CoreferenceResolution(ModelBase):
 
     coref_predictions = {}
     coref_evaluator = metrics.CorefEvaluator()
-    #n_data = '?'
-    n_data = str(len(list(batches)))
+    n_data = '?'
+    #n_data = str(len(list(batches)))
+    #print n_data
     for example_num, example in enumerate(batches):
       feed_dict = self.get_input_feed(example)
       gold_starts = feed_dict[self.gold_starts]
       gold_ends = feed_dict[self.gold_ends]
-      #  _, _, _, _, _, _, gold_starts, gold_ends, _ = tensorized_example
-      #feed_dict = {i:t for i,t in zip(self.input_tensors, tensorized_example)}
-      
       candidate_starts, candidate_ends, mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores = self.sess.run(self.predictions, feed_dict=feed_dict)
-
       self.evaluate_mentions(candidate_starts, candidate_ends, mention_starts, mention_ends, mention_scores, gold_starts, gold_ends, example, mention_evaluators)
       predicted_antecedents = self.get_predicted_antecedents(antecedents, antecedent_scores)
 
       coref_predictions[example["doc_key"]] = self.evaluate_coref(mention_starts, mention_ends, predicted_antecedents, example["clusters"], coref_evaluator)
-
       if example_num % 10 == 0:
         #print "Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data))
-        print "Evaluated {}/{} examples.".format(example_num + 1, n_data)
+        print "Evaluated {} examples.".format(example_num + 1)
 
     summary_dict = {}
     for k, evaluator in sorted(mention_evaluators.items(), key=operator.itemgetter(0)):

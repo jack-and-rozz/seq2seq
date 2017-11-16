@@ -73,8 +73,6 @@ class WikiP2D(ModelBase):
     return input_feed
 
   def train_or_valid(self, batches):
-    print self.tasks
-
     start_time = time.time()
     n_losses = len(self.tasks) + 1
     loss = np.array([0.0] * n_losses)
@@ -100,17 +98,18 @@ class WikiP2D(ModelBase):
       loss += step_loss
       if math.isnan(step_loss[0]):
         raise ValueError("Nan loss is detected.")
+      if i == 10:
+        break
 
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)
     loss /= (i+1)
 
     assert len(self.tasks)+1 == len(loss)
-
+    print self.summary_writer
     if self.summary_writer:
       input_feed = {t.summary_loss:l for t, l in zip(self.tasks, loss[1:])}
-      input_feed = {t.summary_loss:l for t, l in zip(self.tasks, loss[1:])}
-      summary_ops = tf.summary.merge([tf.summary.scalar(t.summary_loss.name, t.summary_loss) for t in self.tasks])
+      summary_ops = tf.summary.merge([tf.summary.scalar(t.name + '_loss', t.summary_loss) for t in self.tasks])
       # input_feed = {
       #   self.graph.summary_loss: loss[0]
       # }
