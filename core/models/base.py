@@ -11,10 +11,10 @@ class ModelBase(object):
     self.max_gradient_norm = config.max_gradient_norm
 
     with tf.name_scope('global_variables'):
-      self.learning_rate = tf.get_variable(
-        "learning_rate", trainable=False, shape=[],
-        initializer=tf.constant_initializer(float(config.learning_rate), 
-                                            dtype=tf.float32))
+      # self.learning_rate = tf.get_variable(
+      #   "learning_rate", trainable=False, shape=[],
+      #   initializer=tf.constant_initializer(float(config.learning_rate), 
+      #                                       dtype=tf.float32))
       self.global_step = tf.get_variable(
         "global_step", trainable=False, shape=[],  dtype=tf.int32,
         initializer=tf.constant_initializer(0, dtype=tf.int32)) 
@@ -22,6 +22,11 @@ class ModelBase(object):
       self.epoch = tf.get_variable(
         "epoch", trainable=False, shape=[], dtype=tf.int32,
         initializer=tf.constant_initializer(0, dtype=tf.int32)) 
+
+      self.learning_rate = tf.train.exponential_decay(
+        config.learning_rate, self.global_step,
+        config.decay_frequency, config.decay_rate, staircase=True)
+
 
   def add_epoch(self):
     self.sess.run(tf.assign(self.epoch, tf.add(self.epoch, tf.constant(1, dtype=tf.int32))))

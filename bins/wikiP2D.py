@@ -1,13 +1,12 @@
 #coding: utf-8
-import sys, os, random, copy
-import socket
-import tensorflow as tf
+import sys, os, random, copy, socket, collections, time
 from pprint import pprint
+import tensorflow as tf
 import numpy as np
-import collections
+import multiprocessing as mp
+
 from base import BaseManager, logger
 from core.utils import common, tf_utils
-#import core.models.wikiP2D as model
 import core.models.wikiP2D.mtl as model
 from core.dataset.wikiP2D import WikiP2DDataset, DemoBatch
 from core.dataset.coref import CoNLL2012CorefDataset
@@ -21,7 +20,10 @@ tf.app.flags.DEFINE_string("w2p_dataset", "Q5O15000R300.micro.bin", "")
 tf.app.flags.DEFINE_integer("max_epoch", 50, "")
 tf.app.flags.DEFINE_integer("batch_size", 128, "")
 tf.app.flags.DEFINE_integer("hidden_size", 100, "")
-tf.app.flags.DEFINE_float("learning_rate", 1e-4, "Learning rate.")
+tf.app.flags.DEFINE_float("learning_rate", 1e-3, "Learning rate.")
+#tf.app.flags.DEFINE_float("decay_rate", 0.999, "")
+tf.app.flags.DEFINE_float("decay_rate", 0.999, "")
+tf.app.flags.DEFINE_integer("decay_frequency", 100, "")
 tf.app.flags.DEFINE_float("in_keep_prob", 1.0, "Dropout rate.")
 tf.app.flags.DEFINE_float("out_keep_prob", 0.75, "Dropout rate.")
 tf.app.flags.DEFINE_integer("num_layers", 1, "")
@@ -63,11 +65,6 @@ tf.app.flags.DEFINE_integer("n_triples", 0, "If 0, all positive triples are used
 ##Desc
 tf.app.flags.DEFINE_integer("max_d_sent_length", 40, "")
 
-#tf.app.flags.DEFINE_boolean("share_embedding", False, "Whether to share syn/rel embedding between subjects and objects")
-
-
-## The names of dataset and tasks.
-
 class MTLManager(BaseManager):
   @common.timewatch()
   def __init__(self, FLAGS, sess):
@@ -104,7 +101,6 @@ class MTLManager(BaseManager):
     self.genre_vocab = self.coref_dataset.genre_vocab
 
     # Defined after the computational graph is completely constracted.
-    # self.summary_writer = None
     self.summary_writer = {'train': None, 'valid':None, 'test':None}
     self.saver = None
 
@@ -196,18 +192,11 @@ class MTLManager(BaseManager):
       epoch_time, step_time, train_loss, summary = mtrain.train_or_valid(batches)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, train_loss))
 
-      #self.summary_writer.add_summary(summary, mtrain.global_step.eval())
-      self.summary_writer['train'].add_summary(summary, mtrain.global_step.eval())
+      #self.summary_writer['train'].add_summary(summary, mtrain.global_step.eval())
       batches = self.get_batch('valid')
       epoch_time, step_time, valid_loss, summary = mvalid.train_or_valid(batches)
-      #self.summary_writer.add_summary(summary, mvalid.global_step.eval())
       self.summary_writer['valid'].add_summary(summary, mvalid.global_step.eval())
       logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, valid_loss))
-
-      ##debug
-      #mtrain.add_epoch()
-      #continue
-      ##debug
 
       checkpoint_path = self.CHECKPOINTS_PATH + "/model.ckpt"
       if epoch == 0 or (epoch+1) % 1 == 0:
@@ -217,10 +206,15 @@ class MTLManager(BaseManager):
       mtrain.add_epoch()
 
   @common.timewatch(logger)
-  def c_test(self):
+  def c_test(self, mode="valid"): # mode: 'valid' or 'test'
     evaluated_checkpoints = set()
     max_f1 = 0.0
-      
+    conll_eval_path = {
+      'train': 'dataset/coref/source/train.english.v4_auto_conll',
+      'valid': 'dataset/coref/source/dev.english.v4_auto_conll',
+      'test': 'dataset/coref/source/test.english.v4_gold_conll',
+    }
+
     while True:
       ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
       if ckpt and ckpt.model_checkpoint_path and ckpt.model_checkpoint_path not in evaluated_checkpoints:
@@ -228,18 +222,14 @@ class MTLManager(BaseManager):
         tmp_checkpoint_path = os.path.join(self.CHECKPOINTS_PATH, 
                                            "model.ctmp.ckpt")
         tf_utils.copy_checkpoint(ckpt.model_checkpoint_path, tmp_checkpoint_path)
-        mtest = self.create_model(self.FLAGS, 'test')
+        mtest = self.create_model(self.FLAGS, mode)
         print "Found a new checkpoint: %s" % ckpt.model_checkpoint_path
-        output_path = self.TESTS_PATH + '/c_test.ep%02d' % mtest.epoch.eval()
+        output_path = self.TESTS_PATH + '/c_test.%s.ep%02d' % (mode, mtest.epoch.eval())
+        batches = self.get_batch(mode)[mtest.coref.dataset]
 
-        #batches = self.get_batch('test')[mtest.coref.dataset]
-        #conll_eval_path = 'dataset/coref/source/test.english.v4_gold_conll'
-
-        batches = self.get_batch('valid')[mtest.coref.dataset]
-        conll_eval_path = 'dataset/coref/source/dev.english.v4_auto_conll'
         with open(output_path, 'w') as f:
           sys.stdout = f
-          eval_summary, f1 = mtest.coref.test(batches, conll_eval_path)
+          eval_summary, f1 = mtest.coref.test(batches, conll_eval_path[mode])
 
           if f1 > max_f1:
             max_f1 = f1
@@ -248,8 +238,7 @@ class MTLManager(BaseManager):
             print "Current max F1: {:.2f}".format(max_f1)
           sys.stdout = sys.__stdout__
 
-        self.summary_writer['test'].add_summary(eval_summary, mtest.global_step.eval())
-        #print "Evaluation written to {} at step {}".format(self.CHECKPOINTS_PATH, global_step)
+        self.summary_writer[mode].add_summary(eval_summary, mtest.global_step.eval())
         print "Evaluation written to {} at epoch {}".format(self.CHECKPOINTS_PATH, mtest.global_step.eval())
         evaluated_checkpoints.add(ckpt.model_checkpoint_path)
 
@@ -345,6 +334,9 @@ def main(_):
     manager.create_dir()
     if FLAGS.mode == "train":
       manager.save_config()
+      # worker = mp.Process(target=manager.c_test, kwargs={'mode':'valid'})
+      # worker.daemon = True 
+      # worker.start()
       manager.train()
     elif FLAGS.mode == "g_test":
       manager.g_test()
