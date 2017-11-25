@@ -170,7 +170,7 @@ class CharVocabularyBase(VocabularyBase):
     '''
     if not max_sentence_length:
       max_sentence_length = max([len(s) for s in sentences])
-    if not max_word_length and self.cbase:
+    if not max_word_length:
       max_word_length = max([max([len(w) for w in s]) for s in sentences])
 
     def _padding(sentences, max_s_length, max_w_length):

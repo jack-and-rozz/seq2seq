@@ -280,7 +280,6 @@ def main(_):
     manager = MTLManager(FLAGS, sess)
     manager.create_dir()
     if FLAGS.mode == "train":
-      manager.save_config()
       # worker = mp.Process(target=manager.c_test, kwargs={'mode':'valid'})
       # worker.daemon = True 
       # worker.start()

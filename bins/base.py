@@ -36,15 +36,14 @@ class BaseManager(object):
     self.VARIABLES_PATH = FLAGS.checkpoint_path +'/variables'
     self.SUMMARIES_PATH = FLAGS.checkpoint_path + '/summaries'
     self.sess = sess
-    self.config = common.get_config(FLAGS.config_path)['main']
+    self.config = common.get_config(FLAGS.config_path)
     config_restored_path = os.path.join(FLAGS.checkpoint_path, 'experiments.conf')
-    #if not os.path.exists(config_restored_path):
     with open(config_restored_path, 'w') as f:
       sys.stdout = f
       common.print_config(self.config)
       sys.stdout = sys.__stdout__
-    self.config = common.recDotDict(self.config)
-
+    self.config = common.recDotDict(self.config)['main']
+    
   def create_dir(self):
     FLAGS = self.FLAGS
     if not os.path.exists(FLAGS.checkpoint_path):
@@ -57,12 +56,6 @@ class BaseManager(object):
       os.makedirs(self.VARIABLES_PATH)
     if not os.path.exists(self.SUMMARIES_PATH):
       os.makedirs(self.SUMMARIES_PATH)
-
-  def save_config(self):
-    with open(self.FLAGS.checkpoint_path + '/experiments.conf', 'w') as f:
-      sys.stdout = f
-      common.print_config(self.config)
-      sys.stdout = sys.__stdout__
 
     # flags_dir = self.FLAGS.__dict__['__flags']
     # with open(self.FLAGS.checkpoint_path + '/config', 'w') as f:
