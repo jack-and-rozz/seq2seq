@@ -9,7 +9,8 @@ import numpy as np
 from pprint import pprint
 
 class CoreferenceResolution(ModelBase):
-  def __init__(self, sess, config, encoder, speaker_vocab, genre_vocab,
+  def __init__(self, sess, config, is_training, encoder, 
+               speaker_vocab, genre_vocab,
                activation=tf.nn.tanh):
     self.name = 'coref'
     self.dataset = 'coref'
@@ -17,9 +18,10 @@ class CoreferenceResolution(ModelBase):
     self.encoder = encoder
     self.activation = activation
 
+    self.is_training = is_training
+    self.in_keep_prob = config.in_keep_prob if is_training else 1.0
+    self.out_keep_prob = config.out_keep_prob if is_training else 1.0
     self.hidden_size = config.hidden_size
-    self.in_keep_prob = config.in_keep_prob
-    self.out_keep_prob = config.out_keep_prob
     self.feature_size = config.f_embedding_size
     self.max_mention_width = config.max_mention_width
     self.mention_ratio = config.mention_ratio

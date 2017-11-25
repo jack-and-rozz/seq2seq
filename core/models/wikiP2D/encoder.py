@@ -11,15 +11,16 @@ from core.models.base import ModelBase
 from core.vocabulary.base import VocabularyWithEmbedding
 
 class WordEncoder(ModelBase):
-  def __init__(self, config, w_vocab=None, c_vocab=None,
+  def __init__(self, config, is_training, w_vocab=None, c_vocab=None,
                activation=tf.nn.tanh):
     self.cbase = config.cbase
     self.wbase = config.wbase
     self.w_vocab = w_vocab
     self.c_vocab = c_vocab
     self.hidden_size = config.hidden_size
-    self.in_keep_prob = config.in_keep_prob
-    self.out_keep_prob = config.out_keep_prob
+    self.is_training = is_training
+    self.in_keep_prob = config.in_keep_prob  if is_training else 1.0
+    self.out_keep_prob = config.out_keep_prob if is_training else 1.0
 
     if self.wbase:
       pretrained = w_vocab.embeddings if w_vocab and isinstance(w_vocab,  VocabularyWithEmbedding) else None
@@ -48,13 +49,14 @@ class WordEncoder(ModelBase):
 
 
 class SentenceEncoder(ModelBase):
-  def __init__(self, config, word_encoder, activation=tf.nn.tanh, 
+  def __init__(self, config, is_training, word_encoder, activation=tf.nn.tanh, 
                shared_scope=None):
     self.cbase = config.cbase
     self.wbase = config.wbase
     self.hidden_size = config.hidden_size
-    self.in_keep_prob = config.in_keep_prob
-    self.out_keep_prob = config.out_keep_prob
+    self.is_training = is_training
+    self.in_keep_prob = config.in_keep_prob if is_training else 1.0
+    self.out_keep_prob = config.out_keep_prob if is_training else 1.0
     self.word_encoder = word_encoder
     self.w_vocab = word_encoder.w_vocab
     self.c_vocab = word_encoder.c_vocab
@@ -65,13 +67,13 @@ class SentenceEncoder(ModelBase):
     do_sharing = True if self.shared_scope else False
     self.cell_fw = setup_cell(config.cell_type, config.hidden_size, 
                               num_layers=config.num_layers, 
-                              in_keep_prob=config.in_keep_prob, 
-                              out_keep_prob=config.out_keep_prob,
+                              in_keep_prob=self.in_keep_prob, 
+                              out_keep_prob=self.out_keep_prob,
                               shared=do_sharing)
     self.cell_bw = setup_cell(config.cell_type, config.hidden_size, 
                               num_layers=config.num_layers, 
-                              in_keep_prob=config.in_keep_prob, 
-                              out_keep_prob=config.out_keep_prob,
+                              in_keep_prob=self.in_keep_prob, 
+                              out_keep_prob=self.out_keep_prob,
                               shared=do_sharing)
     self.reuse = None # to reuse variables defined in encode()
 

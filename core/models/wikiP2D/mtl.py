@@ -17,18 +17,19 @@ from pprint import pprint
 ##############################
 
 class WikiP2D(ModelBase):
-  def __init__(self, sess, config, do_update, mode,
+  def __init__(self, sess, config, is_training, mode,
                w_vocab, c_vocab, o_vocab, r_vocab,
                speaker_vocab, genre_vocab,
                activation=tf.nn.tanh, summary_path=None):
-    self.initialize(sess, config, do_update)
+    self.initialize(sess, config, is_training)
     self.activation = activation
-    self.do_update = do_update
+    self.is_training = is_training
     self.mode = mode
 
     with tf.variable_scope("Encoder") as scope:
-      self.word_encoder = WordEncoder(config, w_vocab, c_vocab)
-      self.sentence_encoder = SentenceEncoder(config, self.word_encoder,
+      self.word_encoder = WordEncoder(config, is_training, w_vocab, c_vocab)
+      self.sentence_encoder = SentenceEncoder(config, is_training, 
+                                              self.word_encoder,
                                               shared_scope=scope)
       self.encoder = self.sentence_encoder
 
@@ -37,23 +38,26 @@ class WikiP2D(ModelBase):
     self.coref, self.graph, self.desc = None, None, None
     if config.coref_task:
       with tf.variable_scope("Coreference") as scope:
-        self.coref = CoreferenceResolution(sess, config, self.encoder, 
+        self.coref = CoreferenceResolution(sess, config.coref, is_training,
+                                           self.encoder, 
                                            speaker_vocab, genre_vocab,)
         self.tasks.append(self.coref)
 
     if config.graph_task:
       with tf.variable_scope("Graph") as scope:
-        self.graph = GraphLinkPrediction(sess, config, self.encoder, 
+        self.graph = GraphLinkPrediction(sess, config.wikiP2D, is_training,
+                                         self.encoder, 
                                          o_vocab, r_vocab,
                                          activation=self.activation, )
         self.tasks.append(self.graph)
 
     if config.desc_task:
       with tf.variable_scope("Description") as scope:
-        self.desc = DescriptionGeneration(config, self.encoder, w_vocab,
+        self.desc = DescriptionGeneration(config.wikiP2D, is_training,
+                                          self.encoder, w_vocab,
                                           activation=self.activation)
         self.tasks.append(self.desc)
-    self.loss, self.updates = self.get_loss_and_updates([t.loss for t in self.tasks], do_update)
+    self.loss, self.updates = self.get_loss_and_updates([t.loss for t in self.tasks], is_training)
 
     ## About outputs
     self.output_feed = {
@@ -120,24 +124,24 @@ class WikiP2D(ModelBase):
 
 
 class MeanLoss(WikiP2D):
-  def get_loss_and_updates(self, losses, do_update):
+  def get_loss_and_updates(self, losses, is_training):
     loss = tf.reduce_mean(losses)
 
-    updates = self.get_updates(loss) if do_update else None
+    updates = self.get_updates(loss) if is_training else None
     return loss, updates
 
 class WeightedLoss(WikiP2D):
   def get_loss_and_updates(self, losses):
     weights = tf.get_variable("loss_weights", [len(losses)])
     loss = tf.reduce_sum(tf.nn.softmax(weights) * losses)
-    updates = self.get_updates(loss) if do_update else None
+    updates = self.get_updates(loss) if is_training else None
 
     return loss, updates
 
 
 
 def MultiGPUTrainWrapper(objects):
-  def __init__(self, sess, config, do_update,
+  def __init__(self, sess, config, is_training,
                w_vocab, c_vocab, o_vocab, r_vocab,
                summary_path=None):
     pass

@@ -6,7 +6,6 @@ class ModelBase(object):
   def initialize(self, sess, config, do_update):
     self.sess = sess
     self.do_update = do_update
-
     self.hidden_size = config.hidden_size
     self.max_gradient_norm = config.max_gradient_norm
 

@@ -40,7 +40,11 @@ def format_zen_han(l):
 #   return sent.replace('\n', '').split()
 
 def word_tokenizer(lowercase=False, normalize_digits=False):
-  def _tokenizer(sent):
+  '''
+  Args:
+     - flatten: Not to be used (used only in char_tokenizer)
+  '''
+  def _tokenizer(sent, flatten=None): # Arg 'flatten' is not used in this func. 
     if normalize_digits:
       sent = re.sub(_DIGIT_RE, "0", sent) 
     if lowercase:
@@ -50,7 +54,7 @@ def word_tokenizer(lowercase=False, normalize_digits=False):
 
 def char_tokenizer(special_words=set([_PAD, _BOS, _UNK, _EOS]), 
                    lowercase=False, normalize_digits=False):
-  def _tokenizer(sent):
+  def _tokenizer(sent, flatten=False):
     if normalize_digits:
       sent = re.sub(_DIGIT_RE, "0", sent) 
     if lowercase:
@@ -63,6 +67,8 @@ def char_tokenizer(special_words=set([_PAD, _BOS, _UNK, _EOS]),
       return [word]
     words = sent.replace('\n', '').split()
     chars = [word2chars(w) for w in words]
+    if flatten:
+      chars = common.flatten(chars)
     return chars
   return _tokenizer
 
@@ -191,7 +197,7 @@ class CharVocabularyBase(VocabularyBase):
 
 
 class VocabularyWithEmbedding(WordVocabularyBase):
-  def __init__(self, emb_files, source_dir="dataset/embeddings",
+  def __init__(self, emb_configs, source_dir="dataset/embeddings",
                lowercase=False, normalize_digits=False, 
                add_bos=False, add_eos=False):
     '''
@@ -200,18 +206,24 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     For OOV word, this returns zero vector.
     '''
     super(VocabularyWithEmbedding, self).__init__(add_bos=add_bos, add_eos=add_eos)
-    self.name = "_".join([f.split('.')[0] for f in emb_files])
+    self.name = "_".join([c['path'].split('.')[0] for c in emb_configs])
     self.tokenizer = word_tokenizer(lowercase=lowercase,
-                                    normalize_digits=normalize_digits) 
+                                    normalize_digits=normalize_digits)
+    print lowercase
+    #embedding_path = [os.path.join(source_dir, c['path']) for c in emb_configs]
+    self.vocab, self.rev_vocab, self.embeddings = self.init_vocab(
+      emb_configs, source_dir)
 
-    embedding_path = [os.path.join(source_dir, f) for f in emb_files]
-    self.vocab, self.rev_vocab, self.embeddings = self.init_vocab(embedding_path)
-
-  def init_vocab(self, embedding_path):
-    pretrained = [self.load(p) for p in embedding_path]
+  def init_vocab(self, emb_configs, source_dir):
+    '''
+    Todo: Separately implement the two class, that of using only one type of embedding and using multi-embeddings.
+    '''
+    pretrained = [self.load(os.path.join(source_dir, c['path']), c['format']) 
+                  for c in emb_configs]
     rev_vocab = common.flatten([e.keys() for e in pretrained])
     START_VOCAB = [_PAD, _BOS, _EOS, _UNK]
-    rev_vocab = OrderedSet(START_VOCAB + [self.tokenizer(w)[0] for w in rev_vocab])
+    rev_vocab = OrderedSet(START_VOCAB + [self.tokenizer(w, flatten=True)[0] 
+                                          for w in rev_vocab])
     vocab = collections.OrderedDict({t:i for i,t in enumerate(rev_vocab)})
 
     # Merge pretrained embeddings and allocate zero vectors to START_VOCAB.
@@ -219,7 +231,7 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     embeddings = np.array(embeddings)
     return vocab, rev_vocab, embeddings
 
-  def load(self, embedding_path, embedding_format='txt'):
+  def load(self, embedding_path, embedding_format):
     '''
     Load pretrained vocabularies.
     '''
@@ -248,3 +260,30 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     return embedding_dict
 
 
+class PredefinedVocab(VocabularyBase):
+  def init_vocab(self, embedding_path):
+    rev_vocab = self.load(embedding_path)
+    START_VOCAB = [_PAD, _BOS, _EOS, _UNK]
+    rev_vocab = OrderedSet(START_VOCAB + [self.tokenizer(w, flatten=True)[0] 
+                                          for w in rev_vocab])
+
+    vocab = collections.OrderedDict({t:i for i,t in enumerate(rev_vocab)})
+    return vocab, rev_vocab
+
+  def load(self, embedding_path, embedding_format='txt'):
+    sys.stderr.write("Loading predefined vocab from {}...\n".format(embedding_path))
+    with open(embedding_path) as f:
+      rev_vocab = [l.split()[0] for l in f]
+      sys.stderr.write("Done loading the vocabulary.\n")
+    return rev_vocab
+
+  
+
+class PredefinedCharVocab(CharVocabularyBase, PredefinedVocab):
+  def __init__(self, embedding_path,
+               lowercase=False, normalize_digits=False, 
+               add_bos=False, add_eos=False):
+    super(PredefinedCharVocab, self).__init__(add_bos=add_bos, add_eos=add_eos)
+    self.tokenizer = char_tokenizer(lowercase=lowercase,
+                                    normalize_digits=normalize_digits)
+    self.vocab, self.rev_vocab = self.init_vocab(embedding_path)

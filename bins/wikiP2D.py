@@ -10,83 +10,35 @@ from core.utils import common, tf_utils
 import core.models.wikiP2D.mtl as model
 from core.dataset.wikiP2D import WikiP2DDataset, DemoBatch
 from core.dataset.coref import CoNLL2012CorefDataset
-from core.vocabulary.base import VocabularyWithEmbedding
-
-
-tf.app.flags.DEFINE_string("model_type", "MeanLoss", "")
-tf.app.flags.DEFINE_string("w2p_dataset", "Q5O15000R300.micro.bin", "")
-
-## Hyperparameters
-tf.app.flags.DEFINE_integer("max_epoch", 50, "")
-tf.app.flags.DEFINE_integer("batch_size", 128, "")
-tf.app.flags.DEFINE_integer("hidden_size", 100, "")
-tf.app.flags.DEFINE_float("learning_rate", 1e-3, "Learning rate.")
-#tf.app.flags.DEFINE_float("decay_rate", 0.999, "")
-tf.app.flags.DEFINE_float("decay_rate", 0.999, "")
-tf.app.flags.DEFINE_integer("decay_frequency", 100, "")
-tf.app.flags.DEFINE_float("in_keep_prob", 1.0, "Dropout rate.")
-tf.app.flags.DEFINE_float("out_keep_prob", 0.75, "Dropout rate.")
-tf.app.flags.DEFINE_integer("num_layers", 1, "")
-tf.app.flags.DEFINE_float("max_gradient_norm", 5.0,
-                          "Clip gradients to this norm.")
-tf.app.flags.DEFINE_string("cell_type", "GRUCell", "Cell type")
-
-tf.app.flags.DEFINE_boolean("graph_task", False,  "Whether to run graph link predction task.")
-tf.app.flags.DEFINE_boolean("desc_task", False,  "Whether to run description generation task.")
-tf.app.flags.DEFINE_boolean("coref_task", True,  "Whether to run description coreference resolution task.")
-
-
-## Text processing methods
-tf.app.flags.DEFINE_boolean("cbase", True,  "Whether to make the model character-based or not.")
-tf.app.flags.DEFINE_boolean("wbase", True,  "Whether to make the model word-based or not.")
-tf.app.flags.DEFINE_integer("w_vocab_size", 50000, "")
-tf.app.flags.DEFINE_integer("c_vocab_size", 1000, "")
-tf.app.flags.DEFINE_integer("w_embedding_size", 300, "This parameter is ignored when using pretrained embeddings.")
-tf.app.flags.DEFINE_integer("c_embedding_size", 8, "")
-tf.app.flags.DEFINE_boolean("lowercase", True,  "")
-tf.app.flags.DEFINE_boolean("use_pretrained_emb", True,  "")
-tf.app.flags.DEFINE_boolean("trainable_emb", False,  "Whether to train pretrained embeddings (if not pretrained, this parameter always becomes True)")
-tf.app.flags.DEFINE_string("embeddings", "glove.840B.300d.txt.filtered,turian.50d.txt",  "")
-
-## Coref
-tf.app.flags.DEFINE_integer("f_embedding_size", 20, "")
-tf.app.flags.DEFINE_integer("max_antecedents", 250, "")
-tf.app.flags.DEFINE_integer("max_training_sentences", 50, "")
-tf.app.flags.DEFINE_float("mention_ratio", 0.4, "")
-tf.app.flags.DEFINE_integer("max_mention_width", 10, "")
-tf.app.flags.DEFINE_boolean("use_features", True,  "")
-tf.app.flags.DEFINE_boolean("use_metadata", True,  "")
-tf.app.flags.DEFINE_boolean("model_heads", True,  "")
-tf.app.flags.DEFINE_integer("ffnn_depth", 2, "")
-
-## Graph
-tf.app.flags.DEFINE_integer("max_a_sent_length", 40, "")
-tf.app.flags.DEFINE_integer("n_triples", 0, "If 0, all positive triples are used per an article.")
-##Desc
-tf.app.flags.DEFINE_integer("max_d_sent_length", 40, "")
+from core.vocabulary.base import VocabularyWithEmbedding, PredefinedCharVocab
 
 class MTLManager(BaseManager):
   @common.timewatch()
   def __init__(self, FLAGS, sess):
     # If embeddings are not pretrained, make trainable True.
-    FLAGS.trainable_emb = FLAGS.trainable_emb or not FLAGS.use_pretrained_emb
     super(MTLManager, self).__init__(FLAGS, sess)
-    self.model_type = getattr(model, FLAGS.model_type)
+    self.config.trainable_emb = self.config.trainable_emb or not self.config.use_pretrained_emb
+    self.model_type = getattr(model, self.config.model_type)
     self.FLAGS = FLAGS
     self.reuse = None
 
-    if FLAGS.use_pretrained_emb:
-      emb_files = FLAGS.embeddings.split(',')
-      self.w_vocab = VocabularyWithEmbedding(emb_files, lowercase=FLAGS.lowercase)
-      self.c_vocab = None
+    if self.config.use_pretrained_emb:
+      self.w_vocab = VocabularyWithEmbedding(
+        self.config.embeddings,
+        source_dir=self.config.embeddings_dir,
+        lowercase=self.config.lowercase)
+      self.c_vocab = PredefinedCharVocab(
+        os.path.join(self.config.embeddings_dir, self.config.char_vocab_path),
+        lowercase=self.config.lowercase,
+      )
     else:
       self.w_vocab = None
       self.c_vocab = None
 
     self.w2p_dataset = WikiP2DDataset(
-      FLAGS.w_vocab_size, FLAGS.c_vocab_size,
-      filename=FLAGS.w2p_dataset,
-      lowercase=FLAGS.lowercase,
+      self.config.w_vocab_size, self.config.c_vocab_size,
+      filename=self.config.wikiP2D.dataset,
+      lowercase=self.config.lowercase,
       w_vocab=self.w_vocab, c_vocab=self.c_vocab
     )
     self.w_vocab = self.w2p_dataset.w_vocab
@@ -106,48 +58,50 @@ class MTLManager(BaseManager):
 
   def get_batch(self, batch_type):
     batches = {}
-    FLAGS = self.FLAGS
     if batch_type == 'train':
       do_shuffle = True
       batches['wikiP2D'] = self.w2p_dataset.train.get_batch(
-        FLAGS.batch_size, do_shuffle=do_shuffle,
-        min_sentence_length=None, max_sentence_length=FLAGS.max_a_sent_length,
-      n_pos_triples=FLAGS.n_triples)
-      batches['coref'] = self.coref_dataset.train.get_batch(1, do_shuffle=do_shuffle)
+        self.config.wikiP2D.batch_size, do_shuffle=do_shuffle,
+        min_sentence_length=None, 
+        max_sentence_length=self.config.wikiP2D.max_sent_length.encode,
+        n_pos_triples=self.config.wikiP2D.n_triples)
+
+      batches['coref'] = self.coref_dataset.train.get_batch(
+        self.config.coref.batch_size, do_shuffle=do_shuffle)
+
     elif batch_type == 'valid':
       do_shuffle = False
       batches['wikiP2D'] = self.w2p_dataset.valid.get_batch(
-        FLAGS.batch_size, do_shuffle=do_shuffle,
-        min_sentence_length=None, max_sentence_length=FLAGS.max_a_sent_length,
-        n_pos_triples=FLAGS.n_triples)
-      batches['coref'] = self.coref_dataset.valid.get_batch(1, do_shuffle=do_shuffle)
+        self.config.wikiP2D.batch_size, do_shuffle=do_shuffle,
+        min_sentence_length=None, 
+        max_sentence_length=self.config.wikiP2D.max_sent_length.encode,
+        n_pos_triples=self.config.wikiP2D.n_triples)
+      batches['coref'] = self.coref_dataset.valid.get_batch(
+        self.config.coref.batch_size, do_shuffle=do_shuffle)
     elif batch_type == 'test':
       do_shuffle = False
       batches['wikiP2D'] = self.w2p_dataset.test.get_batch(
-        FLAGS.batch_size, do_shuffle=do_shuffle,
-        min_sentence_length=None, max_sentence_length=None,
-        n_pos_triples=FLAGS.n_triples)
-      batches['coref'] = self.coref_dataset.test.get_batch(1, do_shuffle=do_shuffle)
+        self.config.wikiP2D.batch_size, do_shuffle=do_shuffle,
+        min_sentence_length=None, 
+        max_sentence_length=self.config.wikiP2D.max_sent_length.encode,
+        n_pos_triples=self.config.wikiP2D.n_triples)
+      batches['coref'] = self.coref_dataset.test.get_batch(
+        self.config.coref.batch_size, do_shuffle=do_shuffle)
     return batches
 
   @common.timewatch()
-  def create_model(self, FLAGS, mode, write_summary=True):
+  def create_model(self, config, mode, write_summary=True):
     if mode == 'train':
-      config = FLAGS
-      do_update = True
+      is_training = True
     elif mode == 'valid' or mode == 'test':
-      config = copy.deepcopy(FLAGS)
-      config.in_keep_prob = 1.0
-      config.out_keep_prob = 1.0
-      do_update = False
+      is_training = False
     else:
       raise ValueError("The argument \'mode\' must be \'train\', \'valid\', or \'test\'.")
-    #summary_path = os.path.join(self.SUMMARIES_PATH, mode) if write_summary else None
     summary_path = self.SUMMARIES_PATH if write_summary else None
     with tf.name_scope(mode):
       with tf.variable_scope("Model", reuse=self.reuse):
         m = self.model_type(
-          self.sess, config, do_update, mode,
+          self.sess, config, is_training, mode,
           self.w_vocab, self.c_vocab, # for encoder
           self.o_vocab, self.r_vocab, # for graph
           self.speaker_vocab, self.genre_vocab, # for coref
@@ -155,7 +109,7 @@ class MTLManager(BaseManager):
 
     ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
     if not self.saver:
-      self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.max_to_keep)
+      self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=self.config.max_to_keep)
     if ckpt and os.path.exists(ckpt.model_checkpoint_path + '.index'):
       if not self.reuse:
         logger.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
@@ -164,30 +118,26 @@ class MTLManager(BaseManager):
       if not self.reuse:
         logger.info("Created model with fresh parameters.")
       tf.global_variables_initializer().run()
-      with open(FLAGS.checkpoint_path + '/variables/variables.list', 'w') as f:
+      variables_path = self.FLAGS.checkpoint_path + '/variables/variables.list'
+      with open(variables_path, 'w') as f:
         f.write('\n'.join([v.name for v in tf.global_variables()]) + '\n')
     #if not self.summary_writer:
     if not self.summary_writer[mode]:
-      #self.summary_writer = tf.summary.FileWriter(self.SUMMARIES_PATH, self.sess.graph)
       self.summary_writer[mode] = tf.summary.FileWriter(os.path.join(self.SUMMARIES_PATH, mode), self.sess.graph)
     self.reuse = True
     return m
 
   @common.timewatch(logger)
   def train(self):
-    FLAGS = self.FLAGS
-
-    #with tf.name_scope('train'):
-    mtrain = self.create_model(FLAGS, 'train')
-    #with tf.name_scope('valid'):
-    mvalid = self.create_model(FLAGS, 'valid')
+    mtrain = self.create_model(self.config, 'train')
+    mvalid = self.create_model(self.config, 'valid')
 
     if mtrain.epoch.eval() == 0:
       logger.info("Dataset stats (WikiP2D)")
       logger.info("(train) articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.train.size))
       logger.info("(valid) articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.valid.size))
       logger.info("(test)  articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.test.size))
-    for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
+    for epoch in xrange(mtrain.epoch.eval(), self.config.max_epoch):
       batches = self.get_batch('train')
       epoch_time, step_time, train_loss, summary = mtrain.train_or_valid(batches)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, train_loss))
@@ -222,7 +172,7 @@ class MTLManager(BaseManager):
         tmp_checkpoint_path = os.path.join(self.CHECKPOINTS_PATH, 
                                            "model.ctmp.ckpt")
         tf_utils.copy_checkpoint(ckpt.model_checkpoint_path, tmp_checkpoint_path)
-        mtest = self.create_model(self.FLAGS, mode)
+        mtest = self.create_model(self.config, mode)
         print "Found a new checkpoint: %s" % ckpt.model_checkpoint_path
         output_path = self.TESTS_PATH + '/c_test.%s.ep%02d' % (mode, mtest.epoch.eval())
         batches = self.get_batch(mode)[mtest.coref.dataset]
@@ -246,9 +196,8 @@ class MTLManager(BaseManager):
   def g_test(self):
     test_data = self.w2p_dataset.test
 
-    #with tf.name_scope('test'):
     if not mtest:
-      mtest= self.create_model(FLAGS, 'test')
+      mtest= self.create_model(self.config, 'test')
 
     batches = self.get_batch('test')[mtest.dataset]
     summary, res = mtest.graph.test(batches)
@@ -257,14 +206,12 @@ class MTLManager(BaseManager):
 
     output_path = self.TESTS_PATH + '/g_test.ep%02d' % mtest.epoch.eval()
     with open(output_path, 'w') as f:
-      #mtest.graph.print_results(batches, scores, ranks, output_file=None)
       mtest.graph.print_results(batches, scores, ranks, output_file=f)
 
     logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (mtest.epoch.eval(), mrr, hits_10))
 
   def demo(self):
-    with tf.name_scope('demo'):
-      mtest= self.create_model(self.FLAGS, 'test')
+    mtest= self.create_model(self.self.config, 'test')
 
     # for debug
     parser = common.get_parser()

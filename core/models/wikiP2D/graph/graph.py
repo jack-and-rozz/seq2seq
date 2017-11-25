@@ -38,12 +38,13 @@ triples : [None, 2 (relation_id, object_id)]
 """
 class GraphLinkPrediction(ModelBase):
 #class GraphLinkPrediction(object):
-  def __init__(self, sess, config, encoder, o_vocab, r_vocab,
+  def __init__(self, sess, config, is_training, encoder, o_vocab, r_vocab,
                activation=tf.nn.tanh):
     self.name = 'graph'
     self.dataset = 'wikiP2D'
     self.sess = sess
     self.encoder = encoder
+    self.is_training = is_training
     self.activation = activation
     self.scoring_function = distmult
     self.max_batch_size = config.batch_size # for tf.dynamic_partition

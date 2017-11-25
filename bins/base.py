@@ -1,6 +1,6 @@
 #coding: utf-8
 from __future__ import absolute_import
-
+from pprint import pprint
 import sys, os, random
 from logging import FileHandler
 import numpy as np
@@ -13,12 +13,15 @@ from core.utils import common
 random.seed(0)
 np.random.seed(0)
 
-tf.app.flags.DEFINE_integer("max_to_keep", 10, "Number of checkpoints to be kept")
 
 ## temporal flags (not saved in config)
 tf.app.flags.DEFINE_string("mode", "train", "")
 tf.app.flags.DEFINE_string("log_file", "train.log", "")
-tf.app.flags.DEFINE_string('checkpoint_path', '/tmp/model.ckpt', 'Directory to savev the trained model.')
+tf.app.flags.DEFINE_string('checkpoint_path', '/tmp/model.ckpt', 
+                           'Directory to save the trained model.')
+tf.app.flags.DEFINE_string('config_path', 'configs/experiments.conf', '')
+
+
 log_file = tf.app.flags.FLAGS.log_file if tf.app.flags.FLAGS.log_file else None
 logger = common.logManager(handler=FileHandler(log_file)) if log_file else common.logManager()
 
@@ -33,6 +36,14 @@ class BaseManager(object):
     self.VARIABLES_PATH = FLAGS.checkpoint_path +'/variables'
     self.SUMMARIES_PATH = FLAGS.checkpoint_path + '/summaries'
     self.sess = sess
+    self.config = common.get_config(FLAGS.config_path)['main']
+    config_restored_path = os.path.join(FLAGS.checkpoint_path, 'experiments.conf')
+    #if not os.path.exists(config_restored_path):
+    with open(config_restored_path, 'w') as f:
+      sys.stdout = f
+      common.print_config(self.config)
+      sys.stdout = sys.__stdout__
+    self.config = common.recDotDict(self.config)
 
   def create_dir(self):
     FLAGS = self.FLAGS
@@ -48,10 +59,15 @@ class BaseManager(object):
       os.makedirs(self.SUMMARIES_PATH)
 
   def save_config(self):
-    flags_dir = self.FLAGS.__dict__['__flags']
-    with open(self.FLAGS.checkpoint_path + '/config', 'w') as f:
-      for k,v in flags_dir.items():
-        if not k in self.TMP_FLAGS:
-          f.write('%s=%s\n' % (k, str(v)))
+    with open(self.FLAGS.checkpoint_path + '/experiments.conf', 'w') as f:
+      sys.stdout = f
+      common.print_config(self.config)
+      sys.stdout = sys.__stdout__
+
+    # flags_dir = self.FLAGS.__dict__['__flags']
+    # with open(self.FLAGS.checkpoint_path + '/config', 'w') as f:
+    #   for k,v in flags_dir.items():
+    #     if not k in self.TMP_FLAGS:
+    #       f.write('%s=%s\n' % (k, str(v)))
 
 
