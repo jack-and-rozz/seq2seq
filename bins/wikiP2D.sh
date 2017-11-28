@@ -17,19 +17,19 @@ bin_file=bins/wikiP2D.py
 checkpoint_path=${argv[0]}
 mode=${argv[1]}
 config_path=${argv[2]}
-
+config_file=experiments.conf
 log_file=$checkpoint_path/${mode}.log
+
 if [ "${config_path}" = "" ]; then
     if [[ "${mode}" =~ "train" ]]; then
-	if [ -e ${checkpoint_path}/config ]; then
-	    #config_path=${checkpoint_path}/config
-	    config_path=${checkpoint_path}/experiments.conf
+	if [ -e ${checkpoint_path}/${config_file} ]; then
+	    config_path=${checkpoint_path}/${config_file}
 	else
 	    echo "specify config file when start training from scratch."
 	    exit 1
 	fi
     else
-	config_path=${checkpoint_path}/experiments.conf
+	config_path=${checkpoint_path}/${config_file}
     fi
 fi
 
@@ -66,13 +66,14 @@ run(){
     if [ ! ${output_log} = "" ]; then
 	log_file=$checkpoint_path/logs/$(date +'%Y%m%d-%H%M')
 	echo 'output_log='$log_file.*
-	python -B $bin_file $params --mode=${mode} > $log_file.log 2>$log_file.err &
+	python -B $bin_file --mode=${mode} $params > $log_file.log 2>$log_file.err &
 
     else
-	python -B $bin_file $params --mode=${mode}  &
+	python -B $bin_file --mode=${mode} $params  &
     fi
     if [[ "${mode}" =~ "train" ]]; then
-	python -B $bin_file $params --mode=c_test  &
+	wait
+	#python -B $bin_file $params --mode=c_test  &
     fi
 
     wait
