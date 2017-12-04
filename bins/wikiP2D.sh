@@ -29,6 +29,9 @@ if [ "${config_path}" = "" ]; then
 	    exit 1
 	fi
     else
+	if [ "${config_path}" != "" ]; then
+	    echo "The configuration of trained models is not overwritten."
+	fi
 	config_path=${checkpoint_path}/${config_file}
     fi
 fi
@@ -71,10 +74,10 @@ run(){
     else
 	python -B $bin_file --mode=${mode} $params  &
     fi
-    if [[ "${mode}" =~ "train" ]]; then
-	wait
-	#python -B $bin_file $params --mode=c_test  &
-    fi
+    # if [[ "${mode}" =~ "train" ]]; then
+    # 	wait
+    # 	#python -B $bin_file $params --mode=c_test  &
+    # fi
 
     wait
 }

@@ -18,7 +18,7 @@ def batch_dot(t1, t2, n_unk_dims=1):
 def shape(x, dim):
   return x.get_shape()[dim].value or tf.shape(x)[dim]
 
-def linear(inputs, output_size, out_keep_prob=None,
+def linear(inputs, output_size,
            activation=tf.nn.tanh, scope=None):
   """
   Args:
@@ -43,8 +43,7 @@ def linear(inputs, output_size, out_keep_prob=None,
     else:
       ValueError("linear with rank {} not supported".format(inputs_rank))
 
-    if out_keep_prob is not None and out_keep_prob < 1.0:
-      outputs = tf.nn.dropout(outputs, out_keep_prob)
+    #if out_keep_prob is not None and out_keep_prob < 1.0:
     return outputs
 
 def cnn(inputs, filter_sizes=[3, 4, 5], num_filters=50):

@@ -4,6 +4,7 @@ from tensorflow.python.platform import gfile
 from orderedset import OrderedSet
 import core.utils.common as common
 import numpy as np
+from sklearn.preprocessing import normalize
 
 _PAD = "_PAD"
 _BOS = "_BOS"
@@ -199,6 +200,7 @@ class CharVocabularyBase(VocabularyBase):
 class VocabularyWithEmbedding(WordVocabularyBase):
   def __init__(self, emb_configs, source_dir="dataset/embeddings",
                lowercase=False, normalize_digits=False, 
+               normalize_embedding=True,
                add_bos=False, add_eos=False):
     '''
     All pretrained embeddings must be under the source_dir.'
@@ -209,7 +211,7 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     self.name = "_".join([c['path'].split('.')[0] for c in emb_configs])
     self.tokenizer = word_tokenizer(lowercase=lowercase,
                                     normalize_digits=normalize_digits)
-    print lowercase
+    self.normalize_embedding = normalize_embedding
     #embedding_path = [os.path.join(source_dir, c['path']) for c in emb_configs]
     self.vocab, self.rev_vocab, self.embeddings = self.init_vocab(
       emb_configs, source_dir)
@@ -229,6 +231,8 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     # Merge pretrained embeddings and allocate zero vectors to START_VOCAB.
     embeddings = [common.flatten([emb[w] for emb in pretrained]) for w in vocab]
     embeddings = np.array(embeddings)
+    if self.normalize_embedding:
+      embeddings = normalize(embeddings, axis=1)
     return vocab, rev_vocab, embeddings
 
   def load(self, embedding_path, embedding_format):

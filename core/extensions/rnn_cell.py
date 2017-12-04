@@ -29,20 +29,38 @@
 # from tensorflow.python.util import nest
 import tensorflow as tf
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell
+import rnn_cell
 
 # Shared rnn_cell classes.
 
 #class SharedGRUCell(core_rnn_cell.GRUCell):
+
+
 class GRUCell(core_rnn_cell.GRUCell):
   def __init__(self, num_units, input_size=None, activation=tf.nn.tanh,
                reuse=None):
     core_rnn_cell.GRUCell.__init__(self, num_units, input_size, activation)
     self.my_scope = None
 
-  def __call__(self, a, b, _scope=None):
+  def __call__(self, inputs, state, _scope=None):
     # _scope is not used (Hold the scope that was called in the beginning)
     if self.my_scope == None:
       self.my_scope = tf.get_variable_scope()
     else:
       self.my_scope.reuse_variables()
-    return core_rnn_cell.GRUCell.__call__(self, a, b, self.my_scope)
+    return core_rnn_cell.GRUCell.__call__(self, inputs, state, self.my_scope)
+
+
+# class CustomLSTMCell(CustomLSTMCell):
+#   def __init__(self, num_units, input_size=None, activation=tf.nn.tanh,
+#                reuse=None):
+#     rnn_cell.CustomLSTMCell.__init__(self, num_units, input_size, activation)
+#     self.my_scope = None
+
+#   def __call__(self, inputs, state, _scope=None):
+#     # _scope is not used (Hold the scope that was called in the beginning)
+#     if self.my_scope == None:
+#       self.my_scope = tf.get_variable_scope()
+#     else:
+#       self.my_scope.reuse_variables()
+#     return rnn_cell.CustomLSTMCell.__call__(self, inputs, state, self.my_scope)

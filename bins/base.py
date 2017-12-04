@@ -38,10 +38,11 @@ class BaseManager(object):
     self.sess = sess
     self.config = common.get_config(FLAGS.config_path)
     config_restored_path = os.path.join(FLAGS.checkpoint_path, 'experiments.conf')
-    with open(config_restored_path, 'w') as f:
-      sys.stdout = f
-      common.print_config(self.config)
-      sys.stdout = sys.__stdout__
+    if not os.path.exists(config_restored_path):
+      with open(config_restored_path, 'w') as f:
+        sys.stdout = f
+        common.print_config(self.config)
+        sys.stdout = sys.__stdout__
     self.config = common.recDotDict(self.config)['main']
     
   def create_dir(self):

@@ -49,6 +49,7 @@ class GraphLinkPrediction(ModelBase):
     self.scoring_function = distmult
     self.max_batch_size = config.batch_size # for tf.dynamic_partition
     self.max_sent_length = config.max_a_sent_length
+    self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
 
     # Placeholders
     ## The length of sentences is increased by 2, because BOS and EOS are inserted at the start and the end of a sent.
@@ -168,8 +169,9 @@ class GraphLinkPrediction(ModelBase):
     ranks = [[evaluation.get_rank(scores_by_pt) for scores_by_pt in scores_by_art] for scores_by_art in scores]
     return scores, ranks #[batch_size, p]
 
-  def get_input_feed(self, batch):
+  def get_input_feed(self, batch, is_training):
     input_feed = {}
+    input_feed[self.is_training] = is_training
     ## Sentences
     if len(batch['c_articles']) != len(batch['w_articles']) or len(batch['link_spans']) != len(batch['w_articles']):
       raise ValueError('The length of \'w_articles\', \'c_articles\', and \'link_spans\' must be equal (must have the same number of entity)')
@@ -224,7 +226,7 @@ class GraphLinkPrediction(ModelBase):
     ranks = []
     t = time.time()
     for i, raw_batch in enumerate(batches):
-      input_feed = self.get_input_feed(raw_batch)
+      input_feed = self.get_input_feed(raw_batch, False)
       outputs = self.sess.run(self.outputs, input_feed)
       positives, negatives = outputs
       _scores, _ranks = self.summarize_results(raw_batch, positives, negatives)
