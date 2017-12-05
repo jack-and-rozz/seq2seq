@@ -54,13 +54,10 @@ class CoreferenceResolution(ModelBase):
       self.genre_emb = self.initialize_embeddings('genre', [genre_vocab.size, self.feature_size])
       self.mention_width_emb = self.initialize_embeddings("mention_width", [self.max_mention_width, self.feature_size])
       self.mention_distance_emb = self.initialize_embeddings("mention_distance", [10, self.feature_size])
-    outputs, state = encoder.encode([self.w_sentences, self.c_sentences], 
-                                    self.sentence_length)
-    print 'encoder_outputs',outputs
-    print 'encoder_state', state
+    text_emb, text_outputs, state = encoder.encode([self.w_sentences, self.c_sentences], self.sentence_length)
 
     with tf.name_scope('predictions_and_loss'):
-      self.predictions, self.loss = self.get_predictions_and_loss(outputs, self.sentence_length, self.speaker_ids, self.genre, self.gold_starts, self.gold_ends, self.cluster_ids)
+      self.predictions, self.loss = self.get_predictions_and_loss(text_emb, text_outputs, self.sentence_length, self.speaker_ids, self.genre, self.gold_starts, self.gold_ends, self.cluster_ids)
 
     self.outputs = [self.predictions]
 
@@ -69,7 +66,7 @@ class CoreferenceResolution(ModelBase):
                                          name='coref_loss')
 
 
-  def get_predictions_and_loss(self, text_emb, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids):
+  def get_predictions_and_loss(self, text_emb, text_outputs, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids):
     with tf.name_scope('ReshapeEncoderOutputs'):
       num_sentences = tf.shape(text_emb)[0]
       max_sentence_length = tf.shape(text_emb)[1]
@@ -81,9 +78,7 @@ class CoreferenceResolution(ModelBase):
 
       flattened_sentence_indices = self.flatten_emb_by_sentence(sentence_indices, text_len_mask) # [num_words]
       flattened_text_emb = self.flatten_emb_by_sentence(text_emb, text_len_mask) # [num_words]
-      print 'text_emb', text_emb
-      print 'flattened_text_emb', flattened_text_emb
-      #exit(1)
+      text_outputs = self.flatten_emb_by_sentence(text_outputs, text_len_mask)
 
     with tf.name_scope('SpanCandidates'):
       candidate_starts, candidate_ends = coref_ops.spans(
@@ -93,11 +88,9 @@ class CoreferenceResolution(ModelBase):
       candidate_ends.set_shape([None])
 
     with tf.name_scope('Mentions'):
-      text_outputs = flattened_text_emb
       # TODO: text_embとtext_outputsは別物
       candidate_mention_emb = self.get_mention_emb(flattened_text_emb, text_outputs, candidate_starts, candidate_ends) # [num_candidates, emb]
 
-      
       candidate_mention_scores =  self.get_mention_scores(candidate_mention_emb) # [num_mentions, 1]
       candidate_mention_scores = tf.squeeze(candidate_mention_scores, 1) # [num_mentions]
 
@@ -267,6 +260,13 @@ class CoreferenceResolution(ModelBase):
     input_feed[self.cluster_ids] = np.array(cluster_ids)
     input_feed[self.speaker_ids] = np.array(speaker_ids)
     input_feed[self.genre] = np.array(genre)
+
+    # with open('feed_dict.txt', 'w') as f:
+    #   sys.stdout = f
+    #   for k,v in input_feed.items():
+    #     print k.name, v
+    #   sys.stdout = sys.__stdout__
+    #   exit(1)
 
     return input_feed
 

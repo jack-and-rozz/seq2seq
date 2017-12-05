@@ -156,6 +156,18 @@ class MTLManager(BaseManager):
 
   @common.timewatch(logger)
   def c_test(self, mode="valid"): # mode: 'valid' or 'test'
+    ##############################################
+    ## DEBUG
+    conll_eval_path = {
+      'train': 'dataset/coref/source/train.english.v4_auto_conll',
+      'valid': 'dataset/coref/source/dev.english.v4_auto_conll',
+      'test': 'dataset/coref/source/test.english.v4_gold_conll',
+    }
+    m = self.create_model(self.config, mode)
+    batches = self.get_batch(mode)[m.coref.dataset]
+    eval_summary, f1 = m.coref.test(batches, conll_eval_path[mode])
+    exit(1)
+    ############################################
     evaluated_checkpoints = set()
     max_f1 = 0.0
     conll_eval_path = {
