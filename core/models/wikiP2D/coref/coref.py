@@ -1,6 +1,6 @@
 # coding: utf-8 
 import operator
-import math, time, sys
+import math, time, sys, random
 import tensorflow as tf
 from core.utils import common, tf_utils
 from core.models.base import ModelBase
@@ -19,6 +19,7 @@ class CoreferenceResolution(ModelBase):
     self.encoder = encoder
     #self.speaker_vocab = speaker_vocab
     self.genre_vocab = genre_vocab
+    
 
     self.activation = activation
 
@@ -28,6 +29,7 @@ class CoreferenceResolution(ModelBase):
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
     self.feature_size = config.f_embedding_size
     self.max_mention_width = config.max_mention_width
+    self.max_training_sentences = config.max_training_sentences
     self.mention_ratio = config.mention_ratio
     self.max_antecedents = config.max_antecedents
     self.use_features = config.use_features
@@ -233,7 +235,6 @@ class CoreferenceResolution(ModelBase):
     return starts, ends
 
   def get_input_feed(self, batch, is_training):
-    print 'get_input'
     input_feed = {}
     clusters = batch["clusters"]
     c_sentences = batch['c_sentences']
@@ -269,6 +270,42 @@ class CoreferenceResolution(ModelBase):
     if self.use_metadata:
       input_feed[self.speaker_ids] = np.array(speaker_ids)
       input_feed[self.genre] = np.array(genre)
+    if is_training and len(w_sentences) > self.max_training_sentences:
+      return self.truncate_example(input_feed)
+    else:
+      return input_feed
+
+  #def truncate_example(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids):
+  def truncate_example(self, input_feed):
+    #print input_feed[self.w_sentences].shape
+    #print input_feed[self.c_sentences].shape
+    #exit(1)
+    max_training_sentences = self.max_training_sentences
+    num_sentences = input_feed[self.w_sentences].shape[0]
+    assert num_sentences > max_training_sentences
+    
+
+    sentence_offset = random.randint(0, num_sentences - max_training_sentences)
+    word_offset = input_feed[self.sentence_length][:sentence_offset].sum()
+    num_words = input_feed[self.sentence_length][sentence_offset:sentence_offset + max_training_sentences].sum()
+    
+    #w_sentences = input_feed[self.w_sentences][sentence_offset:sentence_offset + max_training_sentences,:,:]
+    w_sentences = input_feed[self.w_sentences][sentence_offset:sentence_offset + max_training_sentences,:]
+    c_sentences = input_feed[self.c_sentences][sentence_offset:sentence_offset + max_training_sentences,:,:]
+    sentence_length = input_feed[self.sentence_length][sentence_offset:sentence_offset + max_training_sentences]
+    speaker_ids = input_feed[self.speaker_ids][word_offset: word_offset + num_words]
+    gold_spans = np.logical_and(input_feed[self.gold_ends] >= word_offset, input_feed[self.gold_starts] < word_offset + num_words)
+    gold_starts = input_feed[self.gold_starts][gold_spans] - word_offset
+    gold_ends = input_feed[self.gold_ends][gold_spans] - word_offset
+    cluster_ids = input_feed[self.cluster_ids][gold_spans]
+
+    input_feed[self.w_sentences] = w_sentences
+    input_feed[self.c_sentences] = c_sentences
+    input_feed[self.sentence_length] = sentence_length
+    input_feed[self.speaker_ids] = speaker_ids
+    input_feed[self.gold_starts] = gold_starts
+    input_feed[self.gold_ends] = gold_ends
+    input_feed[self.cluster_ids] = cluster_ids
     return input_feed
 
   ##############################################

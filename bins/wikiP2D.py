@@ -72,7 +72,6 @@ class MTLManager(BaseManager):
         min_sentence_length=None, 
         max_sentence_length=self.config.wikiP2D.max_sent_length.encode,
         n_pos_triples=self.config.wikiP2D.n_triples) if self.use_wikiP2D else None
-
       batches['coref'] = self.coref_dataset.train.get_batch(
         self.config.coref.batch_size, do_shuffle=do_shuffle)
 
