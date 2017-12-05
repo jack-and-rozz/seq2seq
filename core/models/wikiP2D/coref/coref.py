@@ -269,29 +269,6 @@ class CoreferenceResolution(ModelBase):
     if self.use_metadata:
       input_feed[self.speaker_ids] = np.array(speaker_ids)
       input_feed[self.genre] = np.array(genre)
-
-    with open('speaker_vocab.txt', 'w') as f:
-      sys.stdout = f
-      #print self.speaker_vocab.rev_vocab
-      sys.stdout = sys.__stdout__
-
-    with open('genre_vocab.txt', 'w') as f:
-      sys.stdout = f
-      print self.genre_vocab.rev_vocab
-      sys.stdout = sys.__stdout__
-
-    with open('feed_dict.txt', 'w') as f:
-      sys.stdout = f
-      a = []
-      for k,v in input_feed.items():
-        print k.name
-        if k.name == "Model/Coreference/Placeholder/w_sentences:0":
-          print [self.encoder.w_vocab.ids2tokens(s).split() for s in v]
-        else:
-          print v
-      sys.stdout = sys.__stdout__
-    exit(1)
-
     return input_feed
 
   ##############################################
