@@ -4,7 +4,7 @@ from tensorflow.python.platform import gfile
 from orderedset import OrderedSet
 import core.utils.common as common
 import numpy as np
-from sklearn.preprocessing import normalize
+#from sklearn.preprocessing import normalize
 
 _PAD = "_PAD"
 _BOS = "_BOS"
@@ -235,10 +235,12 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     vocab = collections.OrderedDict({t:i for i,t in enumerate(rev_vocab)})
 
     # Merge pretrained embeddings and allocate zero vectors to START_VOCAB.
-    embeddings = [common.flatten([emb[w] for emb in pretrained]) for w in vocab]
-    embeddings = np.array(embeddings)
     if self.normalize_embedding:
-      embeddings = normalize(embeddings, axis=1)
+      # Normalize the pretrained embeddings for each of the embedding types.
+      embeddings = [common.flatten([common.normalize_vector(emb[w]) for emb in pretrained]) for w in vocab]
+    else:
+      embeddings = [common.flatten([emb[w] for emb in pretrained]) for w in vocab]
+    embeddings = np.array(embeddings)
     return vocab, rev_vocab, embeddings
 
   def load(self, embedding_path, embedding_format):

@@ -1,6 +1,6 @@
 # coding: utf-8 
 import operator
-import math, time, sys, random
+import math, time, sys, random, re
 import tensorflow as tf
 from core.utils import common, tf_utils
 from core.models.base import ModelBase
@@ -270,6 +270,25 @@ class CoreferenceResolution(ModelBase):
     if self.use_metadata:
       input_feed[self.speaker_ids] = np.array(speaker_ids)
       input_feed[self.genre] = np.array(genre)
+
+    #########Debug
+    # with open('feed_dict.txt', 'w') as f:
+    #   sys.stdout = f
+    #   for k, v in input_feed.items():
+    #     if re.search('w_sentences', k.name):
+    #       print k.name
+    #       print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, self.w_sentences), input_feed)
+    #     else:
+    #       print k.name
+    #       print v
+    #   w = 'this'
+    #   w_id = self.encoder.w_vocab.token2id(w)
+    #   print w, w_id
+    #   print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, tf.constant(w_id)))
+    #   sys.stdout = sys.__stdout__
+    # exit(1)
+    #########
+
     if is_training and len(w_sentences) > self.max_training_sentences:
       return self.truncate_example(input_feed)
     else:
@@ -277,9 +296,6 @@ class CoreferenceResolution(ModelBase):
 
   #def truncate_example(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids):
   def truncate_example(self, input_feed):
-    #print input_feed[self.w_sentences].shape
-    #print input_feed[self.c_sentences].shape
-    #exit(1)
     max_training_sentences = self.max_training_sentences
     num_sentences = input_feed[self.w_sentences].shape[0]
     assert num_sentences > max_training_sentences

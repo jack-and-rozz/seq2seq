@@ -69,10 +69,10 @@ run(){
     if [ ! ${output_log} = "" ]; then
 	log_file=$checkpoint_path/logs/$(date +'%Y%m%d-%H%M')
 	echo 'output_log='$log_file.*
-	python -B $bin_file --mode=${mode} $params > $log_file.log 2>$log_file.err &
+	python -B $bin_file --mode=${mode} $params > $log_file.log 2>$log_file.err 
 
     else
-	python -B $bin_file --mode=${mode} $params  &
+	python -B $bin_file --mode=${mode} $params 
     fi
     # if [[ "${mode}" =~ "train" ]]; then
     # 	wait

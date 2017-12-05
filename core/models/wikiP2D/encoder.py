@@ -1,6 +1,6 @@
 # coding: utf-8 
+import sys
 import tensorflow as tf
-
 from core.utils import common, tf_utils
 from core.utils.tf_utils import shape, cnn, linear
 from core.seq2seq.rnn import setup_cell
@@ -35,18 +35,32 @@ class WordEncoder(ModelBase):
 
     if self.wbase:
       w_pretrained = True if isinstance(w_vocab, VocabularyWithEmbedding) else False
-      w_initializer = tf.constant_initializer(w_vocab.embeddings) if w_pretrained else None
-      w_emb_shape = w_vocab.embeddings.shape if w_pretrained else [w_vocab.size, config.w_embedding_size] 
       w_trainable = config.trainable_emb or not w_pretrained
+      if w_pretrained:
+        sys.stderr.write("Initialize word embeddings with the pretrained.\n")
+        w_initializer = tf.constant_initializer(w_vocab.embeddings)
+        w_emb_shape = w_vocab.embeddings.shape
+      else:
+        w_initializer = None
+        w_emb_shape = [w_vocab.size, config.w_embedding_size] 
+      print 'w_trainable', w_trainable
+      
       self.w_embeddings = self.initialize_embeddings('word_emb', w_emb_shape, initializer=w_initializer, trainable=w_trainable)
 
     if self.cbase:
       c_pretrained = True if isinstance(c_vocab, VocabularyWithEmbedding) else False
-      c_initializer = tf.constant_initializer(c_vocab.embeddings) if c_pretrained else None
-      c_emb_shape = w_vocab.embeddings.shape if c_pretrained else [c_vocab.size, config.c_embedding_size] 
-
       c_trainable = config.trainable_emb or not c_pretrained
+
+      if c_pretrained:
+        sys.stderr.write("Initialize character embeddings with the pretrained.\n")
+        c_initializer = tf.constant_initializer(c_vocab.embeddings)
+        c_emb_shape = c_vocab.embeddings.shape 
+      else: 
+        c_initializer = None
+        c_emb_shape = [c_vocab.size, config.c_embedding_size] 
+
       self.c_embeddings = self.initialize_embeddings('char_emb', c_emb_shape, initializer=c_initializer, trainable=c_trainable)
+      print 'c_trainable', c_trainable
 
   def encode(self, wc_inputs):
     # inputs: the list of [None, max_sentence_length] or [None, max_sentence_length, max_word_length]

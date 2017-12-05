@@ -13,6 +13,16 @@ try:
 except:
    import pickle
 
+############################################
+#       Vector
+############################################
+def normalize_vector(v):
+  norm = np.linalg.norm(v)
+  if norm > 0:
+    return v / norm
+  else:
+    return v
+
 
 ############################################
 #       Dump Data
