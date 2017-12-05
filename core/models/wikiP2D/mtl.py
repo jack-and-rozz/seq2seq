@@ -19,7 +19,7 @@ from pprint import pprint
 class WikiP2D(ModelBase):
   def __init__(self, sess, config, mode,
                w_vocab, c_vocab, o_vocab, r_vocab,
-               speaker_vocab, genre_vocab,
+               genre_vocab,
                activation=tf.nn.tanh, summary_path=None):
     self.initialize(sess, config)
     self.activation = activation
@@ -39,8 +39,7 @@ class WikiP2D(ModelBase):
     if config.coref_task:
       with tf.variable_scope("Coreference") as scope:
         self.coref = CoreferenceResolution(sess, config.coref, self.is_training,
-                                           self.encoder, 
-                                           speaker_vocab, genre_vocab,)
+                                           self.encoder, genre_vocab,)
         self.tasks.append(self.coref)
 
     if config.graph_task:

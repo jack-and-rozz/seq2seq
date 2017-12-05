@@ -19,7 +19,8 @@ class MTLManager(BaseManager):
     super(MTLManager, self).__init__(FLAGS, sess)
     self.config.trainable_emb = self.config.trainable_emb or not self.config.use_pretrained_emb
     self.model_type = getattr(model, self.config.model_type)
-    self.FLAGS = FLAGS
+    self.mode = FLAGS.mode
+    self.checkpoint_path = FLAGS.checkpoint_path
     self.reuse = None
     self.summary_writer = None
 
@@ -55,7 +56,7 @@ class MTLManager(BaseManager):
     self.coref_dataset = CoNLL2012CorefDataset(
       self.w_vocab, self.c_vocab
     )
-    self.speaker_vocab = self.coref_dataset.speaker_vocab
+    #self.speaker_vocab = self.coref_dataset.speaker_vocab
     self.genre_vocab = self.coref_dataset.genre_vocab
 
     # Defined after the computational graph is completely constracted.
@@ -102,7 +103,8 @@ class MTLManager(BaseManager):
         self.sess, config, mode,
         self.w_vocab, self.c_vocab, # for encoder
         self.o_vocab, self.r_vocab, # for graph
-        self.speaker_vocab, self.genre_vocab, # for coref
+        self.genre_vocab, # for coref
+        #self.speaker_vocab, self.genre_vocab, # for coref
       )
     if not ckpt:
       ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH) 
@@ -116,7 +118,7 @@ class MTLManager(BaseManager):
       if not self.reuse:
         logger.info("Created model with fresh parameters.")
       tf.global_variables_initializer().run()
-      variables_path = self.FLAGS.checkpoint_path + '/variables/variables.list'
+      variables_path = self.checkpoint_path + '/variables/variables.list'
       with open(variables_path, 'w') as f:
         f.write('\n'.join([v.name for v in tf.global_variables()]) + '\n')
 
@@ -154,10 +156,10 @@ class MTLManager(BaseManager):
         #logger.info("Epoch %d (valid): MRR %f, Hits@10 %f" % (epoch, mrr, hits_10))
       m.add_epoch()
 
-  @common.timewatch(logger)
-  def c_test(self, mode="valid"): # mode: 'valid' or 'test'
+  def self_test(self):
     ##############################################
     ## DEBUG
+    mode = 'valid'
     conll_eval_path = {
       'train': 'dataset/coref/source/train.english.v4_auto_conll',
       'valid': 'dataset/coref/source/dev.english.v4_auto_conll',
@@ -168,6 +170,10 @@ class MTLManager(BaseManager):
     eval_summary, f1 = m.coref.test(batches, conll_eval_path[mode])
     exit(1)
     ############################################
+
+
+  @common.timewatch(logger)
+  def c_test(self, mode="valid"): # mode: 'valid' or 'test'
     evaluated_checkpoints = set()
     max_f1 = 0.0
     conll_eval_path = {
@@ -304,6 +310,8 @@ def main(_):
       manager.c_test()
     elif FLAGS.mode == "demo":
       manager.demo()
+    elif FLAGS.mode == 'self_test':
+      manager.self_test()
     else:
       sys.stderr.write("Unknown mode.\n")
       exit(1)

@@ -103,17 +103,23 @@ class WordVocabularyBase(VocabularyBase):
     if _id < 0 or _id > len(self.rev_vocab):
       raise ValueError('Token ID must be between 0 and %d' % len(self.rev_vocab))
     elif _id in set([PAD_ID, EOS_ID, BOS_ID]):
-      return ''
+      return None
     else:
       return self.rev_vocab[_id]
 
   def ids2tokens(self, ids, link_span=None):
-    sent_tokens = [self.id2token(word_id) for word_id in ids]
-    if link_span:
-      for i in xrange(link_span[0], link_span[1]+1):
-        sent_tokens[i] = common.colored(sent_tokens[i], 'link')
+    '''
+    ids: a list of word-ids.
+    link_span : a tuple of the indices between the start and the end of a link.
+    '''
+    def _ids2tokens(ids, link_span):
+      sent_tokens = [self.id2token(word_id) for word_id in ids]
+      if link_span:
+        for i in xrange(link_span[0], link_span[1]+1):
+          sent_tokens[i] = common.colored(sent_tokens[i], 'link')
       sent_tokens = [w for w in sent_tokens if w]
-    return " ".join(sent_tokens)
+      return " ".join(sent_tokens)
+    return _ids2tokens(ids, link_span)
 
   def token2id(self, token):
     return self.vocab.get(token, UNK_ID)

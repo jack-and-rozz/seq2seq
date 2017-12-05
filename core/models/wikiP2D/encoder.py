@@ -69,7 +69,6 @@ class WordEncoder(ModelBase):
     input_feed = {}
     return input_feed
 
-
 class SentenceEncoder(ModelBase):
   def __init__(self, config, is_training, word_encoder, activation=tf.nn.tanh, 
                shared_scope=None):

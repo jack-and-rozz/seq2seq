@@ -10,12 +10,16 @@ from pprint import pprint
 
 class CoreferenceResolution(ModelBase):
   def __init__(self, sess, config, is_training, encoder, 
-               speaker_vocab, genre_vocab,
+               #speaker_vocab, genre_vocab,
+               genre_vocab,
                activation=tf.nn.tanh):
     self.name = 'coref'
     self.dataset = 'coref'
     self.sess = sess
     self.encoder = encoder
+    #self.speaker_vocab = speaker_vocab
+    self.genre_vocab = genre_vocab
+
     self.activation = activation
 
     self.is_training = is_training
@@ -229,13 +233,15 @@ class CoreferenceResolution(ModelBase):
     return starts, ends
 
   def get_input_feed(self, batch, is_training):
+    print 'get_input'
     input_feed = {}
-    input_feed[self.is_training] = is_training
     clusters = batch["clusters"]
     c_sentences = batch['c_sentences']
     w_sentences = batch['w_sentences']
-    speaker_ids = common.flatten(batch['speakers'])
+    speaker_ids = batch['speakers'] #common.flatten(batch['speakers'])
     genre = batch["genre"]
+
+    ## Texts
     if self.encoder.cbase:
       c_sentences, sentence_length, word_length = self.encoder.c_vocab.padding(c_sentences)
       input_feed[self.c_sentences] = np.array(c_sentences)
@@ -245,6 +251,7 @@ class CoreferenceResolution(ModelBase):
       input_feed[self.w_sentences] = np.array(w_sentences)
       input_feed[self.sentence_length] = np.array(sentence_length)
 
+    ## Mention spans and their clusters
     gold_mentions = sorted(tuple(m) for m in common.flatten(clusters))
     gold_mention_map = {m:i for i,m in enumerate(gold_mentions)}
     cluster_ids = np.zeros(len(gold_mentions))
@@ -253,20 +260,37 @@ class CoreferenceResolution(ModelBase):
         cluster_ids[gold_mention_map[tuple(mention)]] = cluster_id
     gold_starts, gold_ends = self.tensorize_mentions(gold_mentions)
 
-    # TODO: Add offsets to spans if BOS and EOS are added to input sentences.
     input_feed[self.gold_starts] = np.array(gold_starts)
     input_feed[self.gold_ends] = np.array(gold_ends)
-    #input_feed[self.gold_spans] = np.array(gold_mentions)
     input_feed[self.cluster_ids] = np.array(cluster_ids)
-    input_feed[self.speaker_ids] = np.array(speaker_ids)
-    input_feed[self.genre] = np.array(genre)
 
-    # with open('feed_dict.txt', 'w') as f:
-    #   sys.stdout = f
-    #   for k,v in input_feed.items():
-    #     print k.name, v
-    #   sys.stdout = sys.__stdout__
-    #   exit(1)
+    ## Metadata
+    input_feed[self.is_training] = is_training
+    if self.use_metadata:
+      input_feed[self.speaker_ids] = np.array(speaker_ids)
+      input_feed[self.genre] = np.array(genre)
+
+    with open('speaker_vocab.txt', 'w') as f:
+      sys.stdout = f
+      #print self.speaker_vocab.rev_vocab
+      sys.stdout = sys.__stdout__
+
+    with open('genre_vocab.txt', 'w') as f:
+      sys.stdout = f
+      print self.genre_vocab.rev_vocab
+      sys.stdout = sys.__stdout__
+
+    with open('feed_dict.txt', 'w') as f:
+      sys.stdout = f
+      a = []
+      for k,v in input_feed.items():
+        print k.name
+        if k.name == "Model/Coreference/Placeholder/w_sentences:0":
+          print [self.encoder.w_vocab.ids2tokens(s).split() for s in v]
+        else:
+          print v
+      sys.stdout = sys.__stdout__
+    exit(1)
 
     return input_feed
 
