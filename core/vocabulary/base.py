@@ -241,6 +241,13 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     else:
       embeddings = [common.flatten([emb[w] for emb in pretrained]) for w in vocab]
     embeddings = np.array(embeddings)
+    w = 'this'
+    w_id = vocab[w]
+    emb = embeddings[w_id]
+    print w, w_id
+    print emb
+    exit(1)
+
     return vocab, rev_vocab, embeddings
 
   def load(self, embedding_path, embedding_format):

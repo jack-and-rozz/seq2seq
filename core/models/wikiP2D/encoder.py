@@ -43,8 +43,7 @@ class WordEncoder(ModelBase):
       else:
         w_initializer = None
         w_emb_shape = [w_vocab.size, config.w_embedding_size] 
-      print 'w_trainable', w_trainable
-      
+
       self.w_embeddings = self.initialize_embeddings('word_emb', w_emb_shape, initializer=w_initializer, trainable=w_trainable)
 
     if self.cbase:
@@ -60,7 +59,6 @@ class WordEncoder(ModelBase):
         c_emb_shape = [c_vocab.size, config.c_embedding_size] 
 
       self.c_embeddings = self.initialize_embeddings('char_emb', c_emb_shape, initializer=c_initializer, trainable=c_trainable)
-      print 'c_trainable', c_trainable
 
   def encode(self, wc_inputs):
     # inputs: the list of [None, max_sentence_length] or [None, max_sentence_length, max_word_length]
