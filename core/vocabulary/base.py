@@ -238,11 +238,11 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     for i,t in enumerate(rev_vocab):
       vocab[t] = i
 
-    w = 'this'
-    w_id = vocab[w]
-    print w + '(original)', w_id 
-    print np.array(common.flatten([emb[w] for emb in pretrained]))
-    
+    # w = 'this'
+    # w_id = vocab[w]
+    # print w + '(original)', w_id 
+    # print np.array(common.flatten([emb[w] for emb in pretrained]))
+
     # Merge pretrained embeddings and allocate zero vectors to START_VOCAB.
     if self.normalize_embedding:
       # Normalize the pretrained embeddings for each of the embedding types.
