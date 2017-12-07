@@ -232,8 +232,17 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     START_VOCAB = [_PAD, _BOS, _EOS, _UNK]
     rev_vocab = OrderedSet(START_VOCAB + [self.tokenizer(w, flatten=True)[0] 
                                           for w in rev_vocab])
-    vocab = collections.OrderedDict({t:i for i,t in enumerate(rev_vocab)})
+    
+    #vocab = collections.OrderedDict({t:i for i,t in enumerate(rev_vocab)})
+    vocab = collections.OrderedDict()
+    for i,t in enumerate(rev_vocab):
+      vocab[t] = i
 
+    w = 'this'
+    w_id = vocab[w]
+    print w + '(original)', w_id 
+    print np.array(common.flatten([emb[w] for emb in pretrained]))
+    
     # Merge pretrained embeddings and allocate zero vectors to START_VOCAB.
     if self.normalize_embedding:
       # Normalize the pretrained embeddings for each of the embedding types.
@@ -241,13 +250,6 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     else:
       embeddings = [common.flatten([emb[w] for emb in pretrained]) for w in vocab]
     embeddings = np.array(embeddings)
-    w = 'this'
-    w_id = vocab[w]
-    emb = embeddings[w_id]
-    print w, w_id
-    print emb
-    exit(1)
-
     return vocab, rev_vocab, embeddings
 
   def load(self, embedding_path, embedding_format):
