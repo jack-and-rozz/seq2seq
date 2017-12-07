@@ -272,22 +272,22 @@ class CoreferenceResolution(ModelBase):
       input_feed[self.genre] = np.array(genre)
 
     #########Debug
-    if not is_training:
-      with open('feed_dict.txt', 'w') as f:
-        sys.stdout = f
-        for k, v in input_feed.items():
-          if re.search('w_sentences', k.name):
-            print k.name
-            print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, self.w_sentences), input_feed)
-          else:
-            print k.name
-            print v
-        w = 'this'
-        w_id = self.encoder.w_vocab.token2id(w)
-        print w, w_id
-        print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, tf.constant(w_id)))
-        sys.stdout = sys.__stdout__
-      exit(1)
+    # if not is_training:
+    #   with open('feed_dict.txt', 'w') as f:
+    #     sys.stdout = f
+    #     for k, v in input_feed.items():
+    #       if re.search('w_sentences', k.name):
+    #         print k.name
+    #         print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, self.w_sentences), input_feed)
+    #       else:
+    #         print k.name
+    #         print v
+    #     w = 'this'
+    #     w_id = self.encoder.w_vocab.token2id(w)
+    #     print w, w_id
+    #     print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, tf.constant(w_id)))
+    #     sys.stdout = sys.__stdout__
+    #   exit(1)
     #########
 
     if is_training and len(w_sentences) > self.max_training_sentences:
