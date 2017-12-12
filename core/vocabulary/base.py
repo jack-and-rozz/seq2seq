@@ -238,6 +238,7 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     for i,t in enumerate(rev_vocab):
       vocab[t] = i
 
+    ################ Debug code
     # w = 'this'
     # w_id = vocab[w]
     # print w + '(original)', w_id 

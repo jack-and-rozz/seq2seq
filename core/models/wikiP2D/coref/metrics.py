@@ -31,6 +31,14 @@ class CorefEvaluator(object):
     def get_prf(self):
         return self.get_precision(), self.get_recall(), self.get_f1()
 
+    def get_aligned_results(self):
+      cerfe_evaluater = filter(lambda x:x.metric == ceafe, self.evaluators)
+      if not cerfe_evaluater:
+        return None
+      else:
+        cerfe_evaluater = cerfe_evaluater[0]
+        return cerfe_evaluater.aligned_results
+
 class Evaluator(object):
     def __init__(self, metric, beta=1):
         self.p_num = 0
@@ -39,10 +47,18 @@ class Evaluator(object):
         self.r_den = 0
         self.metric = metric
         self.beta = beta
+        self.aligned_results = [] # updated only in cerfe evaluator
 
     def update(self, predicted, gold, mention_to_predicted, mention_to_gold):
         if self.metric == ceafe:
-            pn, pd, rn, rd = self.metric(predicted, gold)
+          pn, pd, rn, rd, matching = self.metric(predicted, gold)
+          aligned_result = []
+          for i, (g, p) in enumerate(matching):
+            aligned_result.append((
+              sorted(gold[g], key=lambda x:x[0]),
+              sorted(predicted[p], key=lambda x:x[0])
+            ))
+          self.aligned_results.append(aligned_result)
         else:
             pn, pd = self.metric(predicted, mention_to_gold)
             rn, rd = self.metric(gold, mention_to_predicted)
@@ -123,7 +139,7 @@ def ceafe(clusters, gold_clusters):
             scores[i, j] = phi4(gold_clusters[i], clusters[j])
     matching = linear_assignment(-scores)
     similarity = sum(scores[matching[:, 0], matching[:, 1]])
-    return similarity, len(clusters), similarity, len(gold_clusters)
+    return similarity, len(clusters), similarity, len(gold_clusters), matching
 
 
 def lea(clusters, mention_to_gold):

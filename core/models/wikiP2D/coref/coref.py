@@ -7,6 +7,7 @@ from core.models.base import ModelBase
 from core.models.wikiP2D.coref import coref_ops, conll, metrics, util
 import numpy as np
 from pprint import pprint
+from collections import OrderedDict
 
 class CoreferenceResolution(ModelBase):
   def __init__(self, sess, config, is_training, encoder, 
@@ -24,8 +25,6 @@ class CoreferenceResolution(ModelBase):
     self.activation = activation
 
     self.is_training = is_training
-    #self.in_keep_prob = config.in_keep_prob if is_training else 1.0
-    #self.out_keep_prob = config.out_keep_prob if is_training else 1.0
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
     self.feature_size = config.f_embedding_size
     self.max_mention_width = config.max_mention_width
@@ -282,6 +281,10 @@ class CoreferenceResolution(ModelBase):
     #       else:
     #         print k.name
     #         print v
+    #     w = '_UNK'
+    #     w_id = self.encoder.w_vocab.token2id(w)
+    #     print w, w_id
+    #     print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, tf.constant(w_id)))
     #     w = 'this'
     #     w_id = self.encoder.w_vocab.token2id(w)
     #     print w, w_id
@@ -329,7 +332,7 @@ class CoreferenceResolution(ModelBase):
   ##           Evaluation
   ##############################################
 
-  def test(self, batches, conll_eval_path, official_stdout=False):
+  def test(self, batches, gold_path, official_stdout=False):
     def _k_to_tag(k):
       if k == -3:
         return "oracle" # use only gold spans.
@@ -345,6 +348,8 @@ class CoreferenceResolution(ModelBase):
 
     coref_predictions = {}
     coref_evaluator = metrics.CorefEvaluator()
+    results = OrderedDict()
+
     for example_num, example in enumerate(batches):
       feed_dict = self.get_input_feed(example, False)
       gold_starts = feed_dict[self.gold_starts]
@@ -358,6 +363,8 @@ class CoreferenceResolution(ModelBase):
         #print "Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data))
         #print "Evaluated {} examples.".format(example_num + 1)
         pass
+      results[example['doc_key']] = common.dotDict({'raw_text': example['raw_text']})
+
     summary_dict = {}
     for k, evaluator in sorted(mention_evaluators.items(), key=operator.itemgetter(0)):
       tags = ["{} @ {}".format(t, _k_to_tag(k)) for t in ("R", "P", "F")]
@@ -367,7 +374,7 @@ class CoreferenceResolution(ModelBase):
         summary_dict[t] = v
       print ", ".join(results_to_print)
 
-    conll_results = conll.evaluate_conll(conll_eval_path, coref_predictions, official_stdout)
+    conll_results = conll.evaluate_conll(gold_path, coref_predictions, official_stdout)
     average_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
     summary_dict["Average F1 (conll)"] = average_f1
     print "Average F1 (conll): {:.2f}%".format(average_f1)
@@ -380,7 +387,11 @@ class CoreferenceResolution(ModelBase):
     summary_dict["Average recall (py)"] = r
     print "Average recall (py): {:.2f}%".format(r * 100)
 
-    return util.make_summary(summary_dict), average_f1
+    aligned_results = coref_evaluator.get_aligned_results()
+    for doc_key, aligned in zip(results, aligned_results):
+      results[doc_key]['aligned_results'] = aligned
+
+    return util.make_summary(summary_dict), average_f1, results
 
   def evaluate_mentions(self, candidate_starts, candidate_ends, mention_starts, mention_ends, mention_scores, gold_starts, gold_ends, example, evaluators):
     text_length = sum(len(s) for s in example["w_sentences"])
@@ -456,3 +467,55 @@ class CoreferenceResolution(ModelBase):
     predicted_clusters, mention_to_predicted = self.get_predicted_clusters(mention_starts, mention_ends, predicted_antecedents)
     evaluator.update(predicted_clusters, gold_clusters, mention_to_predicted, mention_to_gold)
     return predicted_clusters
+
+  def print_results(self, results):
+    '''
+    Args:
+       - results: An Ordereddict keyed by 'doc_key', whose elements are a dictionary that has the keys, 'raw_text' and 'aligned_results'
+    '''
+    RESET = "\033[0m"
+    BLACK = "\033[30m"
+    RED = "\033[31m"
+    UNDERLINE = '\033[4m'
+    from copy import deepcopy
+
+    def print_colored_text(raw_text, aligned):
+      # Show the gold mentions in red, and the predicted mentions with underline.
+      decorated_text = deepcopy(raw_text)
+      colored_area = set(common.flatten([common.flatten([[h for h in xrange(s, e+1)] for s,e in gold_cluster]) for (gold_cluster, _) in aligned]))
+      underlined_area = set(common.flatten([common.flatten([[h for h in xrange(s, e+1)] for s,e in predicted_cluster]) for (_, predicted_cluster) in aligned]))
+      both_area = colored_area.intersection(underlined_area)
+
+      spaces = [" " for x in xrange(len(decorated_text))]
+      for x in colored_area:
+        decorated_text[x] = RED + decorated_text[x] + RESET
+        spaces[x] = RED + spaces[x] + RESET if x+1 in colored_area else spaces[x]
+      for x in underlined_area:
+        decorated_text[x] = UNDERLINE + decorated_text[x] + RESET
+        spaces[x] = UNDERLINE + spaces[x] + RESET if x+1 in underlined_area else spaces[x]
+      for x in both_area:
+        decorated_text[x] = RED + UNDERLINE + decorated_text[x] + RESET
+        spaces[x] = RED + UNDERLINE + spaces[x] + RESET if x+1 in both_area else spaces[x]
+        
+
+      print "".join([d+s for d, s in zip(decorated_text, spaces)]).encode('utf-8')
+
+
+    for i, (doc_key, result) in enumerate(results.items()):
+      if i == 0:
+        print (type(result['raw_text'][0][0]))
+      print "===%03d===\t%s" % (i, doc_key)
+      raw_text = common.flatten(result['raw_text'])
+      aligned = result['aligned_results']
+      print '<text>'
+      print_colored_text(raw_text, aligned)
+      print ''
+      print '<cluster>'
+
+      for j, (gold_cluster, predicted_cluster) in enumerate(aligned):
+        g = [" ".join(raw_text[s:e+1]) for (s,e) in gold_cluster]
+        p = [" ".join(raw_text[s:e+1]) for (s,e) in predicted_cluster]
+        print "G%02d  " % j , g
+        print "P%02d  " % j , p
+      print ''
+      

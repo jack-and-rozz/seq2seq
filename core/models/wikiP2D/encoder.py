@@ -30,7 +30,6 @@ class WordEncoder(ModelBase):
     self.c_vocab = c_vocab
     self.hidden_size = config.hidden_size
     self.is_training = is_training
-    #self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
     self.lexical_keep_prob = 1.0 - tf.to_float(self.is_training) * config.lexical_dropout_rate
 
     if self.wbase:
@@ -136,6 +135,7 @@ class SentenceEncoder(ModelBase):
         outputs = tf.concat(outputs, 2)
         #outputs = linear(outputs, self.hidden_size, 
         #                 activation=self.activation)
+        outputs = tf.nn.dropout(outputs, self.keep_prob)
       with tf.variable_scope("state"):
         state = merge_state(state)
         #state = linear(state, self.hidden_size, 
@@ -171,43 +171,4 @@ class SentenceEncoder(ModelBase):
       spans_by_subj = tf.stack([tf.reduce_max(s, axis=0) for s in spans_by_subj], 
                                axis=0)
       return spans_by_subj
-
-  #def get_input_feed(self, batch):
-  #  input_feed = {}
-  #  return input_feed
-
-
-
-
-    #self.word_length = tf.placeholder(
-    #  tf.int32, shape=[None, self.max_sent_length+2], name="word_length")
-    # if self.cbase:
-    #   with tf.variable_scope('WordEncoder') as scope:
-    #     word_encoder = getattr(encoders, config.c_encoder_type)
-    #     if word_encoder in [encoders.RNNEncoder, 
-    #                         encoders.BidirectionalRNNEncoder]:
-    #       self.w_encoder_cell = rnn.setup_cell(
-    #         config.cell_type, config.hidden_size,
-    #         num_layers=config.num_layers, 
-    #         in_keep_prob=config.in_keep_prob, 
-    #         out_keep_prob=config.out_keep_prob,
-    #         state_is_tuple=config.state_is_tuple,
-    #         shared=True)
-    #       self.word_encoder = word_encoder(
-    #         self.w_encoder_cell, embedding=self.c_embeddings, scope=scope)
-    #     elif word_encoder in [encoders.NoneEncoder]:
-    #       self.word_encoder = word_encoder(
-    #         embedding=self.c_embeddings, scope=scope)
-
-    # with tf.name_scope('EncodeSentence'):
-    #   sentences = []
-    #   if self.wbase:
-    #     sentences.append(self.w_sentences)
-    #   if self.cbase:
-    #     sentences.append(self.c_sentences)
-    #   if not sentences:
-    #     raise ValueError('Either FLAGS.wbase or FLAGS.cbase must be True.')
-    #   self.outputs, self.states = self.encode_sentence(sentences)
-    #   self.link_outputs = self.extract_span(self.outputs, self.link_spans,
-    #                                         self.entity_indices)
 

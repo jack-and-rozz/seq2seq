@@ -96,7 +96,7 @@ class MTLManager(BaseManager):
     return batches
 
   @common.timewatch()
-  def create_model(self, config, mode, ckpt=None):
+  def create_model(self, config, mode, checkpoint_path=None):
     with tf.variable_scope("Model", reuse=self.reuse):
       m = self.model_type(
         self.sess, config, mode,
@@ -105,21 +105,23 @@ class MTLManager(BaseManager):
         self.genre_vocab, # for coref
         #self.speaker_vocab, self.genre_vocab, # for coref
       )
-    if not ckpt:
-      ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH) 
+    if not checkpoint_path:
+      checkpoint_path = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH).model_checkpoint_path
+
     if not self.saver:
       self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=self.config.max_to_keep)
-    if ckpt and os.path.exists(ckpt.model_checkpoint_path + '.index'):
+    if checkpoint_path and os.path.exists(checkpoint_path + '.index'):
       if not self.reuse:
-        logger.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
-      self.saver.restore(self.sess, ckpt.model_checkpoint_path)
+        logger.info("Reading model parameters from %s" % checkpoint_path)
+      self.saver.restore(self.sess, checkpoint_path)
     else:
       if not self.reuse:
         logger.info("Created model with fresh parameters.")
       tf.global_variables_initializer().run()
-      variables_path = self.checkpoint_path + '/variables/variables.list'
-      with open(variables_path, 'w') as f:
-        f.write('\n'.join([v.name for v in tf.global_variables()]) + '\n')
+
+    variables_path = self.checkpoint_path + '/variables/variables.list'
+    with open(variables_path, 'w') as f:
+      f.write('\n'.join([v.name + ' ' + str(v.get_shape()) for v in tf.global_variables()]) + '\n')
 
     if not self.summary_writer:
       self.summary_writer = {mode:tf.summary.FileWriter(os.path.join(self.SUMMARIES_PATH, mode), self.sess.graph) for mode in ['valid', 'test']}
@@ -180,33 +182,47 @@ class MTLManager(BaseManager):
       'valid': 'dataset/coref/source/dev.english.v4_auto_conll',
       'test': 'dataset/coref/source/test.english.v4_gold_conll',
     }
+    tmp_checkpoint_path = os.path.join(self.CHECKPOINTS_PATH, "model.ctmp.ckpt")
+    max_checkpoint_path = os.path.join(self.CHECKPOINTS_PATH, "model.cmax.ckpt")
+
+    if os.path.exists(max_checkpoint_path + '.index'):
+      sys.stderr.write('Found a checkpoint {}.\n'.format(max_checkpoint_path))
+      m = self.create_model(self.config, mode, 
+                            checkpoint_path=max_checkpoint_path)
+      batches = self.get_batch(mode)[m.coref.dataset]
+      eval_summary, f1, results = m.coref.test(batches, conll_eval_path[mode])
+      output_path = self.TESTS_PATH + '/c_test.%s.ep%02d.detailed' % (mode, m.epoch.eval())
+      sys.stderr.write('Output the predicted and gold clusters to {}.\n'.format(output_path))
+      with open(output_path, 'w') as f:
+        sys.stdout = f
+        m.coref.print_results(results)
+        sys.stdout = sys.__stdout__
+      return
+
     while True:
       time.sleep(1)
       ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
-      if ckpt and ckpt.model_checkpoint_path and ckpt.model_checkpoint_path not in evaluated_checkpoints:
+      checkpoint_path = ckpt.model_checkpoint_path if ckpt else None
+      if checkpoint_path and checkpoint_path not in evaluated_checkpoints:
         # Move it to a temporary location to avoid being deleted by the training supervisor.
-        tmp_checkpoint_path = os.path.join(self.CHECKPOINTS_PATH, 
-                                           "model.ctmp.ckpt")
-        tf_utils.copy_checkpoint(ckpt.model_checkpoint_path, tmp_checkpoint_path)
-        m = self.create_model(self.config, mode, ckpt=ckpt)
-        print "Found a new checkpoint: %s" % ckpt.model_checkpoint_path
-        output_path = self.TESTS_PATH + '/c_test.%s.ep%02d' % (mode, m.epoch.eval())
+        tf_utils.copy_checkpoint(checkpoint_path, tmp_checkpoint_path)
+        m = self.create_model(self.config, mode, checkpoint_path=checkpoint_path)
+        print "Found a new checkpoint: %s" % checkpoint_path
         batches = self.get_batch(mode)[m.coref.dataset]
+        output_path = self.TESTS_PATH + '/c_test.%s.ep%02d' % (mode, m.epoch.eval())
 
         with open(output_path, 'w') as f:
           sys.stdout = f
-          eval_summary, f1 = m.coref.test(batches, conll_eval_path[mode])
+          eval_summary, f1, results = m.coref.test(batches, conll_eval_path[mode])
           if f1 > max_f1:
             max_f1 = f1
-            max_checkpoint_path = os.path.join(self.CHECKPOINTS_PATH, 
-                                               "model.cmax.ckpt")
             tf_utils.copy_checkpoint(tmp_checkpoint_path, max_checkpoint_path)
             print "Current max F1: {:.2f}".format(max_f1)
           sys.stdout = sys.__stdout__
 
         self.summary_writer[mode].add_summary(eval_summary, m.global_step.eval())
         print "Evaluation written to {} at epoch {}".format(self.CHECKPOINTS_PATH, m.global_step.eval())
-        evaluated_checkpoints.add(ckpt.model_checkpoint_path)
+        evaluated_checkpoints.add(checkpoint_path)
 
   @common.timewatch(logger)
   def g_test(self):
@@ -290,6 +306,7 @@ def main(_):
       allow_growth=True, # True->必要になったら確保, False->全部
     )
   )
+
   with tf.Graph().as_default(), tf.Session(config=tf_config) as sess:
     tf.set_random_seed(0)
     FLAGS = tf.app.flags.FLAGS
@@ -318,3 +335,4 @@ def main(_):
 
 if __name__ == "__main__":
   tf.app.run()
+
