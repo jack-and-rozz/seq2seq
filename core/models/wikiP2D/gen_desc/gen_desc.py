@@ -26,7 +26,19 @@ class DescriptionGeneration(ModelBase):
     self.embeddings = encoder.w_embeddings
     self.w_vocab = w_vocab
 
-    self.max_sent_length = config.max_d_sent_length
+    self.max_sent_length = config.max_sent_length.decode
+
+
+    # Placeholders
+    with tf.name_scope('Placeholder'):
+      self.w_sentences = tf.placeholder(
+        tf.int32, name='w_sentences',
+        shape=[None, None]) if self.encoder.wbase else None
+      self.c_sentences = tf.placeholder(
+        tf.int32, name='c_sentences',
+        shape=[None, None, None]) if self.encoder.cbase else None
+
+      self.sentence_length = tf.placeholder(tf.int32, shape=[None], name="sentence_length")
 
     # BOS + sentence_length + EOS.
     self.descriptions = desc = tf.placeholder(

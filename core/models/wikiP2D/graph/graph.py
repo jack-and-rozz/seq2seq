@@ -37,44 +37,44 @@ link_spans : [batch_size, 2 (start, end)]
 triples : [None, 2 (relation_id, object_id)]
 """
 class GraphLinkPrediction(ModelBase):
-#class GraphLinkPrediction(object):
   def __init__(self, sess, config, is_training, encoder, o_vocab, r_vocab,
                activation=tf.nn.tanh):
     self.name = 'graph'
     self.dataset = 'wikiP2D'
     self.sess = sess
-    self.encoder = encoder
     self.is_training = is_training
+    self.encoder = encoder
+    self.o_vocab = o_vocab
+    self.r_vocab = r_vocab
     self.activation = activation
     self.scoring_function = distmult
-    self.max_batch_size = config.batch_size # for tf.dynamic_partition
-    self.max_sent_length = config.max_a_sent_length
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
+    self.max_batch_size = config.batch_size # for tf.dynamic_partition
+    self.max_sent_length = config.max_sent_length.encode
+    self.loss_weight = config.loss_weight
 
     # Placeholders
-    ## The length of sentences is increased by 2, because BOS and EOS are inserted at the start and the end of a sent.
-
-    #n_offset = self.encoder.w_vocab.n_start_offset + self.encoder.w_vocab.n_end_offset
     with tf.name_scope('Placeholder'):
-      self.w_sentences = tf.placeholder(tf.int32, name='w_sentences',
-                                        shape=[None, None])
-                                      #shape=[None, self.max_sent_length+n_offset])
-      self.c_sentences = tf.placeholder(tf.int32, name='c_sentences',
-                                      shape=[None, None, None])
-                                      #shape=[None, self.max_sent_length+n_offset, None])
+      self.w_sentences = tf.placeholder(
+        tf.int32, name='w_sentences',
+        shape=[None, None]) if self.encoder.wbase else None
+      self.c_sentences = tf.placeholder(
+        tf.int32, name='c_sentences',
+        shape=[None, None, None]) if self.encoder.cbase else None
+
       self.sentence_length = tf.placeholder(tf.int32, shape=[None], name="sentence_length")
 
-      ## Sentences of each entity are fed as a 2D Tensor (this is because the number of links is different depending on the linked entity),  we need to dynamically sort them.
-      self.entity_indices = tf.placeholder(tf.int32, shape=[None], 
+      ## Sentences of each entity are fed as a 2D Tensor (this is because the number of links (i.e. articles) is different depending on the entity),  we need to dynamically sort them.
+      self.entity_indices = tf.placeholder(tf.int32, shape=[None],
                                            name='entity_indices')
-      self.link_spans = tf.placeholder(tf.int32, shape=[None, 2], 
+      self.link_spans = tf.placeholder(tf.int32, shape=[None, 2],
                                        name='link_spans')
-      
+
       self.p_triples = tf.placeholder(tf.int32, shape=[None, 2], 
                                       name='positive_triples')
       self.n_triples = tf.placeholder(tf.int32, shape=[None, 2],
                                       name='negative_triples')
-      
+
       self.pt_indices = tf.placeholder(tf.int32, shape=[None],
                                        name='pt_indices')
       self.nt_indices = tf.placeholder(tf.int32, shape=[None],
@@ -83,22 +83,26 @@ class GraphLinkPrediction(ModelBase):
     with tf.variable_scope('Embeddings'):
       self.o_embeddings = self.initialize_embeddings('object', [o_vocab.size, config.hidden_size])
       self.r_embeddings = self.initialize_embeddings('relation', [r_vocab.size, config.hidden_size])
-    ## Define Loss
-    #with tf.name_scope("loss"):
-    outputs, state = encoder.encode([self.w_sentences, self.c_sentences], 
-                                    self.sentence_length)
-    span_outputs = encoder.extract_span(outputs, self.link_spans,
-                                        self.entity_indices,
-                                        self.max_batch_size)
 
-    with tf.name_scope('Positives'):
-      self.positives = self.inference(span_outputs, self.p_triples,
-                                      self.pt_indices)
-    with tf.name_scope('Negatives'):
-      self.negatives = self.inference(span_outputs, self.n_triples, 
+    ## Define Loss
+    text_emb, outputs, state = self.encoder.encode([self.w_sentences, self.c_sentences], self.sentence_length)
+    span_outputs = self.encoder.extract_span(outputs, self.link_spans,
+                                             self.entity_indices,
+                                             self.max_batch_size)
+
+    with tf.variable_scope('Inference'):
+      with tf.variable_scope('linear'):
+        span_outputs = tf_utils.linear(span_outputs, config.hidden_size,
+                                     activation=self.activation)
+      with tf.name_scope('Positives'):
+        self.positives = self.inference(span_outputs, self.p_triples,
+                                        self.pt_indices)
+      with tf.name_scope('Negatives'):
+        self.negatives = self.inference(span_outputs, self.n_triples, 
                                         self.nt_indices)
 
-    self.outputs = [self.positives, self.negatives]
+    #self.outputs = [self.positives, self.negatives]
+    self.outputs = [self.positives]
     self.losses = self.cross_entropy(self.positives, self.negatives)
     self.loss = tf.reduce_mean(self.losses)
 
@@ -117,6 +121,7 @@ class GraphLinkPrediction(ModelBase):
       relations, objects = tf.unstack(triples, axis=1)
       relations = self.activation(tf.nn.embedding_lookup(self.r_embeddings, relations))
       objects = self.activation(tf.nn.embedding_lookup(self.o_embeddings, objects))
+
 
       part_sbj = tf.dynamic_partition(span_repls, 
                                       tf.range(tf.shape(span_repls)[0]), 
@@ -175,6 +180,21 @@ class GraphLinkPrediction(ModelBase):
     ## Sentences
     if len(batch['c_articles']) != len(batch['w_articles']) or len(batch['link_spans']) != len(batch['w_articles']):
       raise ValueError('The length of \'w_articles\', \'c_articles\', and \'link_spans\' must be equal (must have the same number of entity)')
+    
+    ################ INPUT DEBUG
+    print '----------w_articles----------------'
+    print batch['w_articles']
+    print '-------untokenized--------'
+    for ent, wsents, csents, link_spans, p_triples in zip(batch['entities'], batch['w_articles'], batch['c_articles'], batch['link_spans'], batch['p_triples']):
+      for wsent, csent, ls in zip(wsents, csents, link_spans):
+        print self.encoder.w_vocab.ids2tokens(wsent, link_span=ls)
+        print self.encoder.c_vocab.ids2tokens(csent, link_span=ls)
+      print ent['name']
+      print p_triples
+      for r, o in p_triples:
+        print self.r_vocab.id2name(r), self.o_vocab.id2name(o)
+      exit(1)
+    ################
 
     if self.encoder.cbase:
       entity_indices, c_sentences = common.flatten_with_idx(batch['c_articles'])
@@ -196,13 +216,13 @@ class GraphLinkPrediction(ModelBase):
     input_feed[self.link_spans] = np.array(link_spans)
 
     ## Triples
-    PAD_TRIPLE = (0, 0)
-    def padding_triples(triples):
-      max_num_pt = max([len(t) for t in triples])
-      padded = [([1.0] * len(t) + [0.0] * (max_num_pt - len(t)),
-                 list(t) + [PAD_TRIPLE] * (max_num_pt - len(t))) for t in triples]
-      return map(list, zip(*padded)) # weights, padded_triples
+    # def padding_triples(triples):
+    #   max_num_pt = max([len(t) for t in triples])
+    #   padded = [([1.0] * len(t) + [0.0] * (max_num_pt - len(t)),
+    #              list(t) + [PAD_TRIPLE] * (max_num_pt - len(t))) for t in triples]
+    #   return map(list, zip(*padded)) # weights, padded_triples
 
+    PAD_TRIPLE = (0, 0)
     def fake_triples(batch_size):
       res = [([0.0], [PAD_TRIPLE]) for i in xrange(batch_size)]
       weights, triples = map(list, zip(*res))
@@ -212,13 +232,14 @@ class GraphLinkPrediction(ModelBase):
     input_feed[self.p_triples] = np.array(p_triples)
     input_feed[self.pt_indices] = np.array(pt_indices)
 
-    if batch['n_triples']:
-      n_triples = [common.flatten(t) for t in batch['n_triples']] # negative triples are divided by the corresponding positive triples.
+    #if batch['n_triples']:
+    if is_training:
+      n_triples = [common.flatten(t) for t in batch['n_triples']]
+      nt_indices, n_triples = common.flatten_with_idx(n_triples)
+      input_feed[self.n_triples] = np.array(n_triples)
+      input_feed[self.nt_indices] = np.array(nt_indices)
     else:
       _, n_triples = fake_triples(1)
-    nt_indices, n_triples = common.flatten_with_idx(n_triples)
-    input_feed[self.n_triples] = np.array(n_triples)
-    input_feed[self.nt_indices] = np.array(nt_indices)
     return input_feed
 
   def test(self, batches):

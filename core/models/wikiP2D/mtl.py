@@ -39,7 +39,8 @@ class WikiP2D(ModelBase):
     if config.coref_task:
       with tf.variable_scope("Coreference") as scope:
         self.coref = CoreferenceResolution(sess, config.coref, self.is_training,
-                                           self.encoder, genre_vocab,)
+                                           self.encoder, genre_vocab, 
+                                           activation=self.activation)
         self.tasks.append(self.coref)
 
     if config.graph_task:
@@ -47,7 +48,7 @@ class WikiP2D(ModelBase):
         self.graph = GraphLinkPrediction(sess, config.wikiP2D, self.is_training,
                                          self.encoder, 
                                          o_vocab, r_vocab,
-                                         activation=self.activation, )
+                                         activation=self.activation)
         self.tasks.append(self.graph)
 
     if config.desc_task:
@@ -56,7 +57,7 @@ class WikiP2D(ModelBase):
                                           self.encoder, w_vocab,
                                           activation=self.activation)
         self.tasks.append(self.desc)
-    self.loss, self.updates = self.get_loss_and_updates([t.loss for t in self.tasks])
+    self.loss, self.updates = self.get_loss_and_updates([t.loss * t.loss_weight for t in self.tasks])
 
     ## About outputs
     self.output_feed = {
@@ -82,27 +83,23 @@ class WikiP2D(ModelBase):
     is_training = batches['is_training']
     output_feed = self.output_feed['train'] if is_training else self.output_feed['valid']
 
-    # Automatically associate the batch that is necessary for each task.
+    # Pass a batch of each dataset that is necessary for each task.
     dataset_names = list(OrderedSet([t.dataset for t in self.tasks]))
     datasets = OrderedSet([batches[d] for d in dataset_names]) 
-
     for i, data in enumerate(zip(*datasets)):
       raw_batch = {t.name:data[dataset_names.index(t.dataset)] 
                    for t in self.tasks}
       input_feed = self.get_input_feed(raw_batch, is_training)
-      try:
-        outputs = self.sess.run(output_feed, input_feed)
-      except Exception as e:
-        print e
-        print (input_feed)
-        exit(1)
+      outputs = self.sess.run(output_feed, input_feed)
       step_loss = np.array([l for l in outputs[:n_losses]])
       print self.epoch.eval(), i, step_loss
       loss += step_loss
       if math.isnan(step_loss[0]):
         raise ValueError("Nan loss is detected.")
-      #if i == 20:
-      #  break
+      if i == 100:
+        print loss / (i+1)
+        exit(1)
+        break
 
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)
@@ -129,8 +126,9 @@ class MeanLoss(WikiP2D):
 
 class WeightedLoss(WikiP2D):
   def get_loss_and_updates(self, losses):
-    weights = tf.get_variable("loss_weights", [len(losses)])
-    loss = tf.reduce_sum(tf.nn.softmax(weights) * losses)
+    #weights = tf.get_variable("loss_weights", [len(losses)])
+    #loss = tf.reduce_sum(tf.nn.softmax(weights) * losses)
+    loss = tf.reduce_mean(losses)
     updates = self.get_updates(loss)
     return loss, updates
 

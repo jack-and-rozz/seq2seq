@@ -63,6 +63,8 @@ class WordEncoder(ModelBase):
     # inputs: the list of [None, max_sentence_length] or [None, max_sentence_length, max_word_length]
     outputs = []
     for inputs in wc_inputs:
+      if inputs is None:
+        continue
       if len(inputs.get_shape()) == 3: # char-based
         char_repls = tf.nn.embedding_lookup(self.c_embeddings, inputs)
         batch_size = tf.shape(char_repls)[0]

@@ -56,7 +56,6 @@ class MTLManager(BaseManager):
     self.coref_dataset = CoNLL2012CorefDataset(
       self.w_vocab, self.c_vocab
     )
-    #self.speaker_vocab = self.coref_dataset.speaker_vocab
     self.genre_vocab = self.coref_dataset.genre_vocab
 
     # Defined after the computational graph is completely constracted.
@@ -106,7 +105,8 @@ class MTLManager(BaseManager):
         #self.speaker_vocab, self.genre_vocab, # for coref
       )
     if not checkpoint_path:
-      checkpoint_path = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH).model_checkpoint_path
+      ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
+      checkpoint_path = ckpt.model_checkpoint_path if ckpt else None
 
     if not self.saver:
       self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=self.config.max_to_keep)

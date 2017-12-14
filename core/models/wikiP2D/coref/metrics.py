@@ -58,11 +58,12 @@ class Evaluator(object):
               sorted(gold[g], key=lambda x:x[0]),
               sorted(predicted[p], key=lambda x:x[0])
             ))
+          aligned_result = sorted(aligned_result, key=lambda x: min(x[0]))
           self.aligned_results.append(aligned_result)
         else:
             pn, pd = self.metric(predicted, mention_to_gold)
             rn, rd = self.metric(gold, mention_to_predicted)
-        self.p_num += pn
+        self.p_num += pnk
         self.p_den += pd
         self.r_num += rn
         self.r_den += rd

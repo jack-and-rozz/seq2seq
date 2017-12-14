@@ -100,8 +100,8 @@ class VocabularyBase(object):
 
 class WordVocabularyBase(VocabularyBase):
   def id2token(self, _id):
-    if _id < 0 or _id > len(self.rev_vocab):
-      raise ValueError('Token ID must be between 0 and %d' % len(self.rev_vocab))
+    if type(_id) != int or _id < 0 or _id > len(self.rev_vocab):
+      raise ValueError('Token ID must be an integer between 0 and %d (ID=%d)' % (len(self.rev_vocab), _id))
     elif _id in set([PAD_ID, EOS_ID, BOS_ID]):
       return None
     else:

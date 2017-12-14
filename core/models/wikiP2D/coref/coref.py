@@ -20,7 +20,6 @@ class CoreferenceResolution(ModelBase):
     self.encoder = encoder
     #self.speaker_vocab = speaker_vocab
     self.genre_vocab = genre_vocab
-    
 
     self.activation = activation
 
@@ -36,13 +35,17 @@ class CoreferenceResolution(ModelBase):
     self.model_heads = config.model_heads
     self.ffnn_depth = config.ffnn_depth
     self.ffnn_size = config.ffnn_size
+    self.loss_weight = config.loss_weight
 
     # Placeholders
     with tf.name_scope('Placeholder'):
-      self.w_sentences = tf.placeholder(tf.int32, name='w_sentences',
-                                        shape=[None, None])
-      self.c_sentences = tf.placeholder(tf.int32, name='c_sentences',
-                                        shape=[None, None, None])
+      self.w_sentences = tf.placeholder(
+        tf.int32, name='w_sentences',
+        shape=[None, None]) if self.encoder.wbase else None
+      self.c_sentences = tf.placeholder(
+        tf.int32, name='c_sentences',
+        shape=[None, None, None]) if self.encoder.cbase else None
+
       self.sentence_length = tf.placeholder(tf.int32, shape=[None], 
                                             name="sentence_length")
       self.speaker_ids = tf.placeholder(tf.int32, shape=[None], 
@@ -513,8 +516,8 @@ class CoreferenceResolution(ModelBase):
       print '<cluster>'
 
       for j, (gold_cluster, predicted_cluster) in enumerate(aligned):
-        g = [" ".join(raw_text[s:e+1]) for (s,e) in gold_cluster]
-        p = [" ".join(raw_text[s:e+1]) for (s,e) in predicted_cluster]
+        g = [" ".join(raw_text[s:e+1]) + "(%d,%d)" %(s,e) for (s,e) in gold_cluster]
+        p = [" ".join(raw_text[s:e+1]) + "(%d,%d)" %(s,e) for (s,e) in predicted_cluster]
         print "G%02d  " % j , g
         print "P%02d  " % j , p
       print ''
