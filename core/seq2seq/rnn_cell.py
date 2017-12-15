@@ -1,7 +1,8 @@
 #from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 import numpy as np
 import tensorflow as tf
-from tensorflow.contrib.rnn.python.ops.core_rnn_cell_impl import *
+#from tensorflow.contrib.rnn.python.ops.core_rnn_cell_impl import * # tf == 1.1
+from tensorflow.python.ops.rnn_cell_impl import * # tf >= 1.2
 import core.models.wikiP2D.coref.util as coref_util
 
 

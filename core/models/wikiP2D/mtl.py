@@ -91,15 +91,15 @@ class WikiP2D(ModelBase):
                    for t in self.tasks}
       input_feed = self.get_input_feed(raw_batch, is_training)
       t = time.time()
-      if summary_writer is not None and i % 100 == 0:
-        run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-        run_metadata = tf.RunMetadata()
-        outputs = self.sess.run(output_feed, input_feed,
-                                options=run_options,
-                                run_metadata=run_metadata)
-        summary_writer.add_run_metadata(run_metadata, 'step%d' % i)
-      else:
-        outputs = self.sess.run(output_feed, input_feed)
+      # if summary_writer is not None and i % 50 == 0 and False:
+      #   run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+      #   run_metadata = tf.RunMetadata()
+      #   outputs = self.sess.run(output_feed, input_feed,
+      #                           options=run_options,
+      #                           run_metadata=run_metadata)
+      #   summary_writer.add_run_metadata(run_metadata, 'step%d' % (self.global_step.eval()))
+      # else:
+      outputs = self.sess.run(output_feed, input_feed)
       t = time.time() - t
 
       step_loss = np.array([l for l in outputs[:n_losses]])
@@ -107,9 +107,9 @@ class WikiP2D(ModelBase):
       loss += step_loss
       if math.isnan(step_loss[0]):
         raise ValueError("Nan loss is detected.")
-      if i == 201:
-        #exit(1)
-        #print loss / (i+1)
+      if i == 51:
+         #exit(1)
+         #print loss / (i+1)
         break
 
     epoch_time = (time.time() - start_time)

@@ -20,8 +20,11 @@ from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import init_ops
 from tensorflow.python.util import nest
 from tensorflow.python.framework import dtypes
-from tensorflow.contrib.rnn.python.ops import core_rnn_cell_impl
-linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access
+#from tensorflow.contrib.rnn.python.ops import core_rnn_cell_impl as rnn_cell# tf == 1.1
+from tensorflow.python.ops import rnn_cell_impl as rnn_cell # tf >= 1.2
+
+#linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access
+linear = rnn_cell._linear  # pylint: disable=protected-access
 
 from core.vocabulary.base import EOS_ID
 

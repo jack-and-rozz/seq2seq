@@ -125,7 +125,8 @@ class MTLManager(BaseManager):
       f.write('\n'.join([v.name + ' ' + str(v.get_shape()) for v in tf.global_variables()]) + '\n')
 
     if not self.summary_writer:
-      self.summary_writer = {mode:tf.summary.FileWriter(os.path.join(self.SUMMARIES_PATH, mode), self.sess.graph) for mode in ['valid', 'test']}
+      #self.summary_writer = {mode:tf.summary.FileWriter(os.path.join(self.SUMMARIES_PATH, mode), self.sess.graph) for mode in ['valid', 'test']}
+      self.summary_writer = tf.summary.FileWriter(self.SUMMARIES_PATH, self.sess.graph)
 
     self.reuse = True
     return m
@@ -140,22 +141,22 @@ class MTLManager(BaseManager):
         logger.info("(train) articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.train.size))
         logger.info("(valid) articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.valid.size))
         logger.info("(test)  articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.test.size))
-      # Embedding visualization
-      config = projector.ProjectorConfig()
-      embedding = config.embeddings.add()
-      embedding.tensor_name = m.word_encoder.w_embeddings.name
-      embedding.metadata_path = os.path.join(self.SUMMARIES_PATH, 'metadata.tsv')
-      projector.visualize_embeddings(self.summary_writer['valid'], config)
+      # Embedding visualization (doesn't work well)
+      # config = projector.ProjectorConfig()
+      # embedding = config.embeddings.add()
+      # embedding.tensor_name = m.word_encoder.w_embeddings.name
+      # embedding.metadata_path = os.path.join(self.SUMMARIES_PATH, 'metadata.tsv')
+      # projector.visualize_embeddings(self.summary_writer, config)
 
     for epoch in xrange(m.epoch.eval(), self.config.max_epoch):
       batches = self.get_batch('train')
-      epoch_time, step_time, train_loss, summary = m.train_or_valid(batches, summary_writer=self.summary_writer['valid'])
+      epoch_time, step_time, train_loss, summary = m.train_or_valid(batches, summary_writer=self.summary_writer)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, train_loss))
 
       #self.summary_writer['train'].add_summary(summary, m.global_step.eval())
       batches = self.get_batch('valid')
       epoch_time, step_time, valid_loss, summary = m.train_or_valid(batches)
-      self.summary_writer['valid'].add_summary(summary, m.global_step.eval())
+      self.summary_writer.add_summary(summary, m.global_step.eval())
       logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, valid_loss))
 
       checkpoint_path = self.CHECKPOINTS_PATH + "/model.ckpt"
@@ -228,7 +229,7 @@ class MTLManager(BaseManager):
             print "Current max F1: {:.2f}".format(max_f1)
           sys.stdout = sys.__stdout__
 
-        self.summary_writer[mode].add_summary(eval_summary, m.global_step.eval())
+        self.summary_writer.add_summary(eval_summary, m.global_step.eval())
         print "Evaluation written to {} at epoch {}".format(self.CHECKPOINTS_PATH, m.global_step.eval())
         evaluated_checkpoints.add(checkpoint_path)
 

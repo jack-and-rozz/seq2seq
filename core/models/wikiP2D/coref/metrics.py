@@ -63,7 +63,7 @@ class Evaluator(object):
         else:
             pn, pd = self.metric(predicted, mention_to_gold)
             rn, rd = self.metric(gold, mention_to_predicted)
-        self.p_num += pnk
+        self.p_num += pn
         self.p_den += pd
         self.r_num += rn
         self.r_den += rd

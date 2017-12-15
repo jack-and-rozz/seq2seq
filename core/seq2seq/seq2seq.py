@@ -9,16 +9,8 @@ import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 from six.moves import zip  # pylint: disable=redefined-builtin
 
-# from tensorflow.contrib.rnn.python.ops import core_rnn_cell_impl
-# from tensorflow.python.framework import dtypes
-# from tensorflow.python.ops import control_flow_ops
-# from tensorflow.python.ops import nn_ops
-# from tensorflow.python.util import nest
-
 import tensorflow as tf
 from tensorflow.python.ops import rnn
-from tensorflow.contrib.rnn.python.ops import core_rnn
-from tensorflow.contrib.rnn.python.ops import core_rnn_cell
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import math_ops
@@ -29,9 +21,6 @@ from tensorflow.contrib.legacy_seq2seq import sequence_loss, sequence_loss_by_ex
 from core.seq2seq.decoders import BeamSearchWrapper
 from core.seq2seq.beam_search import _extract_beam_search
 
-
-# TODO(ebrevdo): Remove once _linear is fully deprecated.
-#linear = core_rnn_cell_impl._linear  # pylint: disable=protected-access
 
 def _extract_argmax_and_embed(embedding,
                               output_projection=None,
