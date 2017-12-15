@@ -30,12 +30,6 @@ def distmult(subjects, relations, objects):
   # return score
   ###################################################################
 
-
-"""
-articles : [batch_size, n_words, [n_characters]]
-link_spans : [batch_size, 2 (start, end)]
-triples : [None, 2 (relation_id, object_id)]
-"""
 class GraphLinkPrediction(ModelBase):
   def __init__(self, sess, config, is_training, encoder, o_vocab, r_vocab,
                activation=tf.nn.tanh):
@@ -64,7 +58,7 @@ class GraphLinkPrediction(ModelBase):
 
       self.sentence_length = tf.placeholder(tf.int32, shape=[None], name="sentence_length")
 
-      ## Sentences of each entity are fed as a 2D Tensor (this is because the number of links (i.e. articles) is different depending on the entity),  we need to dynamically sort them.
+      ## Sentences mentioning to an entity are fed as a 2D Tensor (this is because the number of links (i.e. articles) is different depending on the entity),  we need to dynamically sort them.
       self.entity_indices = tf.placeholder(tf.int32, shape=[None],
                                            name='entity_indices')
       self.link_spans = tf.placeholder(tf.int32, shape=[None, 2],
@@ -91,8 +85,7 @@ class GraphLinkPrediction(ModelBase):
                                              self.max_batch_size)
 
     with tf.variable_scope('Inference'):
-      with tf.variable_scope('linear'):
-        span_outputs = tf_utils.linear(span_outputs, config.hidden_size,
+      span_outputs = tf_utils.linear(span_outputs, config.hidden_size,
                                      activation=self.activation)
       with tf.name_scope('Positives'):
         self.positives = self.inference(span_outputs, self.p_triples,
@@ -182,18 +175,18 @@ class GraphLinkPrediction(ModelBase):
       raise ValueError('The length of \'w_articles\', \'c_articles\', and \'link_spans\' must be equal (must have the same number of entity)')
     
     ################ INPUT DEBUG
-    print '----------w_articles----------------'
-    print batch['w_articles']
-    print '-------untokenized--------'
-    for ent, wsents, csents, link_spans, p_triples in zip(batch['entities'], batch['w_articles'], batch['c_articles'], batch['link_spans'], batch['p_triples']):
-      for wsent, csent, ls in zip(wsents, csents, link_spans):
-        print self.encoder.w_vocab.ids2tokens(wsent, link_span=ls)
-        print self.encoder.c_vocab.ids2tokens(csent, link_span=ls)
-      print ent['name']
-      print p_triples
-      for r, o in p_triples:
-        print self.r_vocab.id2name(r), self.o_vocab.id2name(o)
-      exit(1)
+    # print '----------w_articles----------------'
+    # print batch['w_articles']
+    # print '-------untokenized--------'
+    # for ent, wsents, csents, link_spans, p_triples in zip(batch['entities'], batch['w_articles'], batch['c_articles'], batch['link_spans'], batch['p_triples']):
+    #   for wsent, csent, ls in zip(wsents, csents, link_spans):
+    #     print self.encoder.w_vocab.ids2tokens(wsent, link_span=ls)
+    #     print self.encoder.c_vocab.ids2tokens(csent, link_span=ls)
+    #   print ent['name']
+    #   print p_triples
+    #   for r, o in p_triples:
+    #     print self.r_vocab.id2name(r), self.o_vocab.id2name(o)
+    #   exit(1)
     ################
 
     if self.encoder.cbase:

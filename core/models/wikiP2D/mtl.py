@@ -96,10 +96,10 @@ class WikiP2D(ModelBase):
       loss += step_loss
       if math.isnan(step_loss[0]):
         raise ValueError("Nan loss is detected.")
-      if i == 100:
-        print loss / (i+1)
-        exit(1)
-        break
+      # if i == 100:
+      #   print loss / (i+1)
+      #   exit(1)
+      #   break
 
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)

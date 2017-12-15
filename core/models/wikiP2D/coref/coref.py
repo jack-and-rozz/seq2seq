@@ -18,11 +18,8 @@ class CoreferenceResolution(ModelBase):
     self.dataset = 'coref'
     self.sess = sess
     self.encoder = encoder
-    #self.speaker_vocab = speaker_vocab
     self.genre_vocab = genre_vocab
-
     self.activation = activation
-
     self.is_training = is_training
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
     self.feature_size = config.f_embedding_size
