@@ -19,8 +19,8 @@ from pprint import pprint
 class WikiP2D(ModelBase):
   def __init__(self, sess, config, mode,
                w_vocab, c_vocab, o_vocab, r_vocab,
-               genre_vocab,
-               activation=tf.nn.tanh, summary_path=None):
+               genre_vocab, 
+               activation=tf.nn.tanh):
     self.initialize(sess, config)
     self.activation = activation
     self.is_training = tf.placeholder(tf.bool, name='is_training', shape=[]) 
@@ -76,7 +76,7 @@ class WikiP2D(ModelBase):
       input_feed.update(t.get_input_feed(batch[t.name], is_training))
     return input_feed
 
-  def train_or_valid(self, batches):
+  def train_or_valid(self, batches, summary_writer=None):
     start_time = time.time()
     n_losses = len(self.tasks) + 1
     loss = np.array([0.0] * n_losses)
@@ -90,16 +90,27 @@ class WikiP2D(ModelBase):
       raw_batch = {t.name:data[dataset_names.index(t.dataset)] 
                    for t in self.tasks}
       input_feed = self.get_input_feed(raw_batch, is_training)
-      outputs = self.sess.run(output_feed, input_feed)
+      t = time.time()
+      if summary_writer is not None and i % 100 == 0:
+        run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+        run_metadata = tf.RunMetadata()
+        outputs = self.sess.run(output_feed, input_feed,
+                                options=run_options,
+                                run_metadata=run_metadata)
+        summary_writer.add_run_metadata(run_metadata, 'step%d' % i)
+      else:
+        outputs = self.sess.run(output_feed, input_feed)
+      t = time.time() - t
+
       step_loss = np.array([l for l in outputs[:n_losses]])
-      print self.epoch.eval(), i, step_loss
+      print self.epoch.eval(), i, step_loss, 'step_time: %f' % t
       loss += step_loss
       if math.isnan(step_loss[0]):
         raise ValueError("Nan loss is detected.")
-      # if i == 100:
-      #   print loss / (i+1)
-      #   exit(1)
-      #   break
+      if i == 201:
+        #exit(1)
+        #print loss / (i+1)
+        break
 
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)

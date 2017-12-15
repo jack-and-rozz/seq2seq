@@ -30,6 +30,7 @@ class WordEncoder(ModelBase):
     self.c_vocab = c_vocab
     self.hidden_size = config.hidden_size
     self.is_training = is_training
+    self.activation = activation
     self.lexical_keep_prob = 1.0 - tf.to_float(self.is_training) * config.lexical_dropout_rate
 
     if self.wbase:

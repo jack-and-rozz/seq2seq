@@ -108,8 +108,6 @@ class CoreferenceResolution(ModelBase):
       mention_emb = tf.gather(candidate_mention_emb, predicted_mention_indices) # [num_mentions, emb]
       mention_scores = tf.gather(candidate_mention_scores, predicted_mention_indices) # [num_mentions]
 
-    #mention_start_emb = tf.gather(text_outputs, mention_starts) # [num_mentions, emb]
-    #mention_end_emb = tf.gather(text_outputs, mention_ends) # [num_mentions, emb]
       mention_speaker_ids = tf.gather(speaker_ids, mention_starts) # [num_mentions]
 
     with tf.name_scope('Antecedents'):
@@ -175,7 +173,6 @@ class CoreferenceResolution(ModelBase):
     if self.use_metadata:
       antecedent_speaker_ids = tf.gather(mention_speaker_ids, antecedents) # [num_mentions, max_ant]
       same_speaker = tf.equal(tf.expand_dims(mention_speaker_ids, 1), antecedent_speaker_ids) # [num_mentions, max_ant]
-      #speaker_pair_emb = tf.gather(tf.get_variable("same_speaker_emb", [2, self.feature_size]), tf.to_int32(same_speaker)) # [num_mentions, max_ant, emb]
       speaker_pair_emb = tf.gather(self.same_speaker_emb, tf.to_int32(same_speaker)) # [num_mentions, max_ant, emb]
       feature_emb_list.append(speaker_pair_emb)
 
@@ -270,7 +267,7 @@ class CoreferenceResolution(ModelBase):
       input_feed[self.speaker_ids] = np.array(speaker_ids)
       input_feed[self.genre] = np.array(genre)
 
-    #########Debug
+    ######### INPUT DEBUG
     # if not is_training:
     #   with open('feed_dict.txt', 'w') as f:
     #     sys.stdout = f

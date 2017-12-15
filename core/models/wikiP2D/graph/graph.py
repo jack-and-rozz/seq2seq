@@ -233,6 +233,12 @@ class GraphLinkPrediction(ModelBase):
       input_feed[self.nt_indices] = np.array(nt_indices)
     else:
       _, n_triples = fake_triples(1)
+      #input_feed[self.n_triples] = np.array([[]])
+      #input_feed[self.nt_indices] = np.array([])
+      nt_indices, n_triples = common.flatten_with_idx(n_triples)
+      input_feed[self.n_triples] = np.array(n_triples)
+      input_feed[self.nt_indices] = np.array(nt_indices)
+
     return input_feed
 
   def test(self, batches):

@@ -11,6 +11,7 @@ import core.models.wikiP2D.mtl as model
 from core.dataset.wikiP2D import WikiP2DDataset, DemoBatch
 from core.dataset.coref import CoNLL2012CorefDataset
 from core.vocabulary.base import VocabularyWithEmbedding, PredefinedCharVocab
+from tensorflow.contrib.tensorboard.plugins import projector
 
 class MTLManager(BaseManager):
   @common.timewatch()
@@ -139,9 +140,16 @@ class MTLManager(BaseManager):
         logger.info("(train) articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.train.size))
         logger.info("(valid) articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.valid.size))
         logger.info("(test)  articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.test.size))
+      # Embedding visualization
+      config = projector.ProjectorConfig()
+      embedding = config.embeddings.add()
+      embedding.tensor_name = m.word_encoder.w_embeddings.name
+      embedding.metadata_path = os.path.join(self.SUMMARIES_PATH, 'metadata.tsv')
+      projector.visualize_embeddings(self.summary_writer['valid'], config)
+
     for epoch in xrange(m.epoch.eval(), self.config.max_epoch):
       batches = self.get_batch('train')
-      epoch_time, step_time, train_loss, summary = m.train_or_valid(batches)
+      epoch_time, step_time, train_loss, summary = m.train_or_valid(batches, summary_writer=self.summary_writer['valid'])
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, train_loss))
 
       #self.summary_writer['train'].add_summary(summary, m.global_step.eval())
