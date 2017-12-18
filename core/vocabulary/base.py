@@ -173,8 +173,6 @@ class CharVocabularyBase(VocabularyBase):
     return " ".join(sent_tokens)
 
   def padding(self, sentences, max_sentence_length=None, max_word_length=None):
-    '''
-    '''
     if not max_sentence_length:
       max_sentence_length = max([len(s) for s in sentences])
     if not max_word_length:
