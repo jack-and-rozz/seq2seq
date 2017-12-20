@@ -41,6 +41,8 @@ class _CoNLL2012CorefDataset(object):
     self.genre_vocab = genre_vocab
     #self.n_no_coref, self.data = self.tokenize(data)
     self.data = self.tokenize(data)
+    self.size = len(self.data)
+
   def tokenize(self, data):
     def _tokenize(jsonline):
       ## As what the model wants to know is whether each antecedent-mention pair is spoken by the same speaker, speaker_vocab is created every time only from those who are in a paragraph.
@@ -61,7 +63,6 @@ class _CoNLL2012CorefDataset(object):
       return record
     res = [_tokenize(jsonline) for jsonline in data]
     return res
-    #return len([x for x in res if not x]), [x for x in res if x]
 
   def get_batch(self, batch_size, do_shuffle=False, n_batches=1):
     if do_shuffle:

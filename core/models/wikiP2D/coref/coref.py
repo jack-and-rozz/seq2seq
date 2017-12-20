@@ -401,18 +401,18 @@ class CoreferenceResolution(ModelBase):
       sorted_ends = []
 
     for k, evaluator in evaluators.items():
-      if k == -3:
+      if k == -3: #oracle
         predicted_spans = set(zip(candidate_starts, candidate_ends)) & gold_spans
       else:
-        if k == -2:
+        if k == -2: # actual
           predicted_starts = mention_starts
           predicted_ends = mention_ends
-        elif k == 0:
+        elif k == 0: # threshold
           is_predicted = mention_scores > 0
           predicted_starts = candidate_starts[is_predicted]
           predicted_ends = candidate_ends[is_predicted]
         else:
-          if k == -1:
+          if k == -1: #exact
             num_predictions = len(gold_spans)
           else:
             num_predictions = (k * text_length) / 100

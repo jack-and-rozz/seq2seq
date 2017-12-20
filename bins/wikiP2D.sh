@@ -50,7 +50,7 @@ done;
 # get params from config
 
 #params_arr=(mode checkpoint_path log_file w2p_dataset w_vocab_size c_vocab_size batch_size hidden_size learning_rate in_keep_prob out_keep_prob num_layers max_gradient_norm encoder_type c_encoder_type model_type cell_type cbase wbase max_a_sent_length max_d_sent_length max_a_word_length n_triples graph_task desc_task coref_task lowercase use_pretrained_emb trainable_emb embeddings)
-params_arr=(log_file checkpoint_path config_path)
+params_arr=(log_file checkpoint_path config_path port debug)
 params=""
 
 
@@ -69,7 +69,7 @@ run(){
     if [ ! ${output_log} = "" ]; then
 	log_file=$checkpoint_path/logs/$(date +'%Y%m%d-%H%M')
 	echo 'output_log='$log_file.*
-	python -B $bin_file --mode=${mode} $params > $log_file.log 2>$log_file.err 
+	python -B $bin_file --mode=${mode} $params >> $log_file.log 2>>$log_file.err 
 
     else
 	python -B $bin_file --mode=${mode} $params 

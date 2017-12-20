@@ -124,7 +124,6 @@ class SentenceEncoder(ModelBase):
         #if word_repls.get_shape()[-1] != self.hidden_size:
         #  word_repls = linear(word_repls, self.hidden_size, 
         #                      activation=self.activation)
-
       with tf.variable_scope("BiRNN") as scope:
         initial_state_fw = self.cell_fw.initial_state if hasattr(self.cell_fw, 'initial_state') else None
         initial_state_bw = self.cell_bw.initial_state if hasattr(self.cell_bw, 'initial_state') else None

@@ -22,12 +22,8 @@ from tensorflow.contrib.legacy_seq2seq import sequence_loss, sequence_loss_by_ex
 #from beam_search import _extract_beam_search, beam_rnn_decoder, beam_attention_decoder
 from core.seq2seq import beam_search
 
-
-
 class Decoder(object):
   pass
-
-
 
 class RNNDecoder(Decoder):
   def __init__(self, cell, embedding, scope=None):

@@ -94,8 +94,8 @@ class GraphLinkPrediction(ModelBase):
         self.negatives = self.inference(span_outputs, self.n_triples, 
                                         self.nt_indices)
 
-    #self.outputs = [self.positives, self.negatives]
-    self.outputs = [self.positives]
+    self.outputs = [self.positives, self.negatives]
+    
     self.losses = self.cross_entropy(self.positives, self.negatives)
     self.loss = tf.reduce_mean(self.losses)
 
@@ -161,7 +161,6 @@ class GraphLinkPrediction(ModelBase):
         if p > 0.0: # Remove the results of padding triples.
           _triples = [pt] + nts
           _scores = np.insert(ns, 0, p)
-          #scores_by_pt.append((_triples, _scores[:len(_triples)]))
           scores_by_pt.append(_scores[:len(_triples)])
       scores.append(scores_by_pt)
     ranks = [[evaluation.get_rank(scores_by_pt) for scores_by_pt in scores_by_art] for scores_by_art in scores]
@@ -173,21 +172,6 @@ class GraphLinkPrediction(ModelBase):
     ## Sentences
     if len(batch['c_articles']) != len(batch['w_articles']) or len(batch['link_spans']) != len(batch['w_articles']):
       raise ValueError('The length of \'w_articles\', \'c_articles\', and \'link_spans\' must be equal (must have the same number of entity)')
-    
-    ################ INPUT DEBUG
-    # print '----------w_articles----------------'
-    # print batch['w_articles']
-    # print '-------untokenized--------'
-    # for ent, wsents, csents, link_spans, p_triples in zip(batch['entities'], batch['w_articles'], batch['c_articles'], batch['link_spans'], batch['p_triples']):
-    #   for wsent, csent, ls in zip(wsents, csents, link_spans):
-    #     print self.encoder.w_vocab.ids2tokens(wsent, link_span=ls)
-    #     print self.encoder.c_vocab.ids2tokens(csent, link_span=ls)
-    #   print ent['name']
-    #   print p_triples
-    #   for r, o in p_triples:
-    #     print self.r_vocab.id2name(r), self.o_vocab.id2name(o)
-    #   exit(1)
-    ################
 
     if self.encoder.cbase:
       entity_indices, c_sentences = common.flatten_with_idx(batch['c_articles'])
@@ -207,13 +191,6 @@ class GraphLinkPrediction(ModelBase):
     start_offset = self.encoder.w_vocab.n_start_offset
     link_spans = [(s+start_offset, e+start_offset) for (s, e) in link_spans] # Shifted back one position by BOS.
     input_feed[self.link_spans] = np.array(link_spans)
-
-    ## Triples
-    # def padding_triples(triples):
-    #   max_num_pt = max([len(t) for t in triples])
-    #   padded = [([1.0] * len(t) + [0.0] * (max_num_pt - len(t)),
-    #              list(t) + [PAD_TRIPLE] * (max_num_pt - len(t))) for t in triples]
-    #   return map(list, zip(*padded)) # weights, padded_triples
 
     PAD_TRIPLE = (0, 0)
     def fake_triples(batch_size):
@@ -253,7 +230,6 @@ class GraphLinkPrediction(ModelBase):
       scores.append(_scores)
       ranks.append(_ranks)
       t = time.time()
-      break
 
     f_ranks = [x[0] for x in common.flatten(common.flatten(ranks))] # batch-loop, article-loop
     mean_rank = sum(f_ranks) / len(f_ranks)
@@ -274,13 +250,16 @@ class GraphLinkPrediction(ModelBase):
     summary = self.sess.run(summary_ops, input_feed)
     return summary, (scores, ranks, mrr, hits_10)
 
-  def print_results(self, batches, scores, ranks, output_file=None):
+  def print_results(self, batches, scores, ranks, 
+                    output_file=None, batch2text=None):
+    if not batch2text:
+      batch2text = lambda x: x
     cnt = 0
     if output_file:
       sys.stdout = output_file
 
     for batch, score_by_batch, ranks_by_batch in zip(batches, scores, ranks): # per a batch
-      for batch_by_art, score_by_art, rank_by_art in zip(self.w2p_dataset.batch2text(batch), score_by_batch, ranks_by_batch): # per an article
+      for batch_by_art, score_by_art, rank_by_art in zip(batch2text(batch), score_by_batch, ranks_by_batch): # per an article
         ent_name, wa, ca, pts = batch_by_art
         print common.colored('<%d> : %s' % (cnt, ent_name), 'bold')
         #print common.colored("Article(word):", 'bold')
@@ -304,3 +283,16 @@ class GraphLinkPrediction(ModelBase):
         print
         cnt += 1 
     sys.stdout = sys.__stdout__
+
+  def print_batch(self, batch):
+    # for debug.
+    for i, (ent, wsents, csents, link_spans, p_triples) in enumerate(zip(batch['entities'], batch['w_articles'], batch['c_articles'], batch['link_spans'], batch['p_triples'])):
+      for j, (wsent, csent, ls) in enumerate(zip(wsents, csents, link_spans)):
+        print 'w_text<%02d>:  ' % j, self.encoder.w_vocab.ids2tokens(wsent, link_span=ls)
+        print 'c_text<%02d>:  ' % j, self.encoder.c_vocab.ids2tokens(csent, link_span=ls)
+      print 'entity:  ', ent['name']
+      print 'triples:  '
+      for r, o in p_triples:
+        print self.r_vocab.id2name(r),', ' , self.o_vocab.id2name(o)
+      print ''
+    

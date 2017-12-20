@@ -209,35 +209,14 @@ class WikiP2DDataset(DatasetBase):
     c_vocab_size = c_vocab.size if c_vocab else c_vocab_size
     w_suffix = w_vocab.name if w_vocab and w_vocab.name else w_vocab_size
     c_suffix = c_vocab.name if c_vocab and c_vocab.name else c_vocab_size
+
+    # Add suffix to the binarized dataset to show what vocabulary it is tokenized by.
     suffix = '.W%sC%s' % (str(w_suffix), str(c_suffix))
     if lowercase:
       suffix += '.lower'
     if normalize_digits:
       suffix += '.normD'
-
-    # Add suffix to the binarized dataset to show what vocabulary it is tokenized by.
-    if not w_vocab and not c_vocab:
-      if lowercase:
-        suffix += '.lower'
-      if normalize_digits:
-        suffix += '.normD'
-      dataset_path = os.path.join(processed_dir, filename) + suffix
-      self.w_vocab = WikiP2DVocabulary(
-        vocab_corpus, dataset_path + '.w_vocab', w_vocab_size,
-        cbase=False, lowercase=lowercase, normalize_digits=normalize_digits) 
-      self.c_vocab = WikiP2DVocabulary(
-        vocab_corpus, dataset_path + '.c_vocab', c_vocab_size,
-        cbase=True, lowercase=lowercase, 
-        normalize_digits=normalize_digits)
-
-    else:
-      dataset_path = os.path.join(processed_dir, filename) + suffix
-      self.w_vocab = w_vocab
-      self.c_vocab = c_vocab
-
-    s_vocab_path = os.path.join(processed_dir, filename) + '.s_vocab'
-    r_vocab_path = os.path.join(processed_dir, filename) + '.r_vocab'
-    o_vocab_path = os.path.join(processed_dir, filename) + '.o_vocab'
+    dataset_path = os.path.join(processed_dir, filename) + suffix
 
     # Load Data.
     if not os.path.exists(dataset_path) or cleanup:
@@ -254,6 +233,26 @@ class WikiP2DDataset(DatasetBase):
       self._data = pickle.load(open(dataset_path, 'rb'))
       raw_data = None
       vocab_corpus = None
+
+    # Create vocab data if not given.
+    if not w_vocab:
+      self.w_vocab = WikiP2DVocabulary(
+        vocab_corpus, dataset_path + '.w_vocab', w_vocab_size,
+        cbase=False, lowercase=lowercase, normalize_digits=normalize_digits) 
+    else:
+      self.w_vocab = w_vocab
+
+    if not c_vocab:
+      self.c_vocab = WikiP2DVocabulary(
+        vocab_corpus, dataset_path + '.c_vocab', c_vocab_size,
+        cbase=True, lowercase=lowercase, 
+        normalize_digits=normalize_digits)
+    else:
+      self.c_vocab = c_vocab
+
+    s_vocab_path = os.path.join(processed_dir, filename) + '.s_vocab'
+    r_vocab_path = os.path.join(processed_dir, filename) + '.r_vocab'
+    o_vocab_path = os.path.join(processed_dir, filename) + '.o_vocab'
 
 
     subjects = raw_data['subjects']['train'] if raw_data else None

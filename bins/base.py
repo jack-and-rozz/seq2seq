@@ -26,7 +26,7 @@ log_file = tf.app.flags.FLAGS.log_file if tf.app.flags.FLAGS.log_file else None
 logger = common.logManager(handler=FileHandler(log_file)) if log_file else common.logManager()
 
 
-class BaseManager(object):
+class ManagerBase(object):
   def __init__(self, FLAGS, sess):
     self.FLAGS = FLAGS
     FLAGS = self.FLAGS

@@ -5,15 +5,20 @@ import tensorflow as tf
 import numpy as np
 import multiprocessing as mp
 
-from base import BaseManager, logger
+from base import ManagerBase, logger
 from core.utils import common, tf_utils
 import core.models.wikiP2D.mtl as model
+#import core.models.wikiP2D.coref import demo as c_demo
+from core.models.wikiP2D.coref.demo import run_model
 from core.dataset.wikiP2D import WikiP2DDataset, DemoBatch
 from core.dataset.coref import CoNLL2012CorefDataset
 from core.vocabulary.base import VocabularyWithEmbedding, PredefinedCharVocab
 from tensorflow.contrib.tensorboard.plugins import projector
 
-class MTLManager(BaseManager):
+tf.app.flags.DEFINE_string("port", "", "")
+tf.app.flags.DEFINE_boolean("debug", False, "")
+
+class MTLManager(ManagerBase):
   @common.timewatch()
   def __init__(self, FLAGS, sess):
     # If embeddings are not pretrained, make trainable True.
@@ -21,11 +26,14 @@ class MTLManager(BaseManager):
     self.config.trainable_emb = self.config.trainable_emb or not self.config.use_pretrained_emb
     self.model_type = getattr(model, self.config.model_type)
     self.mode = FLAGS.mode
+    self.port = int(FLAGS.port) if FLAGS.port.isdigit() else None
+    self.config.debug = True if FLAGS.debug == True else False
     self.checkpoint_path = FLAGS.checkpoint_path
     self.reuse = None
     self.summary_writer = None
 
     self.use_wikiP2D = True if self.config.graph_task or self.config.desc_task else False
+    self.use_coref = True if self.config.coref_task else False
 
     self.w_vocab = None
     self.c_vocab = None
@@ -53,11 +61,11 @@ class MTLManager(BaseManager):
       self.c_vocab = self.w2p_dataset.c_vocab
       self.r_vocab = self.w2p_dataset.r_vocab
       self.o_vocab = self.w2p_dataset.o_vocab
-
-    self.coref_dataset = CoNLL2012CorefDataset(
-      self.w_vocab, self.c_vocab
-    )
-    self.genre_vocab = self.coref_dataset.genre_vocab
+    if self.use_coref:
+      self.coref_dataset = CoNLL2012CorefDataset(
+        self.w_vocab, self.c_vocab
+      )
+    self.genre_vocab = self.coref_dataset.genre_vocab if self.use_coref else None
 
     # Defined after the computational graph is completely constracted.
     self.saver = None
@@ -68,31 +76,31 @@ class MTLManager(BaseManager):
       do_shuffle = True
       batches['is_training'] = True
       batches['wikiP2D'] = self.w2p_dataset.train.get_batch(
-        self.config.wikiP2D.batch_size, do_shuffle=do_shuffle,
+        self.config.wikiP2D.batch_size, do_shuffle=True,
         min_sentence_length=None, 
         max_sentence_length=self.config.wikiP2D.max_sent_length.encode,
         n_pos_triples=self.config.wikiP2D.n_triples) if self.use_wikiP2D else None
       batches['coref'] = self.coref_dataset.train.get_batch(
-        self.config.coref.batch_size, do_shuffle=do_shuffle)
+        self.config.coref.batch_size, do_shuffle=True) if self.use_coref else None
 
     elif batch_type == 'valid':
-      do_shuffle = False
       batches['wikiP2D'] = self.w2p_dataset.valid.get_batch(
-        self.config.wikiP2D.batch_size, do_shuffle=do_shuffle,
+        self.config.wikiP2D.batch_size, do_shuffle=False,
         min_sentence_length=None, 
         max_sentence_length=self.config.wikiP2D.max_sent_length.encode,
-        n_pos_triples=self.config.wikiP2D.n_triples) if self.use_wikiP2D else None
+        n_pos_triples=None) if self.use_wikiP2D else None
       batches['coref'] = self.coref_dataset.valid.get_batch(
-        self.config.coref.batch_size, do_shuffle=do_shuffle)
+        self.config.coref.batch_size, 
+        do_shuffle=False) if self.use_coref else None
     elif batch_type == 'test':
-      do_shuffle = False
       batches['wikiP2D'] = self.w2p_dataset.test.get_batch(
-        self.config.wikiP2D.batch_size, do_shuffle=do_shuffle,
+        self.config.wikiP2D.batch_size, do_shuffle=False,
         min_sentence_length=None, 
         max_sentence_length=self.config.wikiP2D.max_sent_length.encode,
-        n_pos_triples=self.config.wikiP2D.n_triples) if self.use_wikiP2D else None
+        n_pos_triples=None) if self.use_wikiP2D else None
       batches['coref'] = self.coref_dataset.test.get_batch(
-        self.config.coref.batch_size, do_shuffle=do_shuffle)
+        self.config.coref.batch_size, 
+        do_shuffle=False) if self.use_coref else None
     return batches
 
   @common.timewatch()
@@ -136,6 +144,10 @@ class MTLManager(BaseManager):
     m = self.create_model(self.config, 'train')
 
     if m.epoch.eval() == 0:
+      if self.use_coref:
+        logger.info("Dataset stats (CoNLL 2012)")
+        logger.info("train, valid, test = (%d, %d, %d)" % (self.coref_dataset.train.size, self.coref_dataset.valid.size, self.coref_dataset.test.size))
+
       if self.use_wikiP2D:
         logger.info("Dataset stats (WikiP2D)")
         logger.info("(train) articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.train.size))
@@ -176,8 +188,12 @@ class MTLManager(BaseManager):
       'test': 'dataset/coref/source/test.english.v4_gold_conll',
     }
     m = self.create_model(self.config, mode)
-    batches = self.get_batch(mode)[m.coref.dataset]
-    eval_summary, f1 = m.coref.test(batches, conll_eval_path[mode])
+    #batches = self.get_batch(mode)[m.coref.dataset]
+    batches = self.get_batch(mode)[m.graph.dataset]
+    for i, b in enumerate(batches):
+      print '======== %02d ==========' % i
+      m.graph.print_batch(b)
+    #eval_summary, f1 = m.coref.test(batches, conll_eval_path[mode])
     exit(1)
     ############################################
 
@@ -194,6 +210,10 @@ class MTLManager(BaseManager):
     tmp_checkpoint_path = os.path.join(self.CHECKPOINTS_PATH, "model.ctmp.ckpt")
     max_checkpoint_path = os.path.join(self.CHECKPOINTS_PATH, "model.cmax.ckpt")
 
+    self.config.desc_task = False
+    self.config.graph_task = False
+
+    # Retry evaluation if the best checkpoint is already found.
     if os.path.exists(max_checkpoint_path + '.index'):
       sys.stderr.write('Found a checkpoint {}.\n'.format(max_checkpoint_path))
       m = self.create_model(self.config, mode, 
@@ -208,6 +228,7 @@ class MTLManager(BaseManager):
         sys.stdout = sys.__stdout__
       return
 
+    # Evaluate each checkpoint while training and save the best one.
     while True:
       time.sleep(1)
       ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
@@ -233,25 +254,39 @@ class MTLManager(BaseManager):
         print "Evaluation written to {} at epoch {}".format(self.CHECKPOINTS_PATH, m.global_step.eval())
         evaluated_checkpoints.add(checkpoint_path)
 
+  def c_demo(self):
+    max_checkpoint_path = os.path.join(self.CHECKPOINTS_PATH, "model.cmax.ckpt")
+    ckpt_path = None
+    if os.path.exists(max_checkpoint_path + '.index'):
+      sys.stderr.write('Found a checkpoint {}.\n'.format(max_checkpoint_path))
+      ckpt_path = max_checkpoint_path
+
+    self.config.graph_task = False
+    self.config.desc_task = False
+    m = self.create_model(self.config, self.mode, checkpoint_path=ckpt_path)
+    eval_data = [d for d in self.get_batch('valid')['coref']]
+    run_model(m, eval_data, self.port)
+
   @common.timewatch(logger)
   def g_test(self):
-    test_data = self.w2p_dataset.test
 
-    if not m:
-      m = self.create_model(self.config, 'test')
+    self.config.coref_task = False
+    self.config.desc_task = False
+    m = self.create_model(self.config, 'test')
 
-    batches = self.get_batch('test')[m.dataset]
+    batches = self.get_batch('test')[m.graph.dataset]
     summary, res = m.graph.test(batches)
     scores, ranks, mrr, hits_10 = res
-    m.summary_writer.add_summary(summary, m.global_step.eval())
+    self.summary_writer.add_summary(summary, m.global_step.eval())
 
     output_path = self.TESTS_PATH + '/g_test.ep%02d' % m.epoch.eval()
     with open(output_path, 'w') as f:
-      m.graph.print_results(batches, scores, ranks, output_file=f)
+      m.graph.print_results(batches, scores, ranks, 
+                            output_file=f, batch2text=self.w2p_dataset.batch2text)
 
     logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (m.epoch.eval(), mrr, hits_10))
 
-  def demo(self):
+  def g_demo(self):
     m = self.create_model(self.self.config, 'test')
 
     # for debug
@@ -309,7 +344,7 @@ class MTLManager(BaseManager):
 @common.timewatch(logger)
 def main(_):
   tf_config = tf.ConfigProto(
-    log_device_placement=False,
+    log_device_placement=True,
     allow_soft_placement=True, # GPU上で実行できない演算を自動でCPUに
     gpu_options=tf.GPUOptions(
       allow_growth=True, # True->必要になったら確保, False->全部
@@ -333,8 +368,10 @@ def main(_):
       manager.g_test()
     elif FLAGS.mode == "c_test":
       manager.c_test()
-    elif FLAGS.mode == "demo":
-      manager.demo()
+    elif FLAGS.mode == "g_demo":
+      manager.g_demo()
+    elif FLAGS.mode == "c_demo":
+      manager.c_demo()
     elif FLAGS.mode == 'self_test':
       manager.self_test()
     else:
