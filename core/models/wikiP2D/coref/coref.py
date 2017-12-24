@@ -60,6 +60,8 @@ class CoreferenceResolution(ModelBase):
       self.mention_width_emb = self.initialize_embeddings("mention_width", [self.max_mention_width, self.feature_size])
       self.mention_distance_emb = self.initialize_embeddings("mention_distance", [10, self.feature_size])
     text_emb, text_outputs, state = encoder.encode([self.w_sentences, self.c_sentences], self.sentence_length)
+    self.encoder_outputs = text_outputs # for adversarial MTL
+
 
     with tf.name_scope('predictions_and_loss'):
       self.predictions, self.loss = self.get_predictions_and_loss(text_emb, text_outputs, self.sentence_length, self.speaker_ids, self.genre, self.gold_starts, self.gold_ends, self.cluster_ids)

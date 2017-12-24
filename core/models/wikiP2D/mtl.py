@@ -28,50 +28,53 @@ class MTLManager(ModelBase):
     self.mode = mode
     self.debug = config.debug
 
+    # with tf >= 1.2, the scope where a RNNCell is called first is cached and the variables are automatically reused.
     with tf.variable_scope("WordEncoder") as scope:
       self.word_encoder = WordEncoder(config, self.is_training, w_vocab, c_vocab,
                                       shared_scope=scope)
     with tf.variable_scope("GlobalEncoder") as scope:
-      global_encoder = SentenceEncoder(config, self.is_training,
-                                       self.word_encoder,
-                                       shared_scope=scope)
-    with tf.variable_scope("LocalEncoder") as scope:
-      local_encoder = SentenceEncoder(config, self.is_training,
-                                      self.word_encoder,
-                                      shared_scope=None)
-    #self.encoder = MultiEncoderWrapper([global_encoder, local_encoder])
-    #self.encoder = MultiEncoderWrapper([global_encoder])
-    #self.encoder = MultiEncoderWrapper([local_encoder])
-    self.encoder = local_encoder
+      self.global_encoder = SentenceEncoder(config, self.is_training,
+                                            self.word_encoder,
+                                            shared_scope=scope)
+      self.encoder = self.global_encoder
+
+    def get_multi_encoder(scope):
+      with tf.variable_scope(scope):
+        local_encoder = SentenceEncoder(config, self.is_training,
+                                        self.word_encoder,
+                                        shared_scope=None)
+      return MultiEncoderWrapper([self.global_encoder, local_encoder])
 
     ## About subtasks
     self.tasks = []
     self.coref, self.graph, self.desc = None, None, None
     if config.coref_task:
       with tf.variable_scope("Coreference") as scope:
+        encoder = get_multi_encoder(scope)
         device = '/gpu:0' 
         with tf.device(device):
           self.coref = CoreferenceResolution(sess, config.coref, self.is_training,
-                                             self.encoder, genre_vocab, 
+                                             encoder, genre_vocab, 
                                              activation=self.activation)
         self.tasks.append(self.coref)
 
     if config.graph_task:
       with tf.variable_scope("Graph") as scope:
+        encoder = get_multi_encoder(scope)
         device = '/gpu:1' if config.coref_task and len(tf_utils.get_available_gpus()) > 1 else '/gpu:0'
 
         with tf.device(device):
           self.graph = GraphLinkPrediction(sess, config.wikiP2D, self.is_training,
-                                           self.encoder, 
-                                           o_vocab, r_vocab,
+                                           encoder, o_vocab, r_vocab,
                                            activation=self.activation)
         self.tasks.append(self.graph)
 
     if config.desc_task:
       with tf.variable_scope("Description") as scope:
+        encoder = get_multi_encoder(scope)
         with tf.device(device):
           self.desc = DescriptionGeneration(config.wikiP2D, self.is_training,
-                                            self.encoder, w_vocab,
+                                            encoder, w_vocab,
                                             activation=self.activation)
         self.tasks.append(self.desc)
     self.loss, self.updates = self.get_loss_and_updates([t.loss * t.loss_weight for t in self.tasks])

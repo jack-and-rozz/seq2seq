@@ -1,10 +1,12 @@
+# coding: utf-8
 import copy
 import tensorflow as tf
 #from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
 import rnn_cell
 #from core.extensions import rnn_cell as shared_rnn_cell
 
-def setup_cell(cell_type, hidden_size, num_layers=1, shared=False,
+def setup_cell(cell_type, hidden_size, num_layers=1, 
+               shared=False,
                keep_prob=1.0, state_is_tuple=True):
   #cell_module = rnn_cell if not shared else shared_rnn_cell
  
@@ -31,7 +33,8 @@ def setup_cell(cell_type, hidden_size, num_layers=1, shared=False,
   else:
     cell = _get_cell()
 
-  if shared:
-    cell = rnn_cell.SharingWrapper(cell)
+  # * 呼び出す際にEncoder側でscopeを保存しておけばSharingWrapperとか要らなかった
+  #if shared: 
+  #  cell = rnn_cell.SharingWrapper(cell)
 
   return cell

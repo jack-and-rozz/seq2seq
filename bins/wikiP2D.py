@@ -130,7 +130,8 @@ class MTLManager(ManagerBase):
 
     variables_path = self.checkpoint_path + '/variables/variables.list'
     with open(variables_path, 'w') as f:
-      f.write('\n'.join([v.name + ' ' + str(v.get_shape()) for v in tf.global_variables()]) + '\n')
+      variable_names = sorted([v.name + ' ' + str(v.get_shape()) for v in tf.global_variables()])
+      f.write('\n'.join(variable_names) + '\n')
 
     if not self.summary_writer:
       #self.summary_writer = {mode:tf.summary.FileWriter(os.path.join(self.SUMMARIES_PATH, mode), self.sess.graph) for mode in ['valid', 'test']}

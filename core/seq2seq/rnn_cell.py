@@ -27,6 +27,18 @@ class SharingWrapper(RNNCell):
     else:
       self.my_scope.reuse_variables()
     return self._cell(inputs, state, self.my_scope)
+    # print '------------'
+    # print self
+    # print self.scope
+    # print self.reuse
+    # if self.scope == None:
+    #   self.scope = tf.get_variable_scope() 
+
+    # if self.reuse:
+    #   self.scope.reuse_variables()
+    # else:
+    #   self.reuse = True
+    # return self._cell(inputs, state, self.scope)
 
 # (from e2e-coref)
 class CustomLSTMCell(tf.contrib.rnn.RNNCell):

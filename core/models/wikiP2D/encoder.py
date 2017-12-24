@@ -106,18 +106,14 @@ class SentenceEncoder(ModelBase):
     self.shared_scope = shared_scope
     self.reuse = None # to reuse variables defined in encode()
     do_sharing = True if self.shared_scope else False
-
-    print tf.get_variable_scope()
-    
     # For 'initial_state' of CustomLSTMCell, different scopes are required in these initializations.
-    print do_sharing
+
     with tf.variable_scope('fw_cell', reuse=tf.get_variable_scope().reuse):
       self.cell_fw = setup_cell(config.cell_type, config.hidden_size, 
                                 num_layers=config.num_layers, 
                                 keep_prob=self.keep_prob,
                                 shared=do_sharing)
-    print self.cell_fw
-      
+
     with tf.variable_scope('bw_cell', reuse=tf.get_variable_scope().reuse):
       self.cell_bw = setup_cell(config.cell_type, config.hidden_size, 
                                 num_layers=config.num_layers, 
@@ -126,28 +122,28 @@ class SentenceEncoder(ModelBase):
 
   def encode(self, wc_sentences, sequence_length):
     with tf.variable_scope(self.shared_scope or "SentenceEncoder", 
-                           reuse=self.reuse):
+                           reuse=self.reuse) as scope:
       word_repls = self.word_encoder.encode(wc_sentences)
 
         #if word_repls.get_shape()[-1] != self.hidden_size:
         #  word_repls = linear(word_repls, self.hidden_size, 
         #                      activation=self.activation)
-      with tf.variable_scope("BiRNN") as scope:
-        initial_state_fw = self.cell_fw.initial_state if hasattr(self.cell_fw, 'initial_state') else None
-        initial_state_bw = self.cell_bw.initial_state if hasattr(self.cell_bw, 'initial_state') else None
+      #with tf.variable_scope("BiRNN") as scope:
+      initial_state_fw = self.cell_fw.initial_state if hasattr(self.cell_fw, 'initial_state') else None
+      initial_state_bw = self.cell_bw.initial_state if hasattr(self.cell_bw, 'initial_state') else None
 
-        outputs, state = rnn.bidirectional_dynamic_rnn(
-          self.cell_fw, self.cell_bw, word_repls,
-          initial_state_fw=initial_state_fw,
-          initial_state_bw=initial_state_bw,
-          sequence_length=sequence_length, dtype=tf.float32, scope=scope)
+      outputs, state = rnn.bidirectional_dynamic_rnn(
+        self.cell_fw, self.cell_bw, word_repls,
+        initial_state_fw=initial_state_fw,
+        initial_state_bw=initial_state_bw,
+        sequence_length=sequence_length, dtype=tf.float32, scope=scope)
+        
 
       with tf.variable_scope("outputs"):
         outputs = tf.concat(outputs, 2)
         #outputs = linear(outputs, self.hidden_size, 
         #                 activation=self.activation)
         outputs = tf.nn.dropout(outputs, self.keep_prob)
-        print 'outputs', outputs
       with tf.variable_scope("state"):
         state = merge_state(state)
         #state = linear(state, self.hidden_size, 
@@ -207,11 +203,9 @@ class MultiEncoderWrapper(SentenceEncoder):
     outputs = []
     state = []
     for e in self.encoders:
-      print wc_sentences, sequence_length
       word_repls, o, s = e.encode(wc_sentences, sequence_length)
       outputs.append(o)
       state.append(s)
-      print word_repls, o, s
     outputs = tf.concat(outputs, axis=2)
     state = merge_state(state)
 

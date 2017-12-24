@@ -80,6 +80,8 @@ class GraphLinkPrediction(ModelBase):
 
     ## Define Loss
     text_emb, outputs, state = self.encoder.encode([self.w_sentences, self.c_sentences], self.sentence_length)
+    self.encoder_outputs = outputs # for adversarial MTL
+
     span_outputs = self.encoder.extract_span(outputs, self.link_spans,
                                              self.entity_indices,
                                              self.max_batch_size)
