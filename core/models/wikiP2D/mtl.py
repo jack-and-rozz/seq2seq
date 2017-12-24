@@ -5,7 +5,8 @@ from orderedset import OrderedSet
 from core.utils import common, evaluation, tf_utils
 from core.models.base import ModelBase
 #import core.models.graph as graph
-from core.models.wikiP2D.encoder import WordEncoder, SentenceEncoder
+#import core.models.wikiP2D.encoder as encoder
+from core.models.wikiP2D.encoder import SentenceEncoder, WordEncoder, MultiEncoderWrapper
 from core.models.wikiP2D.gen_desc.gen_desc import DescriptionGeneration
 from core.models.wikiP2D.graph.graph import GraphLinkPrediction
 from core.models.wikiP2D.coref.coref import CoreferenceResolution
@@ -25,15 +26,23 @@ class MTLManager(ModelBase):
     self.activation = activation
     self.is_training = tf.placeholder(tf.bool, name='is_training', shape=[]) 
     self.mode = mode
-    print self.mode
     self.debug = config.debug
 
-    with tf.variable_scope("Encoder") as scope:
-      self.word_encoder = WordEncoder(config, self.is_training, w_vocab, c_vocab)
-      self.sentence_encoder = SentenceEncoder(config, self.is_training,
-                                              self.word_encoder,
-                                              shared_scope=scope)
-      self.encoder = self.sentence_encoder
+    with tf.variable_scope("WordEncoder") as scope:
+      self.word_encoder = WordEncoder(config, self.is_training, w_vocab, c_vocab,
+                                      shared_scope=scope)
+    with tf.variable_scope("GlobalEncoder") as scope:
+      global_encoder = SentenceEncoder(config, self.is_training,
+                                       self.word_encoder,
+                                       shared_scope=scope)
+    with tf.variable_scope("LocalEncoder") as scope:
+      local_encoder = SentenceEncoder(config, self.is_training,
+                                      self.word_encoder,
+                                      shared_scope=None)
+    #self.encoder = MultiEncoderWrapper([global_encoder, local_encoder])
+    #self.encoder = MultiEncoderWrapper([global_encoder])
+    #self.encoder = MultiEncoderWrapper([local_encoder])
+    self.encoder = local_encoder
 
     ## About subtasks
     self.tasks = []
@@ -79,7 +88,6 @@ class MTLManager(ModelBase):
   def get_input_feed(self, batch, is_training):
     input_feed = {}
     input_feed[self.is_training] = is_training
-    #input_feed.update(self.encoder.get_input_feed(batch))
     for t in self.tasks:
       input_feed.update(t.get_input_feed(batch[t.name], is_training))
     return input_feed

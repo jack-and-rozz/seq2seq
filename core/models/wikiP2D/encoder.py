@@ -1,15 +1,15 @@
 # coding: utf-8 
 import sys
 import tensorflow as tf
+from tensorflow.python.util import nest
+from tensorflow.python.ops import rnn
+import numpy as np
+
 from core.utils import common, tf_utils
 from core.utils.tf_utils import shape, cnn, linear
 from core.seq2seq.rnn import setup_cell
-from tensorflow.python.ops import rnn
-
-import numpy as np
 from core.models.base import ModelBase
 from core.vocabulary.base import VocabularyWithEmbedding
-
 from tensorflow.contrib.rnn import LSTMStateTuple
 
 def merge_state(state):
@@ -23,14 +23,16 @@ def merge_state(state):
 
 class WordEncoder(ModelBase):
   def __init__(self, config, is_training, w_vocab=None, c_vocab=None,
-               activation=tf.nn.tanh):
+               activation=tf.nn.tanh, shared_scope=None):
     self.cbase = config.cbase
     self.wbase = config.wbase
     self.w_vocab = w_vocab
     self.c_vocab = c_vocab
-    self.hidden_size = config.hidden_size
     self.is_training = is_training
     self.activation = activation
+    self.shared_scope = shared_scope # to reuse variables
+    self.reuse = None
+
     self.lexical_keep_prob = 1.0 - tf.to_float(self.is_training) * config.lexical_dropout_rate
 
     if self.wbase:
@@ -64,20 +66,23 @@ class WordEncoder(ModelBase):
   def encode(self, wc_inputs):
     # inputs: the list of [None, max_sentence_length] or [None, max_sentence_length, max_word_length]
     outputs = []
-    for inputs in wc_inputs:
-      if inputs is None:
-        continue
-      if len(inputs.get_shape()) == 3: # char-based
-        char_repls = tf.nn.embedding_lookup(self.c_embeddings, inputs)
-        batch_size = tf.shape(char_repls)[0]
-        max_sentence_length = tf.shape(char_repls)[1]
-        flattened_char_repls = tf.reshape(char_repls, [batch_size * max_sentence_length, shape(char_repls, 2), shape(char_repls, 3)])
-        flattened_aggregated_char_repls = cnn(flattened_char_repls)
-        word_repls = tf.reshape(flattened_aggregated_char_repls, [batch_size, max_sentence_length, shape(flattened_aggregated_char_repls, 1)]) # [num_sentences, max_sentence_length, emb_size]
-      else: # word-based
-        word_repls = tf.nn.embedding_lookup(self.w_embeddings, inputs)
-      outputs.append(word_repls)
-    outputs = tf.concat(outputs, axis=-1)
+    with tf.variable_scope(self.shared_scope or "WordEncoder", reuse=self.reuse):
+      for inputs in wc_inputs:
+        if inputs is None:
+          continue
+        if len(inputs.get_shape()) == 3: # char-based
+          char_repls = tf.nn.embedding_lookup(self.c_embeddings, inputs)
+          batch_size = tf.shape(char_repls)[0]
+          max_sentence_length = tf.shape(char_repls)[1]
+          flattened_char_repls = tf.reshape(char_repls, [batch_size * max_sentence_length, shape(char_repls, 2), shape(char_repls, 3)])
+          flattened_aggregated_char_repls = cnn(flattened_char_repls)
+          word_repls = tf.reshape(flattened_aggregated_char_repls, [batch_size, max_sentence_length, shape(flattened_aggregated_char_repls, 1)]) # [num_sentences, max_sentence_length, emb_size]
+        else: # word-based
+          word_repls = tf.nn.embedding_lookup(self.w_embeddings, inputs)
+        outputs.append(word_repls)
+      outputs = tf.concat(outputs, axis=-1)
+      if self.shared_scope:
+        self.reuse = True
     return tf.nn.dropout(outputs, self.lexical_keep_prob) # [None, max_sentence_length, emb_size]
 
   def get_input_feed(self, batch):
@@ -99,27 +104,30 @@ class SentenceEncoder(ModelBase):
     self.c_embeddings = word_encoder.c_embeddings
     self.activation = activation
     self.shared_scope = shared_scope
+    self.reuse = None # to reuse variables defined in encode()
     do_sharing = True if self.shared_scope else False
 
+    print tf.get_variable_scope()
+    
     # For 'initial_state' of CustomLSTMCell, different scopes are required in these initializations.
+    print do_sharing
     with tf.variable_scope('fw_cell', reuse=tf.get_variable_scope().reuse):
       self.cell_fw = setup_cell(config.cell_type, config.hidden_size, 
                                 num_layers=config.num_layers, 
                                 keep_prob=self.keep_prob,
                                 shared=do_sharing)
-
+    print self.cell_fw
+      
     with tf.variable_scope('bw_cell', reuse=tf.get_variable_scope().reuse):
       self.cell_bw = setup_cell(config.cell_type, config.hidden_size, 
                                 num_layers=config.num_layers, 
                                 keep_prob=self.keep_prob,
                                 shared=do_sharing)
-    self.reuse = None # to reuse variables defined in encode()
 
-  def encode(self, wc_sentences, sequence_length, output_layers=0):
+  def encode(self, wc_sentences, sequence_length):
     with tf.variable_scope(self.shared_scope or "SentenceEncoder", 
                            reuse=self.reuse):
-      with tf.variable_scope("Word"):
-        word_repls = self.word_encoder.encode(wc_sentences)
+      word_repls = self.word_encoder.encode(wc_sentences)
 
         #if word_repls.get_shape()[-1] != self.hidden_size:
         #  word_repls = linear(word_repls, self.hidden_size, 
@@ -139,11 +147,13 @@ class SentenceEncoder(ModelBase):
         #outputs = linear(outputs, self.hidden_size, 
         #                 activation=self.activation)
         outputs = tf.nn.dropout(outputs, self.keep_prob)
+        print 'outputs', outputs
       with tf.variable_scope("state"):
         state = merge_state(state)
         #state = linear(state, self.hidden_size, 
         #               activation=self.activation)
-      self.reuse = True 
+      if self.shared_scope:
+        self.reuse = True 
     return word_repls, outputs, state
 
   # https://stackoverflow.com/questions/44940767/how-to-get-slices-of-different-dimensions-from-tensorflow-tensor
@@ -175,3 +185,34 @@ class SentenceEncoder(ModelBase):
                                axis=0)
       return spans_by_subj
 
+
+class MultiEncoderWrapper(SentenceEncoder):
+  def __init__(self, encoders):
+    """
+    Args 
+      encoders: a list of SentenceEncoder. 
+    """
+    self.encoders = encoders
+    self.w_vocab = encoders[0].w_vocab
+    self.c_vocab = encoders[0].c_vocab
+    self.w_embeddings = encoders[0].w_embeddings
+    self.c_embeddings = encoders[0].c_embeddings
+    self.cbase = encoders[0].cbase
+    self.wbase = encoders[0].wbase
+    self.hidden_size = sum(e.hidden_size for e in encoders)
+
+  def encode(self, wc_sentences, sequence_length):
+    if not nest.is_sequence(self.encoders):
+      return self.encoders.encode(wc_sentences, sequence_length)
+    outputs = []
+    state = []
+    for e in self.encoders:
+      print wc_sentences, sequence_length
+      word_repls, o, s = e.encode(wc_sentences, sequence_length)
+      outputs.append(o)
+      state.append(s)
+      print word_repls, o, s
+    outputs = tf.concat(outputs, axis=2)
+    state = merge_state(state)
+
+    return word_repls, outputs, state

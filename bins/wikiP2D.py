@@ -97,7 +97,7 @@ class MTLManager(ManagerBase):
         self.config.wikiP2D.batch_size, do_shuffle=False,
         min_sentence_length=None, 
         max_sentence_length=self.config.wikiP2D.max_sent_length.encode,
-        n_pos_triples=None) if self.use_wikiP2D else None
+        n_pos_triples=None, n_neg_triples=None) if self.use_wikiP2D else None
       batches['coref'] = self.coref_dataset.test.get_batch(
         self.config.coref.batch_size, 
         do_shuffle=False) if self.use_coref else None
@@ -105,14 +105,14 @@ class MTLManager(ManagerBase):
 
   @common.timewatch()
   def create_model(self, config, mode, checkpoint_path=None):
-    with tf.variable_scope("Model", reuse=self.reuse):
-      m = self.model_type(
-        self.sess, config, mode,
-        self.w_vocab, self.c_vocab, # for encoder
-        self.o_vocab, self.r_vocab, # for graph
-        self.genre_vocab, # for coref
-        #self.speaker_vocab, self.genre_vocab, # for coref
-      )
+    #with tf.variable_scope("Model", reuse=self.reuse):
+    m = self.model_type(
+      self.sess, config, mode,
+      self.w_vocab, self.c_vocab, # for encoder
+      self.o_vocab, self.r_vocab, # for graph
+      self.genre_vocab, # for coref
+      #self.speaker_vocab, self.genre_vocab, # for coref
+    )
     if not checkpoint_path:
       ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
       checkpoint_path = ckpt.model_checkpoint_path if ckpt else None
@@ -344,7 +344,7 @@ class MTLManager(ManagerBase):
 @common.timewatch(logger)
 def main(_):
   tf_config = tf.ConfigProto(
-    log_device_placement=True,
+    log_device_placement=False,
     allow_soft_placement=True, # GPU上で実行できない演算を自動でCPUに
     gpu_options=tf.GPUOptions(
       allow_growth=True, # True->必要になったら確保, False->全部

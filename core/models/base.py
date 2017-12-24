@@ -43,6 +43,7 @@ class ModelBase(object):
 
   def get_updates(self, loss):
     with tf.name_scope("update"):
+      # TODO: root_scopeの下でroot_scopeを含む変数を呼んでるからスコープが重なる
       params = tf.contrib.framework.get_trainable_variables()
       opt = tf.train.AdamOptimizer(self.learning_rate)
       gradients = [grad for grad, _ in opt.compute_gradients(loss)]

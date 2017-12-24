@@ -10,12 +10,15 @@ def setup_cell(cell_type, hidden_size, num_layers=1, shared=False,
  
   cell_module = rnn_cell
   cell_class = getattr(cell_module, cell_type)
-  if issubclass(cell_class, rnn_cell.CustomLSTMCell):
-    cell = cell_class(hidden_size, keep_prob,
-                      reuse=tf.get_variable_scope().reuse) 
-  else:
-    cell = cell_class(hidden_size, 
-                      reuse=tf.get_variable_scope().reuse)
+
+  def _get_cell():
+    if issubclass(cell_class, rnn_cell.CustomLSTMCell):
+      cell = cell_class(hidden_size, keep_prob,
+                        reuse=tf.get_variable_scope().reuse) 
+    else:
+      cell = cell_class(hidden_size, 
+                        reuse=tf.get_variable_scope().reuse)
+    return cell
   #if in_keep_prob < 1.0 or out_keep_prob < 1.0:
   #cell = rnn_cell.DropoutWrapper(cell, 
   #                               input_keep_prob=in_keep_prob,
@@ -23,8 +26,10 @@ def setup_cell(cell_type, hidden_size, num_layers=1, shared=False,
 
   if num_layers > 1:
     #cells = [copy.deepcopy(cell) for _ in xrange(num_layers)]
-    cells = [cell for _ in xrange(num_layers)]
+    cells = [_get_cell() for _ in xrange(num_layers)]
     cell = rnn_cell.MultiRNNCell(cells, state_is_tuple=state_is_tuple)
+  else:
+    cell = _get_cell()
 
   if shared:
     cell = rnn_cell.SharingWrapper(cell)

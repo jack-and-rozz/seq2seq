@@ -203,18 +203,22 @@ class GraphLinkPrediction(ModelBase):
     input_feed[self.pt_indices] = np.array(pt_indices)
 
     #if batch['n_triples']:
-    if is_training:
-      n_triples = [common.flatten(t) for t in batch['n_triples']]
-      nt_indices, n_triples = common.flatten_with_idx(n_triples)
-      input_feed[self.n_triples] = np.array(n_triples)
-      input_feed[self.nt_indices] = np.array(nt_indices)
-    else:
-      _, n_triples = fake_triples(1)
-      #input_feed[self.n_triples] = np.array([[]])
-      #input_feed[self.nt_indices] = np.array([])
-      nt_indices, n_triples = common.flatten_with_idx(n_triples)
-      input_feed[self.n_triples] = np.array(n_triples)
-      input_feed[self.nt_indices] = np.array(nt_indices)
+    n_triples = [common.flatten(t) for t in batch['n_triples']]
+    nt_indices, n_triples = common.flatten_with_idx(n_triples)
+    input_feed[self.n_triples] = np.array(n_triples)
+    input_feed[self.nt_indices] = np.array(nt_indices)
+    # if is_training:
+    #   n_triples = [common.flatten(t) for t in batch['n_triples']]
+    #   nt_indices, n_triples = common.flatten_with_idx(n_triples)
+    #   input_feed[self.n_triples] = np.array(n_triples)
+    #   input_feed[self.nt_indices] = np.array(nt_indices)
+    # else:
+    #   _, n_triples = fake_triples(1)
+    #   #input_feed[self.n_triples] = np.array([[]])
+    #   #input_feed[self.nt_indices] = np.array([])
+    #   nt_indices, n_triples = common.flatten_with_idx(n_triples)
+    #   input_feed[self.n_triples] = np.array(n_triples)
+    #   input_feed[self.nt_indices] = np.array(nt_indices)
 
     return input_feed
 
@@ -224,6 +228,8 @@ class GraphLinkPrediction(ModelBase):
     t = time.time()
     for i, raw_batch in enumerate(batches):
       input_feed = self.get_input_feed(raw_batch, False)
+      print input_feed
+      exit(1)
       outputs = self.sess.run(self.outputs, input_feed)
       positives, negatives = outputs
       _scores, _ranks = self.summarize_results(raw_batch, positives, negatives)
