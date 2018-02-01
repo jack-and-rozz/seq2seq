@@ -33,6 +33,7 @@ def distmult(subjects, relations, objects):
 class GraphLinkPrediction(ModelBase):
   def __init__(self, sess, config, is_training, encoder, o_vocab, r_vocab,
                activation=tf.nn.tanh):
+    super(GraphLinkPrediction, self).__init__(sess, config)
     self.name = 'graph'
     self.dataset = 'wikiP2D'
     self.sess = sess
@@ -73,21 +74,21 @@ class GraphLinkPrediction(ModelBase):
                                        name='pt_indices')
       self.nt_indices = tf.placeholder(tf.int32, shape=[None],
                                        name='nt_indices')
+    text_emb, outputs, state = self.encoder.encode([self.w_sentences, self.c_sentences], self.sentence_length)
+    hidden_size = tf_utils.shape(outputs, -1)
+
     ## Embeddings
     with tf.variable_scope('Embeddings'):
-      self.o_embeddings = self.initialize_embeddings('object', [o_vocab.size, config.hidden_size])
-      self.r_embeddings = self.initialize_embeddings('relation', [r_vocab.size, config.hidden_size])
-
-    ## Define Loss
-    text_emb, outputs, state = self.encoder.encode([self.w_sentences, self.c_sentences], self.sentence_length)
-    self.encoder_outputs = outputs # for adversarial MTL
+      self.o_embeddings = self.initialize_embeddings('object', [o_vocab.size, hidden_size])
+      self.r_embeddings = self.initialize_embeddings('relation', [r_vocab.size, hidden_size])
+      print 'o_embeddings',self.o_embeddings
 
     span_outputs = self.encoder.extract_span(outputs, self.link_spans,
                                              self.entity_indices,
                                              self.max_batch_size)
 
     with tf.variable_scope('Inference'):
-      span_outputs = tf_utils.linear(span_outputs, config.hidden_size,
+      span_outputs = tf_utils.linear(span_outputs, hidden_size,
                                      activation=self.activation)
       with tf.name_scope('Positives'):
         self.positives = self.inference(span_outputs, self.p_triples,

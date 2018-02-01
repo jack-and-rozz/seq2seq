@@ -1,5 +1,5 @@
 #coding: utf-8
-import sys, os, random, copy, socket, collections, time
+import sys, os, random, copy, socket, collections, time, re
 from pprint import pprint
 import tensorflow as tf
 import numpy as np
@@ -106,6 +106,9 @@ class MTLManager(ManagerBase):
   @common.timewatch()
   def create_model(self, config, mode, checkpoint_path=None):
     #with tf.variable_scope("Model", reuse=self.reuse):
+    if self.reuse:
+      tf.get_variable_scope().reuse_variables()
+
     m = self.model_type(
       self.sess, config, mode,
       self.w_vocab, self.c_vocab, # for encoder
@@ -136,7 +139,6 @@ class MTLManager(ManagerBase):
     if not self.summary_writer:
       #self.summary_writer = {mode:tf.summary.FileWriter(os.path.join(self.SUMMARIES_PATH, mode), self.sess.graph) for mode in ['valid', 'test']}
       self.summary_writer = tf.summary.FileWriter(self.SUMMARIES_PATH, self.sess.graph)
-
     self.reuse = True
     return m
 
@@ -201,8 +203,6 @@ class MTLManager(ManagerBase):
 
   @common.timewatch(logger)
   def c_test(self, mode="valid"): # mode: 'valid' or 'test'
-    evaluated_checkpoints = set()
-    max_f1 = 0.0
     conll_eval_path = {
       'train': 'dataset/coref/source/train.english.v4_auto_conll',
       'valid': 'dataset/coref/source/dev.english.v4_auto_conll',
@@ -213,6 +213,7 @@ class MTLManager(ManagerBase):
 
     self.config.desc_task = False
     self.config.graph_task = False
+    self.config.adv_task = False
 
     # Retry evaluation if the best checkpoint is already found.
     if os.path.exists(max_checkpoint_path + '.index'):
@@ -229,11 +230,14 @@ class MTLManager(ManagerBase):
         sys.stdout = sys.__stdout__
       return
 
+    evaluated_checkpoints = set()
+    max_f1 = 0.0
     # Evaluate each checkpoint while training and save the best one.
     while True:
       time.sleep(1)
       ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
       checkpoint_path = ckpt.model_checkpoint_path if ckpt else None
+
       if checkpoint_path and checkpoint_path not in evaluated_checkpoints:
         # Move it to a temporary location to avoid being deleted by the training supervisor.
         tf_utils.copy_checkpoint(checkpoint_path, tmp_checkpoint_path)
@@ -241,7 +245,6 @@ class MTLManager(ManagerBase):
         print "Found a new checkpoint: %s" % checkpoint_path
         batches = self.get_batch(mode)[m.coref.dataset]
         output_path = self.TESTS_PATH + '/c_test.%s.ep%02d' % (mode, m.epoch.eval())
-
         with open(output_path, 'w') as f:
           sys.stdout = f
           eval_summary, f1, results = m.coref.test(batches, conll_eval_path[mode])
@@ -252,7 +255,7 @@ class MTLManager(ManagerBase):
           sys.stdout = sys.__stdout__
 
         self.summary_writer.add_summary(eval_summary, m.global_step.eval())
-        print "Evaluation written to {} at epoch {}".format(self.CHECKPOINTS_PATH, m.global_step.eval())
+        print "Evaluation written to {} at epoch {}".format(self.CHECKPOINTS_PATH, m.epoch.eval())
         evaluated_checkpoints.add(checkpoint_path)
 
   def c_demo(self):

@@ -14,6 +14,7 @@ class CoreferenceResolution(ModelBase):
                #speaker_vocab, genre_vocab,
                genre_vocab,
                activation=tf.nn.tanh):
+    super(CoreferenceResolution, self).__init__(sess, config)
     self.name = 'coref'
     self.dataset = 'coref'
     self.sess = sess

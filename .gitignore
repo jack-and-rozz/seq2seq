@@ -2,6 +2,7 @@ checkpoints
 tmp
 tensorflow
 *.pyc
+dataset/*
 .#*
 .fuse*
 */.#*

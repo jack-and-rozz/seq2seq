@@ -27,18 +27,6 @@ class SharingWrapper(RNNCell):
     else:
       self.my_scope.reuse_variables()
     return self._cell(inputs, state, self.my_scope)
-    # print '------------'
-    # print self
-    # print self.scope
-    # print self.reuse
-    # if self.scope == None:
-    #   self.scope = tf.get_variable_scope() 
-
-    # if self.reuse:
-    #   self.scope.reuse_variables()
-    # else:
-    #   self.reuse = True
-    # return self._cell(inputs, state, self.scope)
 
 # (from e2e-coref)
 class CustomLSTMCell(tf.contrib.rnn.RNNCell):
@@ -49,9 +37,9 @@ class CustomLSTMCell(tf.contrib.rnn.RNNCell):
 
     with tf.variable_scope(scope or type(self).__name__, reuse=reuse):
       self._initializer = self._block_orthonormal_initializer([self.output_size] * 3)
-      initial_cell_state = tf.get_variable("lstm_initial_cell_state", [1, self.output_size])
-      initial_hidden_state = tf.get_variable("lstm_initial_hidden_state", [1, self.output_size])
-      self._initial_state = tf.contrib.rnn.LSTMStateTuple(initial_cell_state, initial_hidden_state)
+      self.initial_cell_state = tf.get_variable("lstm_initial_cell_state", [1, self.output_size])
+      self.initial_hidden_state = tf.get_variable("lstm_initial_hidden_state", [1, self.output_size])
+      #self._initial_state = tf.contrib.rnn.LSTMStateTuple(initial_cell_state, initial_hidden_state)
 
   @property
   def state_size(self):
@@ -61,9 +49,12 @@ class CustomLSTMCell(tf.contrib.rnn.RNNCell):
   def output_size(self):
     return self._num_units
 
-  @property
-  def initial_state(self):
-    return self._initial_state
+  #@property
+  def initial_state(self, batch_size):
+    initial_cell_state = tf.tile(self.initial_cell_state, [batch_size, 1])
+    initial_hidden_state = tf.tile(self.initial_hidden_state, [batch_size, 1])
+    return tf.contrib.rnn.LSTMStateTuple(initial_cell_state, initial_hidden_state)
+    #return self._initial_state
 
   #def preprocess_input(self, inputs):
   #  return coref_util.projection(inputs, 3 * self.output_size)
