@@ -77,11 +77,10 @@ class recDotDict(dict):
     for k in _dict:
       if isinstance(_dict[k], dict):
         _dict[k] = recDotDict(_dict[k])
-      # if isinstance(_dict[k], list):
-      #    for i,x in enumerate(_dict[k]):
-      #      print i, x, isinstance(x, dict)
-      #      if isinstance(x, dict):
-      #        dict[k][i] = dotDict(x)
+      if isinstance(_dict[k], list):
+        for i,x in enumerate(_dict[k]):
+          if isinstance(x, dict):
+            _dict[k][i] = dotDict(x)
     super(recDotDict, self).__init__(_dict)
 
 

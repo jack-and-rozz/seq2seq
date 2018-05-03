@@ -28,7 +28,6 @@ def linear(inputs, output_size,
   """
   Args:
     inputs : Rank 2 or 3 Tensor of shape [batch_size, (sequence_size,) hidden_size].
-                 the sequence_size must be known.
     output_size : An integer.
   """
   with tf.variable_scope(scope or "linear"):
@@ -37,12 +36,11 @@ def linear(inputs, output_size,
     w = tf.get_variable('weights', [hidden_size, output_size])
     b = tf.get_variable('biases', [output_size])
     if inputs_rank == 3:
-      batch_size = tf.shape(inputs)[0]
-      max_sentence_length = tf.shape(inputs)[1]
+      batch_size = shape(inputs, 0)
+      max_sentence_length = shape(inputs, 1)
       inputs = tf.reshape(inputs, [batch_size * max_sentence_length, hidden_size])
       outputs = activation(tf.nn.xw_plus_b(inputs, w, b))
       outputs = tf.reshape(outputs, [batch_size, max_sentence_length, output_size])
-      #outputs = tf.stack([activation(tf.nn.xw_plus_b(t, w, b)) for t in tf.unstack(inputs, axis=1)], axis=1)
     elif inputs_rank == 2:
       outputs = activation(tf.nn.xw_plus_b(inputs, w, b))
     else:

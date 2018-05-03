@@ -7,7 +7,7 @@ from logging import FileHandler
 
 from base import ManagerBase
 from core.utils import common, tf_utils
-import core.models.wikiP2D.mtl as model
+import core.models.wikiP2D.mtl as mtl_model
 from core.models.wikiP2D.coref.demo import run_model
 from core.dataset.wikiP2D import WikiP2DDataset, DemoBatch
 from core.dataset.coref import CoNLL2012CorefDataset
@@ -31,16 +31,11 @@ class MTLManager(ManagerBase):
     config = self.config
     config.debug = True if FLAGS.debug == True else False
 
-    self.model_type = getattr(model, config.model_type)
-    self.mode = FLAGS.mode
     self.port = int(FLAGS.port) if FLAGS.port.isdigit() else None
     self.checkpoint_path = FLAGS.checkpoint_path
 
-    self.use_wikiP2D = True if config.graph_task or config.desc_task else False
-    self.use_coref = True if config.coref_task else False
-
     self.vocab = common.dotDict()
-
+    # Load pretrained embeddings.
     self.vocab.word = VocabularyWithEmbedding(
       config.embeddings_conf, config.w_vocab_size,
       lowercase=config.lowercase)
@@ -48,6 +43,8 @@ class MTLManager(ManagerBase):
       config.char_vocab_path, config.c_vocab_size,
       lowercase=config.lowercase,
     )
+    self.dataset = collections.defaultdict(None)
+    return
     exit(1)
     if self.use_wikiP2D:
       self.w2p_dataset = WikiP2DDataset(
@@ -72,8 +69,8 @@ class MTLManager(ManagerBase):
       batches['is_training'] = True
       batches['wikiP2D'] = self.w2p_dataset.train.get_batch(
         self.config.wikiP2D.batch_size, do_shuffle=True,
-        min_sentence_length=None, 
-        max_sentence_length=self.config.wikiP2D.max_sent_length.encode,
+        min_sent_len=None, 
+        max_sent_len=self.config.wikiP2D.max_sent_length.encode,
         n_pos_triples=self.config.wikiP2D.n_triples) if self.use_wikiP2D else None
       batches['coref'] = self.coref_dataset.train.get_batch(
         self.config.coref.batch_size, do_shuffle=True) if self.use_coref else None
@@ -81,8 +78,8 @@ class MTLManager(ManagerBase):
     elif batch_type == 'valid':
       batches['wikiP2D'] = self.w2p_dataset.valid.get_batch(
         self.config.wikiP2D.batch_size, do_shuffle=False,
-        min_sentence_length=None, 
-        max_sentence_length=self.config.wikiP2D.max_sent_length.encode,
+        min_sent_len=None, 
+        max_sent_len=self.config.wikiP2D.max_sent_length.encode,
         n_pos_triples=None) if self.use_wikiP2D else None
       batches['coref'] = self.coref_dataset.valid.get_batch(
         self.config.coref.batch_size, 
@@ -90,8 +87,8 @@ class MTLManager(ManagerBase):
     elif batch_type == 'test':
       batches['wikiP2D'] = self.w2p_dataset.test.get_batch(
         self.config.wikiP2D.batch_size, do_shuffle=False,
-        min_sentence_length=None, 
-        max_sentence_length=self.config.wikiP2D.max_sent_length.encode,
+        min_sent_len=None, 
+        max_sent_len=self.config.wikiP2D.max_sent_length.encode,
         n_pos_triples=None, n_neg_triples=None) if self.use_wikiP2D else None
       batches['coref'] = self.coref_dataset.test.get_batch(
         self.config.coref.batch_size, 
@@ -100,14 +97,15 @@ class MTLManager(ManagerBase):
 
   @common.timewatch()
   def create_model(self, config, mode, checkpoint_path=None):
-    #with tf.variable_scope("Model", reuse=self.reuse):
-    m = self.model_type(self.sess, config, self.vocab) # Define computation graph
+    mtl_model_type = getattr(mtl_model, config.model_type)
+    m = mtl_model_type(self.sess, config, self.vocab) # Define computation graph
 
     if not checkpoint_path:
       ckpt = tf.train.get_checkpoint_state(self.checkpoints_path)
       checkpoint_path = ckpt.model_checkpoint_path if ckpt else None
 
-    self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=self.config.max_to_keep)
+    self.saver = tf.train.Saver(tf.global_variables(), 
+                                max_to_keep=config.max_to_keep)
     if checkpoint_path and os.path.exists(checkpoint_path + '.index'):
       logger.info("Reading model parameters from %s" % checkpoint_path)
       self.saver.restore(self.sess, checkpoint_path)
@@ -127,7 +125,7 @@ class MTLManager(ManagerBase):
   @common.timewatch(logger)
   def train(self):
     m = self.create_model(self.config, 'train')
-
+    exit(1)
     if m.epoch.eval() == 0:
       if self.use_coref:
         logger.info("Dataset stats (CoNLL 2012)")
@@ -242,7 +240,7 @@ class MTLManager(ManagerBase):
 
     self.config.graph_task = False
     self.config.desc_task = False
-    m = self.create_model(self.config, self.mode, checkpoint_path=ckpt_path)
+    m = self.create_model(self.config, checkpoint_path=ckpt_path)
     eval_data = [d for d in self.get_batch('valid')['coref']]
     run_model(m, eval_data, self.port)
 

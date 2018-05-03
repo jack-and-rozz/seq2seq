@@ -49,7 +49,7 @@ class DemoBatch(object):
   def get_batch(self, batch_size, do_shuffle=False, 
                 n_batches=1, n_pos_triples=None, n_neg_triples=1,
                 carefully_negative=False, 
-                min_sentence_length=None, max_sentence_length=None):
+                min_sent_len=None, max_sent_len=None):
     yield self.batch
 
 class _WikiP2DDataset(object):
@@ -69,16 +69,16 @@ class _WikiP2DDataset(object):
   def get_batch(self, batch_size, do_shuffle=False, 
                 n_batches=1, n_pos_triples=None, n_neg_triples=1,
                 carefully_negative=False, n_articles=0, n_sentences=None,
-                min_sentence_length=None, max_sentence_length=None):
+                min_sent_len=None, max_sent_len=None):
     # TODO: remove carefully_negative
     '''
     n_pos_triples: The number of triples randomly sampled from true positive ones for an entity. If None, all triples are selected. 
     n_neg_triples: The number of triples randomly sampled from negative ones for an entity. The negative triples are created by replacing their object of true ones to the randomly sampled . If None, returns all objects. 
     '''
     def accepted(l):
-      if min_sentence_length and len(l) < min_sentence_length:
+      if min_sent_len and len(l) < min_sent_len:
         return False
-      if max_sentence_length and len(l) > max_sentence_length:
+      if max_sent_len and len(l) > max_sent_len:
         return False
       return True
 

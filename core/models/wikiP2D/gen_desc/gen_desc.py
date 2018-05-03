@@ -2,111 +2,126 @@
 import math, time, sys
 import numpy as np
 import tensorflow as tf
-from tensorflow.contrib.legacy_seq2seq import sequence_loss, sequence_loss_by_example, rnn_decoder, attention_decoder
+
+from core.utils.tf_utils import shape, linear, make_summary
 from core.utils import common
 from core.models.base import ModelBase
-from core.seq2seq import rnn
-from core.seq2seq.decoders import BeamSearchWrapper, RNNDecoder
+from core.seq2seq.rnn import setup_cell
+from core.vocabulary.base import PAD_ID
 
-from core.seq2seq.seq2seq import projection_and_sampled_loss, _extract_argmax_and_embed, to_logits
-from core.seq2seq.beam_search import _extract_beam_search
-
+START_TOKEN = PAD_ID
+END_TOKEN = PAD_ID
 
 class DescriptionGeneration(ModelBase):
-  def __init__(self, config, encoder, w_vocab,
-               activation=tf.nn.tanh, feed_previous=False, 
-               beam_size=1, num_samples=512):
+  def __init__(self, config, encoder, vocab,
+               activation=tf.nn.relu):
     """
     Args:
     """
-    self.name = "desc"
-    self.dataset = 'wikiP2D'
+    self.config = config
+    self.name = config.name
+    self.dataset = config.dataset
     self.activation = activation
     self.encoder = encoder
-    self.embeddings = encoder.w_embeddings
-    self.w_vocab = w_vocab
-
-    self.max_output_length = config.max_output_length.decode
+    self.w_embeddings = encoder.w_embeddings
+    self.w_vocab = vocab.word
 
     # Placeholders
     with tf.name_scope('Placeholder'):
+      self.is_training = tf.placeholder(tf.bool, [], name='is_training')
+      with tf.name_scope('keep_prob'):
+        self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
+
+      # encoder's placeholder
       self.w_sentences = tf.placeholder(
-        tf.int32, name='w_sentences',
-        shape=[None, None]) if self.encoder.wbase else None
+        tf.int32, name='w_sentences', shape=[None, None]) 
       self.c_sentences = tf.placeholder(
         tf.int32, name='c_sentences',
         shape=[None, None, None]) if self.encoder.cbase else None
+      enc_inputs = [self.w_sentences, self.c_sentences]
+      enc_input_lengths = tf.count_nonzero(self.w_sentences, 
+                                           axis=1, dtype=tf.int32)
 
-      # BOS + sentence_length + EOS.
+      # decoder's placeholder
       self.descriptions = desc = tf.placeholder(
-        tf.int32, name='descriptions', shape=[None, self.max_output_length+2])
+        tf.int32, name='descriptions', shape=[None, None])
 
-      self.sentence_length = tf.placeholder(tf.int32, shape=[None], name="sentence_length")
 
-    # BOS + sentence_length
-    self.decoder_inputs = tf.stack(tf.unstack(desc, axis=1)[:-1], axis=1)
-    self.targets = tf.stack(tf.unstack(desc, axis=1)[1:], axis=1)
-    self.weights = tf.placeholder(tf.float32, name='weights',
-                                  shape=[None, self.max_output_length+1])
+      # add start_token (end_token) to decoder's input (output).
+      batch_size = shape(self.descriptions, 0)
+      with tf.name_scope('start_tokens'):
+        start_tokens = tf.tile(tf.constant([START_TOKEN], dtype=tf.int32), [batch_size])
+      with tf.name_scope('end_tokens'):
+        end_tokens = tf.tile(tf.constant([END_TOKEN], dtype=tf.int32), [batch_size])
+      dec_input_tokens = tf.concat([tf.expand_dims(start_tokens, 1), self.descriptions], axis=1)
+      dec_output_tokens = tf.concat([self.descriptions, tf.expand_dims(end_tokens, 1)], axis=1)
 
-    ## Seq2Seq for description generation.
+      # Length of description + end_token (or start_token)
+      dec_input_lengths = dec_output_lengths = tf.count_nonzero(
+        self.descriptions, axis=1, dtype=tf.int32) + 1
+
+      # Encode input text
+      _, enc_outputs, enc_state = self.encoder.encode(enc_inputs, 
+                                                      enc_input_lengths)
+      self.logits, self.predictions = self.setup_decoder(
+        enc_state, dec_input_tokens, dec_input_lengths, dec_output_lengths)
+
+      # Convert dec_output_lengths to binary masks
+      dec_output_weights = tf.sequence_mask(dec_output_lengths, dtype=tf.float32)
+
+      # Compute loss
+      self.loss = tf.contrib.seq2seq.sequence_loss(
+        self.logits, dec_output_tokens, dec_output_weights,
+        average_across_timesteps=True, average_across_batch=True)
+
+  def setup_decoder(self, enc_state, dec_input_tokens, 
+                    dec_input_lengths, dec_output_lengths):
+    config = self.config
     with tf.variable_scope('Decoder') as scope:
-      self.cell = rnn.setup_cell(
-        config.cell_type, config.hidden_size,
-        num_layers=config.num_layers, 
-        in_keep_prob=config.in_keep_prob, 
-        out_keep_prob=config.out_keep_prob,
-        state_is_tuple=config.state_is_tuple)
-      self.decoder = RNNDecoder(self.cell, self.encoder.w_embeddings, scope=scope)
-      ########## DEBUG
-      self.loss = tf.constant(1.0)
-      self.outputs = tf.constant(1.0)
-    return
-    with tf.variable_scope('Seq2Seq') as scope:
-      self.projection, loss_func = projection_and_sampled_loss(
-        self.embeddings.shape[0], self.cell.output_size, num_samples)
+      dec_cell = setup_cell(config.decoder_cell, shape(enc_state, -1), 
+                            config.num_layers,
+                            keep_prob=self.keep_prob)
+      with tf.variable_scope('projection') as scope:
+        projection_layer = tf.layers.Dense(self.w_vocab.size, 
+                                           use_bias=True, trainable=True)
 
-      self.do_beam_decode = False
-      if not feed_previous:
-        self.loop_function = None
-      else:
-        if beam_size > 1:
-          self.do_beam_decode = True
-          # TODO
-        else:
-          self.loop_function = _extract_argmax_and_embed(
-            self.embeddings, output_projection=self.projection)
+      dec_input_embs = tf.nn.embedding_lookup(self.w_embeddings, 
+                                              dec_input_tokens)
 
-      res = self.decoder(
-        self.decoder_inputs, self.encoder.link_outputs, self.encoder.outputs,
-        scope=scope, loop_function=self.loop_function)
-      if self.do_beam_decode:
-        beam_paths, beam_symbols, decoder_states = res
-      else:
-        outputs, decoder_states = res
-        logits = to_logits(outputs, self.projection) if self.projection is not None else outputs
-        self.losses = sequence_loss_by_example(
-          outputs, 
-          tf.unstack(self.targets, axis=1), 
-          tf.unstack(self.weights, axis=1), 
-          softmax_loss_function=loss_func)
-        # Empty descriptions ([BOS, EOS]) are not used for loss. 
-        mask = tf.cast(tf.greater(tf.reduce_sum(self.weights, axis=1), 1), tf.float32)
-        self.losses = self.losses * mask
-        self.loss = tf.reduce_sum(self.losses) / tf.reduce_sum(mask)
+      with tf.name_scope('Train'):
+        helper = tf.contrib.seq2seq.TrainingHelper(
+          dec_input_embs, sequence_length=dec_input_lengths, time_major=False)
+        dec_initial_state = enc_state
+        train_decoder = tf.contrib.seq2seq.BasicDecoder(
+          dec_cell, helper, dec_initial_state,
+          output_layer=projection_layer)
+        train_dec_outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(
+          train_decoder, impute_finished=True,
+          maximum_iterations=tf.reduce_max(dec_output_lengths), scope=scope)
+        logits = train_dec_outputs.rnn_output
+
+      with tf.name_scope('Test'):
+        beam_width = config.beam_width
+        dec_initial_state = tf.contrib.seq2seq.tile_batch(
+          enc_state, multiplier=beam_width)
+        batch_size = shape(enc_state, 0)
+        start_tokens = tf.tile(tf.constant([START_TOKEN], dtype=tf.int32), [batch_size])
+        test_decoder = tf.contrib.seq2seq.BeamSearchDecoder(
+          dec_cell, self.w_embeddings, start_tokens, END_TOKEN, 
+          dec_initial_state,
+          beam_width, output_layer=projection_layer,
+          length_penalty_weight=config.length_penalty_weight)
+
+        test_dec_outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(
+          test_decoder, impute_finished=False,
+          maximum_iterations=config.max_output_len, scope=scope)
+        predictions = test_dec_outputs.predicted_ids
+    return logits, predictions
 
   def get_input_feed(self, batch):
     input_feed = {}
-    #descriptions = batch['descriptions']
+    input_feed[self.is_training] = is_training
     descriptions = [e['desc'] for e in batch['entities']]
-    descriptions, sentence_length = self.w_vocab.padding(
-      batch['descriptions'], self.max_output_length)
 
-    def to_weights(sequence_lengthes, max_length):
-      # Targets don't include BOS, so we need to decrement sentence_length by 1
-      return [[1.0]*(sl-1) + [0.0]*(max_length-sl+1) for sl in sequence_lengthes]
-    weights = np.array(to_weights(sentence_length, 
-                                  self.weights.get_shape()[1]))
-    input_feed[self.weights] = weights
     input_feed[self.descriptions] = np.array(descriptions)
     return input_feed

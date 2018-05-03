@@ -23,7 +23,7 @@ def merge_state(state):
 
 class WordEncoder(ModelBase):
   def __init__(self, config, is_training, w_vocab=None, c_vocab=None,
-               activation=tf.nn.tanh, shared_scope=None):
+               activation=tf.nn.relu, shared_scope=None):
     self.cbase = config.cbase
     self.wbase = config.wbase
     self.w_vocab = w_vocab
@@ -35,33 +35,19 @@ class WordEncoder(ModelBase):
 
     self.lexical_keep_prob = 1.0 - tf.to_float(self.is_training) * config.lexical_dropout_rate
 
-    if self.wbase:
-      w_pretrained = True if isinstance(w_vocab, VocabularyWithEmbedding) else False
-      w_trainable = config.trainable_emb or not w_pretrained
-      if w_pretrained:
-        sys.stderr.write("Initialize word embeddings with the pretrained.\n")
-        w_initializer = tf.constant_initializer(w_vocab.embeddings)
-        w_emb_shape = w_vocab.embeddings.shape
-      else:
-        w_initializer = None
-        w_emb_shape = [w_vocab.size, config.w_embedding_size] 
-      with tf.device('/cpu:0'):
-        self.w_embeddings = self.initialize_embeddings('word_emb', w_emb_shape, initializer=w_initializer, trainable=w_trainable)
+    w_trainable = config.trainable_emb
+    sys.stderr.write("Initialize word embeddings with pretrained ones.\n")
+    w_initializer = tf.constant_initializer(w_vocab.embeddings)
+    w_emb_shape = w_vocab.embeddings.shape
+
+    with tf.device('/cpu:0'):
+      self.w_embeddings = self.initialize_embeddings('word_emb', w_emb_shape, initializer=w_initializer, trainable=w_trainable)
 
     if self.cbase:
-      c_pretrained = True if isinstance(c_vocab, VocabularyWithEmbedding) else False
-      c_trainable = config.trainable_emb or not c_pretrained
-
-      if c_pretrained:
-        sys.stderr.write("Initialize character embeddings with the pretrained.\n")
-        c_initializer = tf.constant_initializer(c_vocab.embeddings)
-        c_emb_shape = c_vocab.embeddings.shape 
-      else: 
-        c_initializer = None
-        c_emb_shape = [c_vocab.size, config.c_embedding_size] 
-
+      c_emb_shape = [c_vocab.size, config.c_embedding_size] 
       with tf.device('/cpu:0'):
-        self.c_embeddings = self.initialize_embeddings('char_emb', c_emb_shape, initializer=c_initializer, trainable=c_trainable)
+        self.c_embeddings = self.initialize_embeddings(
+          'char_emb', c_emb_shape, trainable=True)
 
   def encode(self, wc_inputs):
     # inputs: the list of [None, max_sentence_length] or [None, max_sentence_length, max_word_length]
@@ -90,7 +76,7 @@ class WordEncoder(ModelBase):
     return input_feed
 
 class SentenceEncoder(ModelBase):
-  def __init__(self, config, is_training, word_encoder, activation=tf.nn.tanh, 
+  def __init__(self, config, is_training, word_encoder, activation=tf.nn.relu, 
                shared_scope=None):
     self.cbase = config.cbase
     self.wbase = config.wbase
@@ -105,31 +91,24 @@ class SentenceEncoder(ModelBase):
     self.activation = activation
     self.shared_scope = shared_scope
     self.reuse = None # to reuse variables defined in encode()
-    do_sharing = True if self.shared_scope else False
 
     # For 'initial_state' of CustomLSTMCell, different scopes are required in these initializations.
     with tf.variable_scope('fw_cell', reuse=tf.get_variable_scope().reuse):
-      self.cell_fw = setup_cell(config.cell_type, config.rnn_size, 
+      self.cell_fw = setup_cell(config.encoder_cell, config.rnn_size, 
                                 num_layers=config.num_layers, 
-                                keep_prob=self.keep_prob,
-                                shared=do_sharing)
+                                keep_prob=self.keep_prob)
 
     with tf.variable_scope('bw_cell', reuse=tf.get_variable_scope().reuse):
-      self.cell_bw = setup_cell(config.cell_type, config.rnn_size, 
+      self.cell_bw = setup_cell(config.encoder_cell, config.rnn_size, 
                                 num_layers=config.num_layers, 
-                                keep_prob=self.keep_prob,
-                                shared=do_sharing)
+                                keep_prob=self.keep_prob)
 
   def encode(self, wc_sentences, sequence_length):
     with tf.variable_scope(self.shared_scope or "SentenceEncoder", 
                            reuse=self.reuse) as scope:
       word_repls = self.word_encoder.encode(wc_sentences)
 
-        #if word_repls.get_shape()[-1] != self.hidden_size:
-        #  word_repls = linear(word_repls, self.hidden_size, 
-        #                      activation=self.activation)
-
-      batch_size = tf.shape(word_repls)[0]
+      batch_size = shape(word_repls, 0)
       initial_state_fw = self.cell_fw.initial_state(batch_size) if hasattr(self.cell_fw, 'initial_state') else None
       initial_state_bw = self.cell_fw.initial_state(batch_size) if hasattr(self.cell_bw, 'initial_state') else None
 

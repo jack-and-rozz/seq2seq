@@ -46,7 +46,7 @@ class ManagerBase(object):
         common.print_config(config)
         sys.stdout = sys.__stdout__
     self.config = common.recDotDict(config)
-    sys.stderr.write(str(config))
+    sys.stderr.write(str(config) + '\n')
 
   def create_dir(self):
     FLAGS = self.FLAGS
