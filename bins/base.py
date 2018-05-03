@@ -44,7 +44,7 @@ class ManagerBase(object):
         common.print_config(self.config)
         sys.stdout = sys.__stdout__
     self.config = common.recDotDict(self.config)['main']
-    
+
   def create_dir(self):
     FLAGS = self.FLAGS
     if not os.path.exists(FLAGS.checkpoint_path):
@@ -57,11 +57,5 @@ class ManagerBase(object):
       os.makedirs(self.VARIABLES_PATH)
     if not os.path.exists(self.SUMMARIES_PATH):
       os.makedirs(self.SUMMARIES_PATH)
-
-    # flags_dir = self.FLAGS.__dict__['__flags']
-    # with open(self.FLAGS.checkpoint_path + '/config', 'w') as f:
-    #   for k,v in flags_dir.items():
-    #     if not k in self.TMP_FLAGS:
-    #       f.write('%s=%s\n' % (k, str(v)))
 
 

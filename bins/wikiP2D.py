@@ -163,7 +163,7 @@ class MTLManager(ManagerBase):
       # embedding.metadata_path = os.path.join(self.SUMMARIES_PATH, 'metadata.tsv')
       # projector.visualize_embeddings(self.summary_writer, config)
 
-    for epoch in xrange(m.epoch.eval(), self.config.max_epoch):
+    for epoch in range(m.epoch.eval(), self.config.max_epoch):
       batches = self.get_batch('train')
       epoch_time, step_time, train_loss, summary = m.train_or_valid(batches, summary_writer=self.summary_writer)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, train_loss))
@@ -304,7 +304,7 @@ class MTLManager(ManagerBase):
       article = " ".join(parser(article))
       w_article = self.w_vocab.sent2ids(article)
       c_article =  self.c_vocab.sent2ids(article)
-      p_triples = [(0, i) for i in xrange(10)]
+      p_triples = [(0, i) for i in range(10)]
       batch = {
         'w_articles': [w_article],
         'c_articles': [c_article],
