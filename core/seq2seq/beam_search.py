@@ -1,6 +1,6 @@
 # coding: utf-8
-from __future__ import absolute_import
-from __future__ import division
+
+
 #from __future__ import print_function
 
 import copy, math
@@ -261,7 +261,7 @@ def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell
     hidden_features = []
     v = []
     attention_vec_size = attn_size  # Size of query vectors for attention.
-    for a in xrange(num_heads):
+    for a in range(num_heads):
       k = variable_scope.get_variable("AttnW_%d" % a,
                                       [1, 1, attn_size, attention_vec_size])
       hidden_features.append(nn_ops.conv2d(hidden, k, [1, 1, 1, 1], "SAME"))
@@ -275,7 +275,7 @@ def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell
     def attention(query):
       """Put attention masks on hidden using hidden_features and query."""
       ds = []  # Results of attention reads will be stored here.
-      for a in xrange(num_heads):
+      for a in range(num_heads):
         with variable_scope.variable_scope("Attention_%d" % a):
           y = linear(query, attention_vec_size, True)
           y = array_ops.reshape(y, [-1, 1, 1, attention_vec_size])
@@ -295,7 +295,7 @@ def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell
     prev = None
     batch_attn_size = array_ops.stack([batch_size, attn_size])
     attns = [array_ops.zeros(batch_attn_size, dtype=dtype)
-             for _ in xrange(num_heads)]
+             for _ in range(num_heads)]
     for a in attns:  # Ensure the second shape of attention vectors is set.
       a.set_shape([None, attn_size])
 
@@ -357,7 +357,7 @@ def beam_attention_decoder(decoder_inputs, initial_state, attention_states, cell
 
 def follow_path(path, symbol, beam_size):
   best_symbols = []
-  curr = range(beam_size)
+  curr = list(range(beam_size))
   num_steps = len(path)
   for i in range(num_steps-1, -1, -1):
     best_symbols.append(symbol[i][curr[0]]) 

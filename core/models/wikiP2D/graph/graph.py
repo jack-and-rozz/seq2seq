@@ -81,7 +81,7 @@ class GraphLinkPrediction(ModelBase):
     with tf.variable_scope('Embeddings'):
       self.o_embeddings = self.initialize_embeddings('object', [o_vocab.size, hidden_size])
       self.r_embeddings = self.initialize_embeddings('relation', [r_vocab.size, hidden_size])
-      print 'o_embeddings',self.o_embeddings
+      print('o_embeddings',self.o_embeddings)
 
     span_outputs = self.encoder.extract_span(outputs, self.link_spans,
                                              self.entity_indices,
@@ -149,15 +149,15 @@ class GraphLinkPrediction(ModelBase):
     n_triples = raw_batch['n_triples']
     batch_size = len(p_triples)
     if not n_triples:
-      n_triples = [[[] for _ in xrange(len(p_triples[b]))] for b in xrange(batch_size)]
+      n_triples = [[[] for _ in range(len(p_triples[b]))] for b in range(batch_size)]
 
     scores = [] 
-    for b in xrange(batch_size): # per an article
+    for b in range(batch_size): # per an article
       scores_by_pt = []
       if len(positives[b]) == 0:
         continue
       n_neg = int(len(negatives[b]) / len(positives[b]))
-      negatives_by_p = [negatives[b][i*n_neg:(i+1)*n_neg] for i in xrange(len(positives[b]))]
+      negatives_by_p = [negatives[b][i*n_neg:(i+1)*n_neg] for i in range(len(positives[b]))]
 
       for p, ns, pt, nts in zip(positives[b], negatives_by_p, 
                                  p_triples[b], n_triples[b]):
@@ -197,8 +197,8 @@ class GraphLinkPrediction(ModelBase):
 
     PAD_TRIPLE = (0, 0)
     def fake_triples(batch_size):
-      res = [([0.0], [PAD_TRIPLE]) for i in xrange(batch_size)]
-      weights, triples = map(list, zip(*res))
+      res = [([0.0], [PAD_TRIPLE]) for i in range(batch_size)]
+      weights, triples = list(map(list, list(zip(*res))))
       return weights, triples
 
     pt_indices, p_triples = common.flatten_with_idx(batch['p_triples'])
@@ -231,7 +231,7 @@ class GraphLinkPrediction(ModelBase):
     t = time.time()
     for i, raw_batch in enumerate(batches):
       input_feed = self.get_input_feed(raw_batch, False)
-      print input_feed
+      print(input_feed)
       exit(1)
       outputs = self.sess.run(self.outputs, input_feed)
       positives, negatives = outputs
@@ -270,26 +270,26 @@ class GraphLinkPrediction(ModelBase):
     for batch, score_by_batch, ranks_by_batch in zip(batches, scores, ranks): # per a batch
       for batch_by_art, score_by_art, rank_by_art in zip(batch2text(batch), score_by_batch, ranks_by_batch): # per an article
         ent_name, wa, ca, pts = batch_by_art
-        print common.colored('<%d> : %s' % (cnt, ent_name), 'bold')
+        print(common.colored('<%d> : %s' % (cnt, ent_name), 'bold'))
         #print common.colored("Article(word):", 'bold')
         #print "\n".join(wa) + '\n'
-        print common.colored("Article(char):", 'bold')
-        print "\n".join(ca) + '\n'
-        print common.colored("Triple, Score, Rank:", 'bold')
+        print(common.colored("Article(char):", 'bold'))
+        print("\n".join(ca) + '\n')
+        print(common.colored("Triple, Score, Rank:", 'bold'))
         for (r, o), scores, rank in zip(pts, score_by_art, rank_by_art): # per a positive triple
           s = scores[0] # scores = [pos, neg_0, neg_1, ...]
           N = 5
           pos_rank, sorted_idx = rank
           pos_id = self.o_vocab.name2id(o)
-          idx2id = [pos_id] + [x for x in xrange(self.o_vocab.size) if x != pos_id] # pos_objectを先頭に持ってきているのでidxを並び替え
+          idx2id = [pos_id] + [x for x in range(self.o_vocab.size) if x != pos_id] # pos_objectを先頭に持ってきているのでidxを並び替え
 
           top_n_scores = [scores[idx] for idx in sorted_idx[:N]]
           top_n_objs = [self.o_vocab.id2name(idx2id[x]) 
                         for x in sorted_idx[:N]]
           top_n = ", ".join(["%s:%.3f" % (x, score) for x, score in 
                              zip(top_n_objs, top_n_scores)])
-          print "(%s, %s) - %f, %d, [Top-%d Objects]: %s" % (r, o, s, pos_rank, N, top_n) 
-        print
+          print("(%s, %s) - %f, %d, [Top-%d Objects]: %s" % (r, o, s, pos_rank, N, top_n)) 
+        print()
         cnt += 1 
     sys.stdout = sys.__stdout__
 
@@ -297,11 +297,11 @@ class GraphLinkPrediction(ModelBase):
     # for debug.
     for i, (ent, wsents, csents, link_spans, p_triples) in enumerate(zip(batch['entities'], batch['w_articles'], batch['c_articles'], batch['link_spans'], batch['p_triples'])):
       for j, (wsent, csent, ls) in enumerate(zip(wsents, csents, link_spans)):
-        print 'w_text<%02d>:  ' % j, self.encoder.w_vocab.ids2tokens(wsent, link_span=ls)
-        print 'c_text<%02d>:  ' % j, self.encoder.c_vocab.ids2tokens(csent, link_span=ls)
-      print 'entity:  ', ent['name']
-      print 'triples:  '
+        print('w_text<%02d>:  ' % j, self.encoder.w_vocab.ids2tokens(wsent, link_span=ls))
+        print('c_text<%02d>:  ' % j, self.encoder.c_vocab.ids2tokens(csent, link_span=ls))
+      print('entity:  ', ent['name'])
+      print('triples:  ')
       for r, o in p_triples:
-        print self.r_vocab.id2name(r),', ' , self.o_vocab.id2name(o)
-      print ''
+        print(self.r_vocab.id2name(r),', ' , self.o_vocab.id2name(o))
+      print('')
     

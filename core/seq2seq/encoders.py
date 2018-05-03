@@ -1,6 +1,6 @@
 # coding: utf-8
-from __future__ import absolute_import
-from __future__ import division
+
+
 #from __future__ import print_function
 
 import copy, math
@@ -158,8 +158,8 @@ class BidirectionalRNNEncoder(RNNEncoder):
         num_layers = len(self.cell._cells) if isinstance(self.cell, rnn_cell.MultiRNNCell) else 1
         size = self.state_size // num_layers
         merged_state = []
-        state_fw = tf.split(state_fw, [size for _ in xrange(num_layers)], 1)
-        state_bw = tf.split(state_bw, [size for _ in xrange(num_layers)], 1)
+        state_fw = tf.split(state_fw, [size for _ in range(num_layers)], 1)
+        state_bw = tf.split(state_bw, [size for _ in range(num_layers)], 1)
         for i, (s_fw, s_bw) in enumerate(zip(state_fw, state_bw)):
           with tf.variable_scope("state_%d" % (i)):
             w = tf.get_variable("proj_w", [size * 2, size])

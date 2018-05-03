@@ -26,8 +26,7 @@ class DescriptionGeneration(ModelBase):
     self.embeddings = encoder.w_embeddings
     self.w_vocab = w_vocab
 
-    self.max_sent_length = config.max_sent_length.decode
-
+    self.max_output_length = config.max_output_length.decode
 
     # Placeholders
     with tf.name_scope('Placeholder'):
@@ -38,16 +37,17 @@ class DescriptionGeneration(ModelBase):
         tf.int32, name='c_sentences',
         shape=[None, None, None]) if self.encoder.cbase else None
 
+      # BOS + sentence_length + EOS.
+      self.descriptions = desc = tf.placeholder(
+        tf.int32, name='descriptions', shape=[None, self.max_output_length+2])
+
       self.sentence_length = tf.placeholder(tf.int32, shape=[None], name="sentence_length")
 
-    # BOS + sentence_length + EOS.
-    self.descriptions = desc = tf.placeholder(
-      tf.int32, name='descriptions', shape=[None, self.max_sent_length+2])
     # BOS + sentence_length
     self.decoder_inputs = tf.stack(tf.unstack(desc, axis=1)[:-1], axis=1)
     self.targets = tf.stack(tf.unstack(desc, axis=1)[1:], axis=1)
     self.weights = tf.placeholder(tf.float32, name='weights',
-                                  shape=[None, self.max_sent_length+1])
+                                  shape=[None, self.max_output_length+1])
 
     ## Seq2Seq for description generation.
     with tf.variable_scope('Decoder') as scope:
@@ -100,7 +100,7 @@ class DescriptionGeneration(ModelBase):
     #descriptions = batch['descriptions']
     descriptions = [e['desc'] for e in batch['entities']]
     descriptions, sentence_length = self.w_vocab.padding(
-      batch['descriptions'], self.max_sent_length)
+      batch['descriptions'], self.max_output_length)
 
     def to_weights(sequence_lengthes, max_length):
       # Targets don't include BOS, so we need to decrement sentence_length by 1

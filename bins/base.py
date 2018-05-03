@@ -1,5 +1,5 @@
 #coding: utf-8
-from __future__ import absolute_import
+
 from pprint import pprint
 import sys, os, random
 from logging import FileHandler
@@ -12,19 +12,6 @@ import tensorflow as tf
 from core.utils import common
 random.seed(0)
 np.random.seed(0)
-
-
-## temporal flags (not saved in config)
-tf.app.flags.DEFINE_string("mode", "train", "")
-tf.app.flags.DEFINE_string("log_file", "train.log", "")
-tf.app.flags.DEFINE_string('checkpoint_path', '/tmp/model.ckpt', 
-                           'Directory to save the trained model.')
-tf.app.flags.DEFINE_string('config_path', 'configs/experiments.conf', '')
-
-
-log_file = tf.app.flags.FLAGS.log_file if tf.app.flags.FLAGS.log_file else None
-logger = common.logManager(handler=FileHandler(log_file)) if log_file else common.logManager()
-
 
 class ManagerBase(object):
   def __init__(self, FLAGS, sess):

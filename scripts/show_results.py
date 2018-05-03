@@ -1,5 +1,5 @@
 # coding:utf-8
-import sys, re, argparse, commands, os
+import sys, re, argparse, subprocess, os
 from utils import common 
 import glob
 
@@ -17,7 +17,7 @@ def read_corpus(test_file, source_lang, target_lang,
   return sources, targets
 
 def main(args):
-  dirs = [m for m in commands.getoutput('ls -d %s' % args.proj_dir + '/*').split()
+  dirs = [m for m in subprocess.getoutput('ls -d %s' % args.proj_dir + '/*').split()
           if os.path.exists(m + '/config')]
   models = []
   results = []
@@ -28,7 +28,7 @@ def main(args):
                                                mconfig.target_lang)
     if glob.glob(decode_file):
       query = ' ls -d %s' % (decode_file)
-      decode_results = commands.getoutput(query).split()
+      decode_results = subprocess.getoutput(query).split()
       newest = sorted([(d, int(re.search('ep([0-9]+)', d).group(1))) 
                 for d in decode_results], key=lambda x: -x[1])[0][0]
       result = common.read_file(newest, do_tokenize=False)
@@ -56,10 +56,10 @@ def main(args):
   show(models, results)
 
 def show(models, results):
-  for i in xrange(len(results[0])):
-    print ('<%d>' % i)
+  for i in range(len(results[0])):
+    print(('<%d>' % i))
     for m, r in zip(models, results):
-      print ('%s : %s' % (m, r[i]))
+      print(('%s : %s' % (m, r[i])))
     print ('')
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@
 # from tensorflow.python.util import nest
 import tensorflow as tf
 from tensorflow.contrib.rnn.python.ops import core_rnn_cell
-import rnn_cell
+from . import rnn_cell
 
 # Shared rnn_cell classes.
 

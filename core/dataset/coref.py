@@ -1,9 +1,9 @@
 
 #coding: utf-8
-from __future__ import absolute_import
+
 from pprint import pprint
 import os, re, sys, random, copy, time, json
-import commands, itertools
+import subprocess, itertools
 import numpy as np
 from collections import OrderedDict, defaultdict, Counter
 
@@ -17,7 +17,7 @@ class FeatureVocab(object):
   def __init__(self, all_tokens):
     counter = Counter(all_tokens)
     self.freq = counter.values
-    self.rev_vocab = counter.keys()
+    self.rev_vocab = list(counter.keys())
     self.rev_vocab.insert(0, _UNK)
     self.vocab = OrderedDict([(t, i) for i,t in enumerate(self.rev_vocab)])
     self.size = len(self.vocab)
@@ -39,7 +39,6 @@ class _CoNLL2012CorefDataset(object):
     self.w_vocab = w_vocab
     self.c_vocab = c_vocab
     self.genre_vocab = genre_vocab
-    #self.n_no_coref, self.data = self.tokenize(data)
     self.data = self.tokenize(data)
     self.size = len(self.data)
 
@@ -57,7 +56,6 @@ class _CoNLL2012CorefDataset(object):
         'clusters': jsonline['clusters'],
         'genre': self.genre_vocab.token2id(jsonline['doc_key'][:2]), # wb
         'doc_key': jsonline['doc_key'], # wb/c2e/00/c2e_0022_0 (not tokenized)
-        #'speakers': [self.speaker_vocab.sent2ids(l) for l in jsonline['speakers']],
         'speakers': speaker_ids,
       }
       return record
@@ -74,7 +72,7 @@ class _CoNLL2012CorefDataset(object):
       batches = []
       for j, b2 in itertools.groupby(enumerate(raw_batch), lambda x: x[0] // (len(raw_batch) // n_batches)):
         b2 = [x[1] for x in b2]
-        keys = b2[0].keys()
+        keys = list(b2[0].keys())
 
         # TODO: オリジナルのコードではbatch_size == 1を前提としているためとりあえずこうする
         if batch_size > 1:

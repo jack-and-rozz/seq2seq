@@ -29,7 +29,7 @@ class AverageGradientMultiGPUTrainWrapper(object):
       num_gpus = 0
       raise ValueError("Set \'CUDA_VISIBLE_DEVICES\' to define which gpus to be used.")
     models = []
-    for i in xrange(num_gpus):
+    for i in range(num_gpus):
       with tf.device('/gpu:%d' % i):
         with tf.name_scope('model_%d' % (i)) as scope:
           if i > 0:

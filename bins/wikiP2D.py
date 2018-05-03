@@ -5,7 +5,7 @@ import tensorflow as tf
 import numpy as np
 import multiprocessing as mp
 
-from base import ManagerBase, logger
+from base import ManagerBase
 from core.utils import common, tf_utils
 import core.models.wikiP2D.mtl as model
 #import core.models.wikiP2D.coref import demo as c_demo
@@ -17,53 +17,62 @@ from tensorflow.contrib.tensorboard.plugins import projector
 
 tf.app.flags.DEFINE_string("port", "", "")
 tf.app.flags.DEFINE_boolean("debug", False, "")
+tf.app.flags.DEFINE_string("mode", "train", "")
+tf.app.flags.DEFINE_string("log_file", "train.log", "")
+tf.app.flags.DEFINE_string('checkpoint_path', '/tmp/model.ckpt', 
+                           'Directory to save the trained model.')
+tf.app.flags.DEFINE_string('config_path', 'configs/experiments.conf', '')
+
+log_file = tf.app.flags.FLAGS.log_file if tf.app.flags.FLAGS.log_file else None
+logger = common.logManager(handler=FileHandler(log_file)) if log_file else common.logManager()
+
 
 class MTLManager(ManagerBase):
   @common.timewatch()
   def __init__(self, FLAGS, sess):
     # If embeddings are not pretrained, make trainable True.
     super(MTLManager, self).__init__(FLAGS, sess)
-    self.config.trainable_emb = self.config.trainable_emb or not self.config.use_pretrained_emb
-    self.model_type = getattr(model, self.config.model_type)
+    config = self.config
+    config.trainable_emb = config.trainable_emb or not config.use_pretrained_emb
+    config.debug = True if FLAGS.debug == True else False
+
+    self.model_type = getattr(model, config.model_type)
     self.mode = FLAGS.mode
     self.port = int(FLAGS.port) if FLAGS.port.isdigit() else None
-    self.config.debug = True if FLAGS.debug == True else False
     self.checkpoint_path = FLAGS.checkpoint_path
     self.reuse = None
     self.summary_writer = None
 
-    self.use_wikiP2D = True if self.config.graph_task or self.config.desc_task else False
-    self.use_coref = True if self.config.coref_task else False
+    self.use_wikiP2D = True if config.graph_task or config.desc_task else False
+    self.use_coref = True if config.coref_task else False
 
-    self.w_vocab = None
-    self.c_vocab = None
-    self.r_vocab = None
-    self.o_vocab = None
+    self.vocab = common.dotDict()
 
-    if self.config.use_pretrained_emb and len(self.config.embeddings) > 0:
-      self.w_vocab = VocabularyWithEmbedding(
-        self.config.embeddings,
-        source_dir=self.config.embeddings_dir,
-        lowercase=self.config.lowercase)
-      self.c_vocab = PredefinedCharVocab(
-        os.path.join(self.config.embeddings_dir, self.config.char_vocab_path),
-        lowercase=self.config.lowercase,
+    if config.use_pretrained_emb and len(config.embeddings) > 0:
+      self.vocab.word = VocabularyWithEmbedding(
+        config.embeddings, config.w_vocab_size,
+        source_dir=config.embeddings_dir,
+        lowercase=config.lowercase)
+      self.vocab.char = PredefinedCharVocab(
+        config.char_vocab_path, config.c_vocab_size,
+        lowercase=config.lowercase,
       )
-
+    exit(1)
     if self.use_wikiP2D:
       self.w2p_dataset = WikiP2DDataset(
-        self.config.w_vocab_size, self.config.c_vocab_size,
-        filename=self.config.wikiP2D.dataset,
-        lowercase=self.config.lowercase,
-        w_vocab=self.w_vocab, c_vocab=self.c_vocab
+        config.w_vocab_size, config.c_vocab_size,
+        filename=config.wikiP2D.dataset,
+        lowercase=config.lowercase,
+        w_vocab=self.vocab.word, c_vocab=self.vocab.char
       )
-      self.w_vocab = self.w2p_dataset.w_vocab
-      self.c_vocab = self.w2p_dataset.c_vocab
-      self.r_vocab = self.w2p_dataset.r_vocab
-      self.o_vocab = self.w2p_dataset.o_vocab
+      self.vocab.word = self.w2p_dataset.w_vocab
+      self.vocab.char = self.w2p_dataset.c_vocab
+      self.vocab.rel = self.w2p_dataset.r_vocab
+      self.vocab.obj = self.w2p_dataset.o_vocab
+
     if self.use_coref:
       self.coref_dataset = CoNLL2012CorefDataset(
-        self.w_vocab, self.c_vocab
+        self.vocab.word, self.vocab.char
       )
     self.genre_vocab = self.coref_dataset.genre_vocab if self.use_coref else None
 
@@ -110,12 +119,7 @@ class MTLManager(ManagerBase):
       tf.get_variable_scope().reuse_variables()
 
     m = self.model_type(
-      self.sess, config, mode,
-      self.w_vocab, self.c_vocab, # for encoder
-      self.o_vocab, self.r_vocab, # for graph
-      self.genre_vocab, # for coref
-      #self.speaker_vocab, self.genre_vocab, # for coref
-    )
+      self.sess, config, self.vocab)
     if not checkpoint_path:
       ckpt = tf.train.get_checkpoint_state(self.CHECKPOINTS_PATH)
       checkpoint_path = ckpt.model_checkpoint_path if ckpt else None
@@ -137,7 +141,6 @@ class MTLManager(ManagerBase):
       f.write('\n'.join(variable_names) + '\n')
 
     if not self.summary_writer:
-      #self.summary_writer = {mode:tf.summary.FileWriter(os.path.join(self.SUMMARIES_PATH, mode), self.sess.graph) for mode in ['valid', 'test']}
       self.summary_writer = tf.summary.FileWriter(self.SUMMARIES_PATH, self.sess.graph)
     self.reuse = True
     return m
@@ -156,21 +159,14 @@ class MTLManager(ManagerBase):
         logger.info("(train) articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.train.size))
         logger.info("(valid) articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.valid.size))
         logger.info("(test)  articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.test.size))
-      # Embedding visualization (doesn't work well)
-      # config = projector.ProjectorConfig()
-      # embedding = config.embeddings.add()
-      # embedding.tensor_name = m.word_encoder.w_embeddings.name
-      # embedding.metadata_path = os.path.join(self.SUMMARIES_PATH, 'metadata.tsv')
-      # projector.visualize_embeddings(self.summary_writer, config)
 
     for epoch in range(m.epoch.eval(), self.config.max_epoch):
       batches = self.get_batch('train')
-      epoch_time, step_time, train_loss, summary = m.train_or_valid(batches, summary_writer=self.summary_writer)
+      epoch_time, step_time, train_loss, summary = m.train(batches, summary_writer=self.summary_writer)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, train_loss))
 
-      #self.summary_writer['train'].add_summary(summary, m.global_step.eval())
       batches = self.get_batch('valid')
-      epoch_time, step_time, valid_loss, summary = m.train_or_valid(batches)
+      epoch_time, step_time, valid_loss, summary = m.valid(batches)
       self.summary_writer.add_summary(summary, m.global_step.eval())
       logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, valid_loss))
 
@@ -194,7 +190,7 @@ class MTLManager(ManagerBase):
     #batches = self.get_batch(mode)[m.coref.dataset]
     batches = self.get_batch(mode)[m.graph.dataset]
     for i, b in enumerate(batches):
-      print '======== %02d ==========' % i
+      print(('======== %02d ==========' % i))
       m.graph.print_batch(b)
     #eval_summary, f1 = m.coref.test(batches, conll_eval_path[mode])
     exit(1)
@@ -242,7 +238,7 @@ class MTLManager(ManagerBase):
         # Move it to a temporary location to avoid being deleted by the training supervisor.
         tf_utils.copy_checkpoint(checkpoint_path, tmp_checkpoint_path)
         m = self.create_model(self.config, mode, checkpoint_path=checkpoint_path)
-        print "Found a new checkpoint: %s" % checkpoint_path
+        print(("Found a new checkpoint: %s" % checkpoint_path))
         batches = self.get_batch(mode)[m.coref.dataset]
         output_path = self.TESTS_PATH + '/c_test.%s.ep%02d' % (mode, m.epoch.eval())
         with open(output_path, 'w') as f:
@@ -251,11 +247,11 @@ class MTLManager(ManagerBase):
           if f1 > max_f1:
             max_f1 = f1
             tf_utils.copy_checkpoint(tmp_checkpoint_path, max_checkpoint_path)
-            print "Current max F1: {:.2f}".format(max_f1)
+            print(("Current max F1: {:.2f}".format(max_f1)))
           sys.stdout = sys.__stdout__
 
         self.summary_writer.add_summary(eval_summary, m.global_step.eval())
-        print "Evaluation written to {} at epoch {}".format(self.CHECKPOINTS_PATH, m.epoch.eval())
+        print(("Evaluation written to {} at epoch {}".format(self.CHECKPOINTS_PATH, m.epoch.eval())))
         evaluated_checkpoints.add(checkpoint_path)
 
   def c_demo(self):
@@ -302,8 +298,8 @@ class MTLManager(ManagerBase):
 
     def get_result(article, link_span):
       article = " ".join(parser(article))
-      w_article = self.w_vocab.sent2ids(article)
-      c_article =  self.c_vocab.sent2ids(article)
+      w_article = self.vocab.word.sent2ids(article)
+      c_article =  self.vocab.char.sent2ids(article)
       p_triples = [(0, i) for i in range(10)]
       batch = {
         'w_articles': [w_article],
@@ -316,15 +312,15 @@ class MTLManager(ManagerBase):
       results = m.test(demo_data, 1)[0][0]
       results = common.flatten(results)
       def id2text(r, o):
-        rid = self.r_vocab.id2token(r)
-        rname = self.r_vocab.id2name(r)
+        rid = self.vocab.rel.id2token(r)
+        rname = self.vocab.rel.id2name(r)
         rr = "%s(%s)" % (rid, rname)
-        oid = self.o_vocab.id2token(o)
-        oname = self.o_vocab.id2name(o)
+        oid = self.vocab.obj.id2token(o)
+        oname = self.vocab.obj.id2name(o)
         oo = "%s (%s)" % (oid, oname)
         return (rr, oo)
       return [(id2text(r, o), score) for (r, o), score in results]
-    print get_result(*get_inputs())
+    print((get_result(*get_inputs())))
     exit(1)
     #inputs = get_inputs()
     #print inputs
@@ -334,13 +330,13 @@ class MTLManager(ManagerBase):
     s.bind((HOST, PORT))
     s.listen(1)
     while True:
-      print '-----------------'
+      print('-----------------')
       conn, addr = s.accept()
-      print 'Connected by', addr
+      print(('Connected by', addr))
       data = conn.recv(1024)
       article, start, end = data.split('\t')
       results = get_result(article, (int(start), int(end)))
-      print results[:10]
+      print((results[:10]))
       conn.send(str(results))
       conn.close()
     return

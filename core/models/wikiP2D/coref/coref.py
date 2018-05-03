@@ -11,7 +11,6 @@ from collections import OrderedDict
 
 class CoreferenceResolution(ModelBase):
   def __init__(self, sess, config, is_training, encoder, 
-               #speaker_vocab, genre_vocab,
                genre_vocab,
                activation=tf.nn.tanh):
     super(CoreferenceResolution, self).__init__(sess, config)
@@ -227,7 +226,7 @@ class CoreferenceResolution(ModelBase):
 
   def tensorize_mentions(self, mentions):
     if len(mentions) > 0:
-      starts, ends = zip(*mentions)
+      starts, ends = list(zip(*mentions))
     else:
       starts, ends = [], []
       #return np.array(starts), np.array(ends)
@@ -366,26 +365,26 @@ class CoreferenceResolution(ModelBase):
       results[example['doc_key']] = common.dotDict({'raw_text': example['raw_text']})
 
     summary_dict = {}
-    for k, evaluator in sorted(mention_evaluators.items(), key=operator.itemgetter(0)):
+    for k, evaluator in sorted(list(mention_evaluators.items()), key=operator.itemgetter(0)):
       tags = ["{} @ {}".format(t, _k_to_tag(k)) for t in ("R", "P", "F")]
       results_to_print = []
       for t, v in zip(tags, evaluator.metrics()):
         results_to_print.append("{:<10}: {:.2f}".format(t, v))
         summary_dict[t] = v
-      print ", ".join(results_to_print)
+      print(", ".join(results_to_print))
 
     conll_results = conll.evaluate_conll(gold_path, coref_predictions, official_stdout)
-    average_f1 = sum(results["f"] for results in conll_results.values()) / len(conll_results)
+    average_f1 = sum(results["f"] for results in list(conll_results.values())) / len(conll_results)
     summary_dict["Average F1 (conll)"] = average_f1
-    print "Average F1 (conll): {:.2f}%".format(average_f1)
+    print("Average F1 (conll): {:.2f}%".format(average_f1))
 
     p,r,f = coref_evaluator.get_prf()
     summary_dict["Average F1 (py)"] = f
-    print "Average F1 (py): {:.2f}%".format(f * 100)
+    print("Average F1 (py): {:.2f}%".format(f * 100))
     summary_dict["Average precision (py)"] = p
-    print "Average precision (py): {:.2f}%".format(p * 100)
+    print("Average precision (py): {:.2f}%".format(p * 100))
     summary_dict["Average recall (py)"] = r
-    print "Average recall (py): {:.2f}%".format(r * 100)
+    print("Average recall (py): {:.2f}%".format(r * 100))
 
     aligned_results = coref_evaluator.get_aligned_results()
     for doc_key, aligned in zip(results, aligned_results):
@@ -398,12 +397,12 @@ class CoreferenceResolution(ModelBase):
     gold_spans = set(zip(gold_starts, gold_ends))
 
     if len(candidate_starts) > 0:
-      sorted_starts, sorted_ends, _ = zip(*sorted(zip(candidate_starts, candidate_ends, mention_scores), key=operator.itemgetter(2), reverse=True))
+      sorted_starts, sorted_ends, _ = list(zip(*sorted(zip(candidate_starts, candidate_ends, mention_scores), key=operator.itemgetter(2), reverse=True)))
     else:
       sorted_starts = []
       sorted_ends = []
 
-    for k, evaluator in evaluators.items():
+    for k, evaluator in list(evaluators.items()):
       if k == -3: #oracle
         predicted_spans = set(zip(candidate_starts, candidate_ends)) & gold_spans
       else:
@@ -453,7 +452,7 @@ class CoreferenceResolution(ModelBase):
       mention_to_predicted[mention] = predicted_cluster
 
     predicted_clusters = [tuple(pc) for pc in predicted_clusters]
-    mention_to_predicted = { m:predicted_clusters[i] for m,i in mention_to_predicted.items() }
+    mention_to_predicted = { m:predicted_clusters[i] for m,i in list(mention_to_predicted.items()) }
 
     return predicted_clusters, mention_to_predicted
 
@@ -482,11 +481,11 @@ class CoreferenceResolution(ModelBase):
     def print_colored_text(raw_text, aligned):
       # Show the gold mentions in red, and the predicted mentions with underline.
       decorated_text = deepcopy(raw_text)
-      colored_area = set(common.flatten([common.flatten([[h for h in xrange(s, e+1)] for s,e in gold_cluster]) for (gold_cluster, _) in aligned]))
-      underlined_area = set(common.flatten([common.flatten([[h for h in xrange(s, e+1)] for s,e in predicted_cluster]) for (_, predicted_cluster) in aligned]))
+      colored_area = set(common.flatten([common.flatten([[h for h in range(s, e+1)] for s,e in gold_cluster]) for (gold_cluster, _) in aligned]))
+      underlined_area = set(common.flatten([common.flatten([[h for h in range(s, e+1)] for s,e in predicted_cluster]) for (_, predicted_cluster) in aligned]))
       both_area = colored_area.intersection(underlined_area)
 
-      spaces = [" " for x in xrange(len(decorated_text))]
+      spaces = [" " for x in range(len(decorated_text))]
       for x in colored_area:
         decorated_text[x] = RED + decorated_text[x] + RESET
         spaces[x] = RED + spaces[x] + RESET if x+1 in colored_area else spaces[x]
@@ -498,24 +497,24 @@ class CoreferenceResolution(ModelBase):
         spaces[x] = RED + UNDERLINE + spaces[x] + RESET if x+1 in both_area else spaces[x]
         
 
-      print "".join([d+s for d, s in zip(decorated_text, spaces)]).encode('utf-8')
+      print("".join([d+s for d, s in zip(decorated_text, spaces)]).encode('utf-8'))
 
 
     for i, (doc_key, result) in enumerate(results.items()):
       if i == 0:
-        print (type(result['raw_text'][0][0]))
-      print "===%03d===\t%s" % (i, doc_key)
+        print((type(result['raw_text'][0][0])))
+      print("===%03d===\t%s" % (i, doc_key))
       raw_text = common.flatten(result['raw_text'])
       aligned = result['aligned_results']
-      print '<text>'
+      print('<text>')
       print_colored_text(raw_text, aligned)
-      print ''
-      print '<cluster>'
+      print('')
+      print('<cluster>')
 
       for j, (gold_cluster, predicted_cluster) in enumerate(aligned):
         g = [" ".join(raw_text[s:e+1]) + "(%d,%d)" %(s,e) for (s,e) in gold_cluster]
         p = [" ".join(raw_text[s:e+1]) + "(%d,%d)" %(s,e) for (s,e) in predicted_cluster]
-        print "G%02d  " % j , g
-        print "P%02d  " % j , p
-      print ''
+        print("G%02d  " % j , g)
+        print("P%02d  " % j , p)
+      print('')
       

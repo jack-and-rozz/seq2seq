@@ -151,10 +151,10 @@ class TranslateManager(BaseManager):
             target = self.t_vocab.to_tokens(t)
             result = self.t_vocab.to_tokens(o)
             results.append(result)
-            print "<%d>" % idx
-            print (' '.join(source))
-            print (' '.join(target))
-            print (' '.join(result))
+            print("<%d>" % idx)
+            print((' '.join(source)))
+            print((' '.join(target)))
+            print((' '.join(result)))
         with open(decode_path, 'w') as f:
           f.write("\n".join([' '.join(x) for x in results]) + "\n")
       else:
@@ -199,7 +199,7 @@ class TranslateManager(BaseManager):
     with tf.name_scope('dev'):
       mvalid = self.create_model(FLAGS, False, False, 
                                  reuse=True)
-    for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
+    for epoch in range(mtrain.epoch.eval(), FLAGS.max_epoch):
       logger.info("Epoch %d: Start training." % epoch)
       epoch_time, step_time, train_loss = mtrain.run_batch(
         train, FLAGS.batch_size, do_shuffle=True)

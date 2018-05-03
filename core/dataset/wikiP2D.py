@@ -1,8 +1,8 @@
 #coding: utf-8
-from __future__ import absolute_import
+
 from pprint import pprint
 import os, re, sys, random, copy, time
-import commands, itertools
+import subprocess, itertools
 import numpy as np
 from collections import OrderedDict, defaultdict, Counter
 
@@ -12,26 +12,26 @@ from core.utils import visualize
 from core.dataset.base import DatasetBase
 from core.vocabulary.wikiP2D import WikiP2DVocabulary, WikiP2DSubjVocabulary, WikiP2DRelVocabulary, WikiP2DObjVocabulary
 try:
-   import cPickle as pickle
+   import pickle as pickle
 except:
    import pickle
 random.seed(0)
 
 def process_articles(articles, w_vocab, c_vocab):
   res = OrderedDict()
-  for k, v in articles.items():
+  for k, v in list(articles.items()):
     res[k] = [(w_vocab.sent2ids(sent), c_vocab.sent2ids(sent), s, e) for (sent, s, e) in v]
   return res
 
 def process_triples(triples, r_vocab, o_vocab):
   res = OrderedDict()
-  for k, v in triples.items():
+  for k, v in list(triples.items()):
     res[k] = [(r_vocab.token2id(r), o_vocab.token2id(o)) for (r, o) in v]
   return res
 
 def process_entities(entities, w_vocab, c_vocab):
   res = copy.deepcopy(entities)
-  for k, v in entities.items():
+  for k, v in list(entities.items()):
     res[k]['qid'] = k
     res[k]['w_desc'] = w_vocab.sent2ids(v['desc'])
     res[k]['c_desc'] = c_vocab.sent2ids(v['desc'])
@@ -61,8 +61,8 @@ class _WikiP2DDataset(object):
     self.relations = relations
     self.objects = objects
     self.all_triples = all_triples # Not to generate the positive triple as a negative one.
-    n_articles = sum([len(v) for k, v in self.articles.items()])
-    n_triples = sum([len(v) for k, v in self.triples.items()])
+    n_articles = sum([len(v) for k, v in list(self.articles.items())])
+    n_triples = sum([len(v) for k, v in list(self.triples.items())])
     n_subjects = len(self.subjects) #sum([len(v) for k, v in self.subjects.items()])
     self.size = (n_articles, n_triples, n_subjects)
 
@@ -81,6 +81,7 @@ class _WikiP2DDataset(object):
       if max_sentence_length and len(l) > max_sentence_length:
         return False
       return True
+
     def select_sentences(sents, N=None):
       # sents = (w_sentence, c_sentence, l_start, l_end)
       accepted_sents = [l for l in sents if accepted(l[0])]
@@ -91,7 +92,7 @@ class _WikiP2DDataset(object):
 
     # TODO: show stats of only accepted data
     articles = [(k, select_sentences(v, N=n_sentences))
-                for k, v in self.articles.items() if len(select_sentences(v, N=n_sentences)) != 0]
+                for k, v in list(self.articles.items()) if len(select_sentences(v, N=n_sentences)) != 0]
     if n_articles:
       articles = articles[:n_articles]
     if do_shuffle:
@@ -140,7 +141,7 @@ class _WikiP2DDataset(object):
 
   def get_positive_triples(self, qids, N=None):
     if N:
-      triples = [[random.choice(self.triples[q]) for _ in xrange(N)] for q in qids]
+      triples = [[random.choice(self.triples[q]) for _ in range(N)] for q in qids]
     else:
       triples = [self.triples[q] for q in qids]
     return triples
@@ -153,7 +154,7 @@ class _WikiP2DDataset(object):
       negatives_by_sbj = []
       for rel, obj in p:
         ## replace relation instead of object.
-        all_rels = [i for i in xrange(len(self.relations)) if i != rel]
+        all_rels = [i for i in range(len(self.relations)) if i != rel]
         if carefully_negative:
           neg_rels = []
           while len(neg_rel) < N:
@@ -177,9 +178,9 @@ class _WikiP2DDataset(object):
     # for test.
     def extract_all(qid, p):
       def _all_neg_obj(pos):
-        return [x for x in xrange(len(self.objects)) if x != pos]
+        return [x for x in range(len(self.objects)) if x != pos]
 
-      all_obj = xrange(len(self.objects))
+      all_obj = range(len(self.objects))
       if carefully_negative:
         negatives_by_sbj = [[(rel, i) for i in _all_neg_obj(obj)] for rel, obj in p]
       else:
@@ -227,7 +228,7 @@ class WikiP2DDataset(DatasetBase):
       # Create word and char vocabs even if pretrained ones are given.
       sys.stderr.write('Initializing vocab ...\n')
       vocab_corpus = common.flatten([[sent for sent, _, _ in v ] 
-                                     for v in raw_data['articles']['train'].values()])
+                                     for v in list(raw_data['articles']['train'].values())])
     else:
       sys.stderr.write('Loading tokenized data from \'%s\' ...\n' % dataset_path)
       self._data = pickle.load(open(dataset_path, 'rb'))
@@ -310,9 +311,9 @@ class WikiP2DDataset(DatasetBase):
 
 
   def tokenize_data(self, data, w_vocab, c_vocab, s_vocab, r_vocab, o_vocab):
-    articles = {k:process_articles(v, w_vocab, c_vocab) for k, v in data['articles'].items()}
-    triples = {k:process_triples(v, r_vocab, o_vocab) for k, v in data['triples'].items()}
-    subjects = {k:process_entities(v, w_vocab, c_vocab) for k, v in data['subjects'].items()}
+    articles = {k:process_articles(v, w_vocab, c_vocab) for k, v in list(data['articles'].items())}
+    triples = {k:process_triples(v, r_vocab, o_vocab) for k, v in list(data['triples'].items())}
+    subjects = {k:process_entities(v, w_vocab, c_vocab) for k, v in list(data['subjects'].items())}
     relations = process_entities(data['relations'], w_vocab, c_vocab)
     objects = process_entities(data['objects'], w_vocab, c_vocab)
     res = {
@@ -331,13 +332,13 @@ class WikiP2DDataset(DatasetBase):
 
     if not os.path.exists(file_path + '.len.hist.eps'):
       lengthes = common.flatten([[len(w_sent) for (w_sent, _, _, _) in v] 
-                                 for k, v in articles.items()])
+                                 for k, v in list(articles.items())])
       visualize.histgram([lengthes], ['article length'], 
                          file_path=file_path + '.len.hist.eps')
 
     wlink_file = file_path + '.link.hist.txt'
     if not os.path.exists(wlink_file):
-      linked_phrases = common.flatten([[(qid, self.c_vocab.ids2tokens(c_sent[s:e+1])) for w_sent, c_sent, s ,e in v] for qid, v in articles.items()])
+      linked_phrases = common.flatten([[(qid, self.c_vocab.ids2tokens(c_sent[s:e+1])) for w_sent, c_sent, s ,e in v] for qid, v in list(articles.items())])
 
       linked_entity_by_phrase = defaultdict(dict)
       for qid, phrase in linked_phrases:
@@ -347,17 +348,17 @@ class WikiP2DDataset(DatasetBase):
           linked_entity_by_phrase[phrase][qid] = 1
       linked_phrases = [phrase for qid, phrase in linked_phrases]
 
-      linked_phrases = sorted([(k, freq) for k, freq in Counter(linked_phrases).items()], key=lambda x:-x[1])
+      linked_phrases = sorted([(k, freq) for k, freq in list(Counter(linked_phrases).items())], key=lambda x:-x[1])
       with open(wlink_file, 'w') as f:
         for phrase, freq in linked_phrases:
-          linked_entities = ["%s:%d" % (qid, freq_by_qid) for qid, freq_by_qid in linked_entity_by_phrase[phrase].items()]
+          linked_entities = ["%s:%d" % (qid, freq_by_qid) for qid, freq_by_qid in list(linked_entity_by_phrase[phrase].items())]
           entities_list = ",".join(linked_entities)
           f.write('%s\t%d\t%s\n' % (phrase, freq, entities_list))
 
   def get_all_triples(self):
     # for demo.
-    return [list(x) for x in itertools.product(xrange(len(self.relations)), 
-                                               xrange(len(self.objects)))]
+    return [list(x) for x in itertools.product(range(len(self.relations)), 
+                                               range(len(self.objects)))]
   def batch2text(self, batch):
     w_articles = batch['w_articles']
     c_articles = batch['c_articles'] 
@@ -369,7 +370,7 @@ class WikiP2DDataset(DatasetBase):
       res = [(self.w_vocab.ids2tokens(ws, link_span=l), 
               self.c_vocab.ids2tokens(cs, link_span=l))
              for ws, cs, l in zip(w_sentences, c_sentences, ls)]
-      return map(list, zip(*res))
+      return list(map(list, list(zip(*res))))
 
     texts = []
     for entity, w_sentences, c_sentences, ls, pt in zip(entities, w_articles, c_articles, link_spans, p_triples):

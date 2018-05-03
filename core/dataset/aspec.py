@@ -1,8 +1,8 @@
 #coding: utf-8
-from __future__ import absolute_import
+
 
 import os, re, sys, random, copy
-import commands, itertools
+import subprocess, itertools
 import MeCab
 import numpy as np
 
@@ -53,7 +53,7 @@ class ASPECDataset(TranslationDataset):
     else:
       for i, l in enumerate(open(source_path, 'r')):
         if i % 100000 == 0:
-          print("  processing line %d" % i)
+          print(("  processing line %d" % i))
         data.append(vocab.to_ids(self.tokenizer(l)))
       with open(processed_path, 'w') as f:
         f.write('\n'.join([' '.join([str(x) for x in l]) for l in data]) + '\n')
@@ -63,8 +63,8 @@ class ASPECDataset(TranslationDataset):
     print ("Corpus Statistics")
     lens = [len(d[1]) for d in self.data]
     lent = [len(d[2]) for d in self.data]
-    print ('len-Source: (min, max, ave) = (%d, %d, %.2f)' % (min(lens), max(lens), sum(lens)/len(lens)))
-    print ('len-Target: (min, max, ave) = (%d, %d, %.2f)' % (min(lent), max(lent), sum(lent)/len(lent)))
+    print(('len-Source: (min, max, ave) = (%d, %d, %.2f)' % (min(lens), max(lens), sum(lens)/len(lens))))
+    print(('len-Target: (min, max, ave) = (%d, %d, %.2f)' % (min(lent), max(lent), sum(lent)/len(lent))))
 
   def get_batch(self, batch_size, do_shuffle=False, n_batches=1):
     # get 'n_batches' batches each of which has 'batch_size' records.

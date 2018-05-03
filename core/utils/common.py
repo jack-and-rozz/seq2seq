@@ -9,7 +9,7 @@ import multiprocessing as mp
 import pyhocon
 
 try:
-   import cPickle as pickle
+   import pickle as pickle
 except:
    import pickle
 
@@ -44,21 +44,21 @@ def load_or_create(processed_path, func, *args):
 
 # dictionaryのkey:value入れ替え
 def invert_dict(dictionary):
-    return {v:k for k, v in dictionary.items()}
+    return {v:k for k, v in list(dictionary.items())}
 
 # 辞書のvalueでソート。デフォルトは降順
 def sort_dict(dic, sort_type="DESC"):
     counter = collections.Counter(dic)
     if sort_type == "ASC":
-        count_pairs = sorted(counter.items(), key=lambda x: x[1])
+        count_pairs = sorted(list(counter.items()), key=lambda x: x[1])
     elif sort_type == "DESC":
-        count_pairs = sorted(counter.items(), key=lambda x: -x[1])
+        count_pairs = sorted(list(counter.items()), key=lambda x: -x[1])
     key, value = list(zip(*count_pairs))
     return (key, value)
 
 # funcは key, valueのタプルを引数に取り、同じく key, valueのタプルを返す関数
 def map_dict(func, _dict):
-    return dict([func(k,v) for k,v in _dict.items()]) 
+    return dict([func(k,v) for k,v in list(_dict.items())]) 
 
 
 def split_dict():
@@ -109,7 +109,7 @@ def modulize(dictionary):
 ############################################
 
 def zero_one_vector(one_indices, n_elem):
-  l = [0.0 for _ in xrange(n_elem)]
+  l = [0.0 for _ in range(n_elem)]
   for idx in one_indices:
     l[idx] = 1.0
   return l
@@ -125,9 +125,9 @@ def batching(data, batch_size):
 # arr = [arr0, arr1, ...]
 # size_arr : [len(arr0), len(arr1), ...]
 def random_select_by_scale(size_arr):
-  scale = [sum(size_arr[:i + 1]) / float(sum(size_arr)) for i in xrange(len(size_arr))]
+  scale = [sum(size_arr[:i + 1]) / float(sum(size_arr)) for i in range(len(size_arr))]
   random_number_01 = np.random.random_sample()
-  _id = min([i for i in xrange(len(scale))
+  _id = min([i for i in range(len(scale))
              if scale[i] > random_number_01])
   return _id
 
@@ -256,10 +256,10 @@ def concatenate_sequence(seq, id_to_word=None):
 # 単語のid列を文に変更してprint
 def print_sequence(seq, id_to_word=None):
     if id_to_word:
-      print (" ".join([id_to_word[word_id] for word_id in seq]))
+      print((" ".join([id_to_word[word_id] for word_id in seq])))
       print ('')
     else:
-      print (" ".join([word for word in seq]))
+      print((" ".join([word for word in seq])))
       print ('')
 
 # argparserの文字列をboolに変換
@@ -323,7 +323,7 @@ def devide_by_labels(elements, labels, N):
     labels  : list
     N       : int
     """
-    res = [[] for _ in xrange(0, N)]
+    res = [[] for _ in range(0, N)]
     for i, label in enumerate(labels):
         res[label].append(elements[i])
     return res
@@ -348,7 +348,7 @@ def flatten(l):
 
 def flatten_with_idx(tensor):
   res = flatten([[(i, x) for x in t] for i, t in enumerate(tensor)])
-  return map(list, zip(*res)) # in-batch indices, tensor
+  return list(map(list, list(zip(*res)))) # in-batch indices, tensor
 
 def max_elem( lis ):
   L = lis[:]#copy
@@ -432,8 +432,8 @@ def benchmark(func=None, prec=3, unit='auto', name_width=0, time_width=8):
         ttu, ttm = _get_unit_mult(tt, unit)
         td *= tdm
         tt *= ttm
-        print(" -> {0:>{8}}() @ {1:>03}: {3:>{7}.{2}f} {4:>2}, total: {5:>{7}.{2}f} {6:>2}"
-              .format(func.__name__, cn, prec, td, tdu, tt, ttu, time_width, name_width))
+        print((" -> {0:>{8}}() @ {1:>03}: {3:>{7}.{2}f} {4:>2}, total: {5:>{7}.{2}f} {6:>2}"
+              .format(func.__name__, cn, prec, td, tdu, tt, ttu, time_width, name_width)))
         return res
     wrapper.total = 0
     wrapper.count = 0
@@ -544,5 +544,5 @@ def get_config(filename):
   return pyhocon.ConfigFactory.parse_file(filename)
 
 def print_config(config):
-  print pyhocon.HOCONConverter.convert(config, "hocon")
+  print(pyhocon.HOCONConverter.convert(config, "hocon"))
 

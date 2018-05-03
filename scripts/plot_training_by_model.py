@@ -1,6 +1,6 @@
 #cofing:utf-8
 
-import argparse, commands, os, re
+import argparse, subprocess, os, re
 
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -30,17 +30,17 @@ def read_log(fp, max_epoch):
 
 def main(args):
   if args.grep_query:
-    file_path = [m for m in commands.getoutput('ls -d %s' % args.proj_dir + '/*/train.log | grep %s' % args.grep_query).split()]
+    file_path = [m for m in subprocess.getoutput('ls -d %s' % args.proj_dir + '/*/train.log | grep %s' % args.grep_query).split()]
   else:
-    file_path = [m for m in commands.getoutput('ls -d %s' % args.proj_dir + '/*/train.log').split()]
+    file_path = [m for m in subprocess.getoutput('ls -d %s' % args.proj_dir + '/*/train.log').split()]
   logs = [read_log(fp, args.max_epoch) for fp in file_path]
   logs = [(fp, l) for fp, l in zip(file_path, logs) if len(l) > 0]
 
   for fp, log in logs:
-    print fp
+    print(fp)
     fp = re.search('.+/(.+?)/train\.log', fp).group(1)
-    X, Y = map(list, zip(*log))
-    print X,Y
+    X, Y = list(map(list, list(zip(*log))))
+    print(X,Y)
     plt.plot(X, Y, label=fp, marker='o')
   #plt.xlim(0)
   #plt.set_ylabel

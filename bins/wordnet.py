@@ -104,7 +104,7 @@ class WordNetManager(BaseManager):
       logger.info("(train, dev, test) = (%d, %d, %d)" % (train_data.size, dev_data.size, test_data.size))
       logger.info("(Synset, Relation) = (%d, %d)" % (self.syn_vocab.size, self.rel_vocab.size))
 
-    for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
+    for epoch in range(mtrain.epoch.eval(), FLAGS.max_epoch):
       logger.info("Epoch %d: Start training." % epoch)
       epoch_time, step_time, train_loss = mtrain.train_or_valid(train_data, FLAGS.batch_size, do_shuffle=True)
       logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %f" % (epoch, epoch_time, step_time, train_loss))

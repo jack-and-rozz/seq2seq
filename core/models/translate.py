@@ -1,6 +1,6 @@
 # coding: utf-8
-from __future__ import absolute_import
-from __future__ import division
+
+
 
 import random, sys, os, math, copy, time
 import numpy as np
@@ -109,17 +109,17 @@ class Baseline(ModelBase):
     self.encoder_inputs = []
     self.decoder_inputs = []
     self.target_weights = []
-    for i in xrange(self.max_sequence_length):
+    for i in range(self.max_sequence_length):
       self.encoder_inputs.append(tf.placeholder(tf.int32, shape=[None],
                                                 name="encoder{0}".format(i)))
-    for i in xrange(self.max_sequence_length + 1):
+    for i in range(self.max_sequence_length + 1):
       self.decoder_inputs.append(tf.placeholder(tf.int32, shape=[None],
                                                 name="decoder{0}".format(i)))
       self.target_weights.append(tf.placeholder(tf.float32, shape=[None],
                                                 name="weight{0}".format(i)))
     # Our targets are decoder inputs shifted by one.
     self.targets = [self.decoder_inputs[i + 1]
-                    for i in xrange(len(self.decoder_inputs) - 1)]
+                    for i in range(len(self.decoder_inputs) - 1)]
     self.sequence_length = tf.placeholder(tf.int32, shape=[None], name="sequence_length") if use_sequence_length else None
     # For beam_decoding, we have to feed the size of a current batch.
     self.batch_size = tf.placeholder(tf.int32, shape=[])
@@ -156,9 +156,9 @@ class Baseline(ModelBase):
     input_feed = {}
     batch_size = batch.encoder_inputs
     encoder_size = decoder_size = self.max_sequence_length
-    for l in xrange(encoder_size):
+    for l in range(encoder_size):
       input_feed[self.encoder_inputs[l].name] = batch.encoder_inputs[l]
-    for l in xrange(decoder_size):
+    for l in range(decoder_size):
       input_feed[self.decoder_inputs[l].name] = batch.decoder_inputs[l]
       input_feed[self.target_weights[l].name] = batch.target_weights[l]
     if self.sequence_length != None: 
@@ -214,7 +214,7 @@ class Baseline(ModelBase):
         results.append(result)
     else:
       output_feed = [self.losses, self.d_states]
-      for l in xrange(self.max_sequence_length):
+      for l in range(self.max_sequence_length):
         output_feed.append(self.logits[l])
       outputs = sess.run(output_feed, input_feed)
       losses = outputs[0]
@@ -229,7 +229,7 @@ class Baseline(ModelBase):
           output_ids.append(_id)
         return output_ids
       results = [greedy_argmax(logit) for logit in logits]
-      results = list(map(list, zip(*results))) # transpose to batch-major
+      results = list(map(list, list(zip(*results)))) # transpose to batch-major
     return losses, results
 
 
@@ -245,7 +245,7 @@ class Baseline(ModelBase):
     for _, encoder_input, decoder_input in data:
       encoder_sequence_length.append(len(encoder_input))
       # Encoder inputs are padded and then reversed if do_reverse=True.
-      encoder_pad = [PAD_ID for _ in xrange((encoder_size - len(encoder_input)))] 
+      encoder_pad = [PAD_ID for _ in range((encoder_size - len(encoder_input)))] 
       encoder_input = encoder_input + encoder_pad
       if do_reverse:
         encoder_input = list(reversed(encoder_input))
@@ -260,20 +260,20 @@ class Baseline(ModelBase):
     batch_encoder_inputs, batch_decoder_inputs, batch_weights = [], [], []
 
     # Batch encoder inputs are just re-indexed encoder_inputs.
-    for length_idx in xrange(encoder_size):
+    for length_idx in range(encoder_size):
       batch_encoder_inputs.append(
         np.array([encoder_inputs[batch_idx][length_idx]
-                  for batch_idx in xrange(batch_size)], dtype=np.int32))
+                  for batch_idx in range(batch_size)], dtype=np.int32))
 
     # Batch decoder inputs are re-indexed decoder_inputs, we create weights.
-    for length_idx in xrange(decoder_size):
+    for length_idx in range(decoder_size):
       batch_decoder_inputs.append(
         np.array([decoder_inputs[batch_idx][length_idx]
-                  for batch_idx in xrange(batch_size)], dtype=np.int32))
+                  for batch_idx in range(batch_size)], dtype=np.int32))
 
       # Create target_weights to be 0 for targets that are padding.
       batch_weight = np.ones(batch_size, dtype=np.float32)
-      for batch_idx in xrange(batch_size):
+      for batch_idx in range(batch_size):
         # We set weight to 0 if the corresponding target is a PAD symbol.
         # The corresponding target is decoder_input shifted by 1 forward.
         if length_idx < decoder_size - 1:

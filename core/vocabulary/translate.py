@@ -45,11 +45,11 @@ class Vocabulary(VocabularyBase):
     vocab = collections.defaultdict(int)
     counter = 0
     if not gfile.Exists(vocabulary_path):
-      print("Creating vocabulary \"%s\" " % (vocabulary_path))
+      print(("Creating vocabulary \"%s\" " % (vocabulary_path)))
       for line in gfile.GFile(data_path, mode="r"):
         counter += 1
         if counter % 100000 == 0:
-          print("  processing line %d" % counter)
+          print(("  processing line %d" % counter))
         tokens = self.tokenizer(line)
         for w in tokens:
           vocab[w] += 1
@@ -86,7 +86,7 @@ class VecVocabulary(Vocabulary):
             for l in f:
               counter += 1
               if counter % 100000 == 0:
-                print("  processing line %d" % counter)
+                print(("  processing line %d" % counter))
               if read_vec:
                 tokens = l.rstrip().split(' ')
                 rev_vocab.append(tokens[0])

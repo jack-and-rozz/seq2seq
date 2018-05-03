@@ -20,7 +20,7 @@ def main(args):
     bleu_cmd, stdin=open(hypothesis_file), stderr=subprocess.STDOUT)
   bleu_score = re.search(r"BLEU = (.+?),", bleu_out).group(1)
   bleu_score = float(bleu_score)
-  print bleu_out
+  print(bleu_out)
 
 if __name__ == "__main__":
   desc = ''

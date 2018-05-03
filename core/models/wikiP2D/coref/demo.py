@@ -8,17 +8,17 @@ import json
 import numpy as np
 
 import cgi
-import BaseHTTPServer
+import http.server
 import ssl
 
 import tensorflow as tf
 #import coref_model as cm
-import util
+from . import util
 
 import nltk
 nltk.download("punkt")
 from nltk.tokenize import sent_tokenize, word_tokenize
-from metrics import ceafe
+from .metrics import ceafe
 
 def load_eval_data(eval_path):
   with open(eval_path) as f:
@@ -42,22 +42,22 @@ def print_predictions(example):
     #for i, cluster in enumerate(example["predicted_clusters"]):
     max_num_elems = max(len(example["predicted_clusters"]), 
                         len(example["gold_clusters"]))
-    for i in xrange(max_num_elems):
+    for i in range(max_num_elems):
       if i < len(example["predicted_clusters"]):
         cluster = example['predicted_clusters'][i]
-        print(u"P{}: {}".format(i, [" ".join(words[m[0]:m[1]+1]) for m in cluster]))
+        print(("P{}: {}".format(i, [" ".join(words[m[0]:m[1]+1]) for m in cluster])))
       else:
-        print(u"P{}: None".format(i))
+        print(("P{}: None".format(i)))
 
       if i < len(example["gold_clusters"]):
         cluster = example['gold_clusters'][i]
-        print(u"G{}: {}".format(i, [" ".join(words[m[0]:m[1]+1]) for m in cluster]))
+        print(("G{}: {}".format(i, [" ".join(words[m[0]:m[1]+1]) for m in cluster])))
       else:
-        print(u"G{}: None".format(i))
+        print(("G{}: None".format(i)))
 
   else:
     for i, cluster in enumerate(example["predicted_clusters"]):
-      print(u"Predicted cluster: {}".format([" ".join(words[m[0]:m[1]+1]) for m in cluster]))
+      print(("Predicted cluster: {}".format([" ".join(words[m[0]:m[1]+1]) for m in cluster])))
   
 
 def get_aligned(predicted_clusters, gold_clusters, matching):
@@ -71,12 +71,12 @@ def get_aligned(predicted_clusters, gold_clusters, matching):
     g_matched.add(i)
     p_matched.add(j)
   if len(predicted_clusters) > len(gold_clusters):
-    not_matched = set(xrange(max_num_clusters)) - p_matched
+    not_matched = set(range(max_num_clusters)) - p_matched
     for x in not_matched:
       predicted.append(predicted_clusters[x])
       gold.append(())
   else:
-    not_matched = set(xrange(max_num_clusters)) - g_matched
+    not_matched = set(range(max_num_clusters)) - g_matched
     for x in not_matched:
       predicted.append(())
       gold.append(gold_clusters[x])
@@ -101,12 +101,12 @@ def make_predictions(text, model, sample=None):
   predicted_antecedents = model.get_predicted_antecedents(antecedents, antecedent_scores)
   predicted_clusters, _ = model.get_predicted_clusters(mention_starts, mention_ends, predicted_antecedents)
   example["predicted_clusters"] = predicted_clusters
-  example["top_spans"] = zip((int(i) for i in mention_starts), (int(i) for i in mention_ends))
+  example["top_spans"] = list(zip((int(i) for i in mention_starts), (int(i) for i in mention_ends)))
   example["head_scores"] = head_scores.tolist()
   if sample is not None:
     gold_clusters = sorted([tuple(sorted([tuple(m) for m in c], key=lambda x:x[0])) for c in example['clusters']], key=lambda x:x[0][0])
     _, _, _, _, cluster_matching = ceafe(predicted_clusters, gold_clusters)
-    print 'matching', cluster_matching
+    print('matching', cluster_matching)
     gold, predicted = get_aligned(predicted_clusters, gold_clusters, cluster_matching)
     example['predicted_clusters'] = predicted
     example['gold_clusters'] = gold
@@ -117,21 +117,21 @@ def run_model(model, eval_data, port=None):
   certfile = None
 
   if port is not None:
-    class CorefRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
+    class CorefRequestHandler(http.server.BaseHTTPRequestHandler):
       def do_GET(self):
         idx = self.path.find("?")
-        print 'path', (self.path)
+        print('path', (self.path))
         if idx >= 0:
           args = cgi.parse_qs(self.path[idx+1:])
-          print 'args',args
+          print('args',args)
           sample_id = int(args["sample_id"][0]) if "sample_id" in args else None
           sample = eval_data[sample_id] if sample_id >= 0 and sample_id < len(eval_data) else None
           if "text" in args:
             text_arg = args["text"]
             if len(text_arg) == 1 and len(text_arg[0]) <= 10000:
               text = text_arg[0].decode("utf-8")
-              print(u"Document text: {}".format(text))
-              print sample
+              print(("Document text: {}".format(text)))
+              print(sample)
               example = make_predictions(text, model, sample)
               print_predictions(example)
               self.send_response(200)
@@ -143,14 +143,14 @@ def run_model(model, eval_data, port=None):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
 
-    server = BaseHTTPServer.HTTPServer(("", port), CorefRequestHandler)
+    server = http.server.HTTPServer(("", port), CorefRequestHandler)
     if keyfile is not None:
       server.socket = ssl.wrap_socket(server.socket, keyfile=keyfile, certfile=certfile, server_side=True)
-    print("Running server at port {}".format(port))
+    print(("Running server at port {}".format(port)))
     server.serve_forever()
   else:
     while True:
-      text = raw_input("Document text: ")
+      text = input("Document text: ")
       print_predictions(make_predictions(text, model))
 
 
@@ -172,14 +172,14 @@ if __name__ == "__main__":
     keyfile = None
     certfile = None
 
-  print "Running experiment: {}.".format(name)
+  print("Running experiment: {}.".format(name))
   config = util.get_config("experiments.conf")[name]
   config["log_dir"] = util.mkdirs(os.path.join(config["log_root"], name))
 
   util.print_config(config)
   model = cm.CorefModel(config)
   eval_data = load_eval_data(config["eval_path"]) # not tensorized form.
-  print 'Number of eval_data',len(eval_data)
+  print('Number of eval_data',len(eval_data))
 
   saver = tf.train.Saver()
   log_dir = config["log_dir"]

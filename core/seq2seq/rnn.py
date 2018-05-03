@@ -2,7 +2,7 @@
 import copy
 import tensorflow as tf
 #from tensorflow.contrib.rnn.python.ops import core_rnn_cell as rnn_cell
-import rnn_cell
+from . import rnn_cell
 #from core.extensions import rnn_cell as shared_rnn_cell
 
 def setup_cell(cell_type, hidden_size, num_layers=1, 
@@ -28,7 +28,7 @@ def setup_cell(cell_type, hidden_size, num_layers=1,
 
   if num_layers > 1:
     #cells = [copy.deepcopy(cell) for _ in xrange(num_layers)]
-    cells = [_get_cell() for _ in xrange(num_layers)]
+    cells = [_get_cell() for _ in range(num_layers)]
     cell = rnn_cell.MultiRNNCell(cells, state_is_tuple=state_is_tuple)
   else:
     cell = _get_cell()

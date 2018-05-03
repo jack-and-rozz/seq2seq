@@ -72,8 +72,8 @@ class WordEncoder(ModelBase):
           continue
         if len(inputs.get_shape()) == 3: # char-based
           char_repls = tf.nn.embedding_lookup(self.c_embeddings, inputs)
-          batch_size = tf.shape(char_repls)[0]
-          max_sentence_length = tf.shape(char_repls)[1]
+          batch_size = shape(char_repls, 0)
+          max_sentence_length = shape(char_repls, 1)
           flattened_char_repls = tf.reshape(char_repls, [batch_size * max_sentence_length, shape(char_repls, 2), shape(char_repls, 3)])
           flattened_aggregated_char_repls = cnn(flattened_char_repls)
           word_repls = tf.reshape(flattened_aggregated_char_repls, [batch_size, max_sentence_length, shape(flattened_aggregated_char_repls, 1)]) # [num_sentences, max_sentence_length, emb_size]

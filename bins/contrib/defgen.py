@@ -1,6 +1,6 @@
 # coding: utf-8
-from __future__ import absolute_import
-from __future__ import division
+
+
 # from __future__ import print_function
 
 import MeCab
@@ -93,7 +93,7 @@ def create_dir():
 def save_config():
     flags_dir = FLAGS.__dict__['__flags']
     with open(FLAGS.checkpoint_path + '/config', 'w') as f:
-        for k, v in flags_dir.items():
+        for k, v in list(flags_dir.items()):
             if not k in TMP_FLAGS:
                 f.write('%s=%s\n' % (k, str(v)))
 
@@ -134,7 +134,7 @@ def decode_interact(sess):
         source = sys.stdin.readline()
         source = source.split()
         raw_batch = [(None, s_vocab.to_ids(source), [])]
-        print('debug s_vocab.to_ids(source):', s_vocab.to_ids(source))
+        print(('debug s_vocab.to_ids(source):', s_vocab.to_ids(source)))
 
         _, outputs = mtest.decode(raw_batch)
         output = outputs[0]
@@ -172,7 +172,7 @@ def decode_test(sess):
             sources.append(source)
             targets.append(target)
             results.append(result)
-            print "<%d>" % idx
+            print("<%d>" % idx)
             print (source)
             print (target)
             print (result)
@@ -223,7 +223,7 @@ def train(sess):
 
     with tf.name_scope('dev'):
         mvalid = create_model(sess, FLAGS.max_sequence_length, False, False, reuse=True, s_vocab=s_vocab)
-    for epoch in xrange(mtrain.epoch.eval(), FLAGS.max_epoch):
+    for epoch in range(mtrain.epoch.eval(), FLAGS.max_epoch):
         logger.info("Epoch %d: Start training." % epoch)
         epoch_time, step_time, train_ppx = mtrain.run_batch(train, FLAGS.batch_size,
                                                             do_shuffle=True)

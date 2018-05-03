@@ -1,7 +1,7 @@
 #coding: utf-8
-from __future__ import absolute_import
 
-import os, re, sys, random, copy, commands, itertools
+
+import os, re, sys, random, copy, subprocess, itertools
 
 from core.utils import common
 from core.utils.dataset.base import DatasetBase
@@ -49,7 +49,7 @@ class WordNetDataset(DatasetBase):
       # Yield 'n_batches' batches which have 'batch_size' lines.
       batch = [[x[1] for x in d2] for j, d2 in itertools.groupby(enumerate(raw_batch), lambda x: x[0] // (len(raw_batch) // n_batches))]
 
-      neg_batch = [self.negative_sample(batch[i], negative_sampling_rate) for i in xrange(n_batches)]
+      neg_batch = [self.negative_sample(batch[i], negative_sampling_rate) for i in range(n_batches)]
 
       if n_batches == 1:
         batch = batch[0]
@@ -77,9 +77,9 @@ class WordNetDataset(DatasetBase):
       return None
     def _random_sample(batch_size):
       neg_batch = []
-      for i in xrange(batch_size):
-        subj, obj = random.sample(xrange(1, self.s_vocab.size), 2)
-        rel = random.sample(xrange(1, self.r_vocab.size), 1)[0]
+      for i in range(batch_size):
+        subj, obj = random.sample(range(1, self.s_vocab.size), 2)
+        rel = random.sample(range(1, self.r_vocab.size), 1)[0]
         #batch.append((0.0, (s1, r, s2)))
         neg_batch.append((subj, rel, obj))
       return neg_batch
@@ -87,7 +87,7 @@ class WordNetDataset(DatasetBase):
     def _close_negative_sample(batch):
       neg_batch = []
       for subj, rel, _ in batch:
-        obj = random.sample(xrange(1, self.s_vocab.size), 1)[0]
+        obj = random.sample(range(1, self.s_vocab.size), 1)[0]
         neg_batch.append((subj, rel, obj))
       return neg_batch
     #return _random_sample(batch_size)

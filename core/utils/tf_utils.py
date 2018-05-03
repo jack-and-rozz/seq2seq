@@ -12,7 +12,7 @@ def copy_checkpoint(source, target):
     shutil.copyfile(source + ext, target + ext)
 
 def make_summary(value_dict):
-  return tf.Summary(value=[tf.Summary.Value(tag=k, simple_value=v) for k,v in value_dict.items()])
+  return tf.Summary(value=[tf.Summary.Value(tag=k, simple_value=v) for k,v in list(value_dict.items())])
 
 def batch_dot(t1, t2, n_unk_dims=1):
   with tf.name_scope('batch_dot'):
@@ -75,7 +75,7 @@ def ffnn(inputs, num_hidden_layers, hidden_size, output_size, dropout, output_we
     current_inputs = inputs
 
   with tf.variable_scope('FFNN'):
-    for i in xrange(num_hidden_layers):
+    for i in range(num_hidden_layers):
       hidden_weights = tf.get_variable("hidden_weights_{}".format(i), [shape(current_inputs, 1), hidden_size])
       hidden_bias = tf.get_variable("hidden_bias_{}".format(i), [hidden_size])
       current_outputs = tf.nn.relu(tf.matmul(current_inputs, hidden_weights) + hidden_bias)

@@ -46,7 +46,7 @@ class WikiP2DVocabulary(VocabularyBase):
     if isinstance(tokenized[0], list):
       tokenized = common.flatten(tokenized)
     tokens = Counter(tokenized)
-    tokens = sorted([(k, f) for (k, f) in tokens.items()], key=lambda x: -x[1])
+    tokens = sorted([(k, f) for (k, f) in list(tokens.items())], key=lambda x: -x[1])
 
     rev_vocab = [k for k, _ in START_VOCAB + tokens[:(vocab_size - len(START_VOCAB))]]
     vocab = OrderedDict({t:i for i,t in enumerate(rev_vocab)})
@@ -96,7 +96,7 @@ class WikiP2DVocabulary(VocabularyBase):
     else:
       sent_tokens = [self.id2token(word_id) for word_id in ids]
     if link_span:
-      for i in xrange(link_span[0], link_span[1]+1):
+      for i in range(link_span[0], link_span[1]+1):
         sent_tokens[i] = common.colored(sent_tokens[i], 'link')
       sent_tokens = [w for w in sent_tokens if w]
     return " ".join(sent_tokens)
@@ -116,7 +116,7 @@ class WikiP2DVocabulary(VocabularyBase):
         padded_s += [PAD_ID] * (max_s_length + self.n_start_offset + self.n_end_offset - size)
         return padded_s, size
       res = [w_pad(s) for s in sentences]
-      return map(list, zip(*res))
+      return list(map(list, list(zip(*res))))
 
     def csent_padding(sentences, max_s_length, max_w_length):
       def c_pad(w):
@@ -126,7 +126,7 @@ class WikiP2DVocabulary(VocabularyBase):
         return padded_w, size
       def s_pad(s):
         s = s[:max_s_length]
-        padded_s, word_lengthes = map(list, zip(*[c_pad(w) for w in s]))
+        padded_s, word_lengthes = list(map(list, list(zip(*[c_pad(w) for w in s]))))
         if self.start_offset:
           padded_s.insert(0, self.start_offset + [PAD_ID] * (max_w_length - len(self.start_offset)))
           word_lengthes.insert(0, 1)
@@ -137,7 +137,7 @@ class WikiP2DVocabulary(VocabularyBase):
         padded_s += [[PAD_ID] * max_w_length] * (max_s_length + self.n_start_offset + self.n_end_offset - sentence_length)
         return padded_s, sentence_length, word_lengthes
       res = [s_pad(s) for s in sentences]
-      return map(list, zip(*res))
+      return list(map(list, list(zip(*res))))
     if self.cbase:
       return csent_padding(sentences, max_sentence_length, max_word_length)
     else:
@@ -154,7 +154,7 @@ class WikiP2DRelVocabulary(WikiP2DVocabulary):
     if os.path.exists(vocab_path) or not data:
       self.vocab, self.rev_vocab, self.rev_names = self.load_vocab(vocab_path)
     else:
-      restored_data = sorted([(k, v['freq'], v['name']) for k, v in data.items()], key=lambda x:-x[1])
+      restored_data = sorted([(k, v['freq'], v['name']) for k, v in list(data.items())], key=lambda x:-x[1])
       self.rev_vocab = [x[0] for x in restored_data]
       self.rev_names = [x[2] for x in restored_data]
       if vocab_size:
@@ -162,7 +162,7 @@ class WikiP2DRelVocabulary(WikiP2DVocabulary):
         self.rev_names = self.rev_names[:vocab_size]
       self.vocab = OrderedDict({t:i for i,t in enumerate(self.rev_vocab)})
       self.save_vocab(restored_data, vocab_path)
-    self.names = OrderedDict([(self.id2name(_id), _id) for _id in xrange(len(self.rev_names))])
+    self.names = OrderedDict([(self.id2name(_id), _id) for _id in range(len(self.rev_names))])
 
   def token2id(self, token):
     return self.vocab.get(token, ERROR_ID)
