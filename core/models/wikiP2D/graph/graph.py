@@ -31,19 +31,20 @@ def distmult(subjects, relations, objects):
   ###################################################################
 
 class GraphLinkPrediction(ModelBase):
-  def __init__(self, sess, config, is_training, encoder, o_vocab, r_vocab,
+  def __init__(self, sess, config, encoder, vocab,
                activation=tf.nn.tanh):
     super(GraphLinkPrediction, self).__init__(sess, config)
     self.name = 'graph'
     self.dataset = 'wikiP2D'
     self.sess = sess
-    self.is_training = is_training
     self.encoder = encoder
-    self.o_vocab = o_vocab
-    self.r_vocab = r_vocab
-    self.activation = activation
-    self.scoring_function = distmult
+    self.is_training = encoder.is_training
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
+    self.vocab = vocab
+    self.activation = activation
+
+    self.scoring_function = distmult
+
     self.max_batch_size = config.batch_size # for tf.dynamic_partition
     self.max_sent_length = config.max_sent_length.encode
     self.loss_weight = config.loss_weight
@@ -79,8 +80,8 @@ class GraphLinkPrediction(ModelBase):
 
     ## Embeddings
     with tf.variable_scope('Embeddings'):
-      self.o_embeddings = self.initialize_embeddings('object', [o_vocab.size, hidden_size])
-      self.r_embeddings = self.initialize_embeddings('relation', [r_vocab.size, hidden_size])
+      self.o_embeddings = self.initialize_embeddings('object', [self.vocab.obj.size, hidden_size])
+      self.r_embeddings = self.initialize_embeddings('relation', [self.vocab.rel.size, hidden_size])
       print('o_embeddings',self.o_embeddings)
 
     span_outputs = self.encoder.extract_span(outputs, self.link_spans,
@@ -297,11 +298,11 @@ class GraphLinkPrediction(ModelBase):
     # for debug.
     for i, (ent, wsents, csents, link_spans, p_triples) in enumerate(zip(batch['entities'], batch['w_articles'], batch['c_articles'], batch['link_spans'], batch['p_triples'])):
       for j, (wsent, csent, ls) in enumerate(zip(wsents, csents, link_spans)):
-        print('w_text<%02d>:  ' % j, self.encoder.w_vocab.ids2tokens(wsent, link_span=ls))
-        print('c_text<%02d>:  ' % j, self.encoder.c_vocab.ids2tokens(csent, link_span=ls))
+        print('w_text<%02d>:  ' % j, self.encoder.vocab.word.ids2tokens(wsent, link_span=ls))
+        print('c_text<%02d>:  ' % j, self.encoder.vocab.char.vocab.ids2tokens(csent, link_span=ls))
       print('entity:  ', ent['name'])
       print('triples:  ')
       for r, o in p_triples:
-        print(self.r_vocab.id2name(r),', ' , self.o_vocab.id2name(o))
+        print(self.vocab.rel.id2name(r),', ' , self.vocab.obj.id2name(o))
       print('')
     

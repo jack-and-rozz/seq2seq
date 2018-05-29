@@ -10,17 +10,16 @@ from pprint import pprint
 from collections import OrderedDict
 
 class CoreferenceResolution(ModelBase):
-  def __init__(self, sess, config, is_training, encoder, 
-               genre_vocab,
+  def __init__(self, sess, config, encoder, vocab,
                activation=tf.nn.tanh):
     super(CoreferenceResolution, self).__init__(sess, config)
     self.name = 'coref'
     self.dataset = 'coref'
     self.sess = sess
     self.encoder = encoder
-    self.genre_vocab = genre_vocab
+    self.vocab = vocab
     self.activation = activation
-    self.is_training = is_training
+    self.is_training = encoder.is_training
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
     self.feature_size = config.f_embedding_size
     self.max_mention_width = config.max_mention_width
@@ -56,7 +55,7 @@ class CoreferenceResolution(ModelBase):
     with tf.variable_scope('Embeddings'):
       self.same_speaker_emb = self.initialize_embeddings(
         'same_speaker', [2, self.feature_size]) # True or False.
-      self.genre_emb = self.initialize_embeddings('genre', [genre_vocab.size, self.feature_size])
+      self.genre_emb = self.initialize_embeddings('genre', [self.vocab.genre.size, self.feature_size])
       self.mention_width_emb = self.initialize_embeddings("mention_width", [self.max_mention_width, self.feature_size])
       self.mention_distance_emb = self.initialize_embeddings("mention_distance", [10, self.feature_size])
     text_emb, text_outputs, state = encoder.encode([self.w_sentences, self.c_sentences], self.sentence_length)
@@ -242,11 +241,11 @@ class CoreferenceResolution(ModelBase):
 
     ## Texts
     if self.encoder.cbase:
-      c_sentences, sentence_length, word_length = self.encoder.c_vocab.padding(c_sentences)
+      c_sentences, sentence_length, word_length = self.encoder.vocab.char.padding(c_sentences)
       input_feed[self.c_sentences] = np.array(c_sentences)
 
     if self.encoder.wbase:
-      w_sentences, sentence_length = self.encoder.w_vocab.padding(w_sentences)
+      w_sentences, sentence_length = self.encoder.vocab.word.padding(w_sentences)
       input_feed[self.w_sentences] = np.array(w_sentences)
       input_feed[self.sentence_length] = np.array(sentence_length)
 
@@ -281,11 +280,11 @@ class CoreferenceResolution(ModelBase):
     #         print k.name
     #         print v
     #     w = '_UNK'
-    #     w_id = self.encoder.w_vocab.token2id(w)
+    #     w_id = self.encoder.vocab.word.token2id(w)
     #     print w, w_id
     #     print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, tf.constant(w_id)))
     #     w = 'this'
-    #     w_id = self.encoder.w_vocab.token2id(w)
+    #     w_id = self.encoder.vocab.word.token2id(w)
     #     print w, w_id
     #     print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, tf.constant(w_id)))
     #     sys.stdout = sys.__stdout__

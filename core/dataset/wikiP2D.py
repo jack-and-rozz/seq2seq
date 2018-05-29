@@ -42,7 +42,7 @@ def process_entities(entities, w_vocab, c_vocab):
 #           WikiP2D
 ####################################
 
-class DemoBatch(object):
+class WikiP2DDemoBatch(object):
   def __init__(self, batch):
     self.batch = batch
 
@@ -197,17 +197,15 @@ class _WikiP2DDataset(object):
     return negatives
   
 class WikiP2DDataset(DatasetBase):
-  def __init__(self, w_vocab_size, c_vocab_size,
+  def __init__(self, config,
                w_vocab=None, c_vocab=None, # when using pretrained embs.
-               filename='Q5O15000R300.micro.bin',
-               source_dir='dataset/wikiP2D/source', 
-               processed_dir='dataset/wikiP2D/processed', 
                lowercase=False, normalize_digits=False,
                cleanup=False):
-    self.filename = filename
-
-    w_vocab_size = w_vocab.size if w_vocab else w_vocab_size
-    c_vocab_size = c_vocab.size if c_vocab else c_vocab_size
+    filename = config.filename
+    source_dir = config.source_dir
+    processed_dir = config.processed_dir
+    w_vocab_size = w_vocab.size if w_vocab else config.w_vocab_size
+    c_vocab_size = c_vocab.size if c_vocab else config.c_vocab_size
     w_suffix = w_vocab.name if w_vocab and w_vocab.name else w_vocab_size
     c_suffix = c_vocab.name if c_vocab and c_vocab.name else c_vocab_size
 

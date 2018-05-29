@@ -22,29 +22,28 @@ def merge_state(state):
   return state
 
 class WordEncoder(ModelBase):
-  def __init__(self, config, is_training, w_vocab=None, c_vocab=None,
+  def __init__(self, config, is_training, vocab,
                activation=tf.nn.relu, shared_scope=None):
     self.cbase = config.cbase
     self.wbase = config.wbase
-    self.w_vocab = w_vocab
-    self.c_vocab = c_vocab
+    self.vocab = vocab
     self.is_training = is_training
     self.activation = activation
     self.shared_scope = shared_scope # to reuse variables
     self.reuse = None
 
-    self.lexical_keep_prob = 1.0 - tf.to_float(self.is_training) * config.lexical_dropout_rate
+    self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
 
     w_trainable = config.trainable_emb
     sys.stderr.write("Initialize word embeddings with pretrained ones.\n")
-    w_initializer = tf.constant_initializer(w_vocab.embeddings)
-    w_emb_shape = w_vocab.embeddings.shape
+    w_initializer = tf.constant_initializer(vocab.word.embeddings)
+    w_emb_shape = vocab.word.embeddings.shape
 
     with tf.device('/cpu:0'):
       self.w_embeddings = self.initialize_embeddings('word_emb', w_emb_shape, initializer=w_initializer, trainable=w_trainable)
 
     if self.cbase:
-      c_emb_shape = [c_vocab.size, config.c_embedding_size] 
+      c_emb_shape = [vocab.char.size, config.c_embedding_size] 
       with tf.device('/cpu:0'):
         self.c_embeddings = self.initialize_embeddings(
           'char_emb', c_emb_shape, trainable=True)
@@ -69,7 +68,7 @@ class WordEncoder(ModelBase):
       outputs = tf.concat(outputs, axis=-1)
       if self.shared_scope:
         self.reuse = True
-    return tf.nn.dropout(outputs, self.lexical_keep_prob) # [None, max_sentence_length, emb_size]
+    return tf.nn.dropout(outputs, self.keep_prob) # [None, max_sentence_length, emb_size]
 
   def get_input_feed(self, batch):
     input_feed = {}
@@ -84,8 +83,7 @@ class SentenceEncoder(ModelBase):
     self.is_training = is_training
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
     self.word_encoder = word_encoder
-    self.w_vocab = word_encoder.w_vocab
-    self.c_vocab = word_encoder.c_vocab
+    self.vocab = word_encoder.vocab
     self.w_embeddings = word_encoder.w_embeddings
     self.c_embeddings = word_encoder.c_embeddings
     self.activation = activation
@@ -132,8 +130,7 @@ class SentenceEncoder(ModelBase):
     return word_repls, outputs, state
 
   # https://stackoverflow.com/questions/44940767/how-to-get-slices-of-different-dimensions-from-tensorflow-tensor
-  def extract_span(self, repls, span, entity_indices,
-                   max_batch_size):
+  def extract_span(self, repls, span, entity_indices, max_batch_size):
     with tf.name_scope('ExtractSpan'):
       def loop_func(idx, span_repls, start, end):
         res = tf.reduce_mean(span_repls[idx][start[idx]:end[idx]+1], axis=0)
@@ -168,8 +165,8 @@ class MultiEncoderWrapper(SentenceEncoder):
       encoders: a list of SentenceEncoder. 
     """
     self.encoders = encoders
-    self.w_vocab = encoders[0].w_vocab
-    self.c_vocab = encoders[0].c_vocab
+    self.is_training = encoders[0].is_training
+    self.vocab = encoders[0].vocab
     self.w_embeddings = encoders[0].w_embeddings
     self.c_embeddings = encoders[0].c_embeddings
     self.cbase = encoders[0].cbase

@@ -73,7 +73,7 @@ class recDotDict(dict):
   __getattr__ = dict.__getitem__
   __setattr__ = dict.__setitem__
   __delattr__ = dict.__delitem__
-  def __init__(self, _dict):
+  def __init__(self, _dict={}):
     for k in _dict:
       if isinstance(_dict[k], dict):
         _dict[k] = recDotDict(_dict[k])

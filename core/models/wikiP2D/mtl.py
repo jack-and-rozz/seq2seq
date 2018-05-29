@@ -13,31 +13,33 @@ from core.models.base import ModelBase, ManagerBase
 from core.models.wikiP2D.encoder import SentenceEncoder, WordEncoder, MultiEncoderWrapper
 from core.models.wikiP2D.gen_desc.gen_desc import DescriptionGeneration
 from core.models.wikiP2D.graph.graph import GraphLinkPrediction
-#from core.models.wikiP2D.coref.coref import CoreferenceResolution
+from core.models.wikiP2D.coref.coref import CoreferenceResolution
 from core.models.wikiP2D.adversarial import AdversarialLearning
 
 available_models = [
-  DescriptionGeneration, 
-  GraphLinkPrediction, 
-  #CoreferenceResolution, 
-  AdversarialLearning
+   DescriptionGeneration,
+   GraphLinkPrediction,
+   CoreferenceResolution,
+   AdversarialLearning
 ]
 available_models = common.dotDict({c.__name__:c for c in available_models})
 
 
-def get_multi_encoder(config, shared_encoder, word_encoder, is_training, scope):
+def get_multi_encoder(config, shared_sent_encoder, word_encoder, 
+                      is_training, scope):
   with tf.variable_scope(scope):
-    private_encoder = SentenceEncoder(config, is_training, word_encoder)
-    encoders = [shared_encoder, private_encoder]
+    private_sent_encoder = SentenceEncoder(config, is_training, word_encoder)
+    encoders = [shared_sent_encoder, private_sent_encoder]
   return MultiEncoderWrapper(encoders)
 
-def define_task(task_config, *args, device=None):
+def define_task(sess, task_config, encoder, vocab, device=None):
   task_class = available_models[task_config.model_type]
+  #task_class = getattr(core.models.wikiP2D, task_config.model_type)
   if device:
     with tf.device(device):
-      task = task_class(task_config, *args)
+      task = task_class(sess, task_config, encoder, vocab)
   else:
-    task = task_class(task_config, *args)
+    task = task_class(sess, task_config, encoder, vocab)
   return task
 
 ##############################
@@ -50,15 +52,13 @@ class MTLManager(ManagerBase):
     super(MTLManager, self).__init__(sess, config)
     self.activation = activation
     self.is_training = tf.placeholder(tf.bool, name='is_training', shape=[]) 
-    self.debug = config.debug
 
     if config.use_local_rnn:
       config.rnn_size = config.rnn_size / 2
 
     # with tf >= 1.2, the scope where a RNNCell is called first is cached and the variables are automatically reused.
     with tf.variable_scope("WordEncoder") as scope:
-      self.word_encoder = WordEncoder(config, self.is_training, 
-                                      vocab.word, vocab.char,
+      self.word_encoder = WordEncoder(config, self.is_training, vocab,
                                       shared_scope=scope)
     with tf.variable_scope("GlobalEncoder") as scope:
       self.shared_sent_encoder = SentenceEncoder(config, self.is_training,
@@ -66,15 +66,15 @@ class MTLManager(ManagerBase):
                                                  shared_scope=scope)
     ## Define each task
     self.tasks = defaultdict(None)
-    for task_config in config.tasks:
-      # device = '/gpu:1' if config.coref_task and len(tf_utils.get_available_gpus()) > 1 else '/gpu:0'
+    for task_config in config.tasks.values():
+      #device = '/gpu:1' if config.coref_task and len(tf_utils.get_available_gpus()) > 1 else '/gpu:0'
       device = None # TODO
 
       task_name = task_config.name
       sys.stderr.write('Building %s model...\n' % task_name)
       with tf.variable_scope(task_name) as task_scope:
         encoder = self.get_sent_encoder(config, task_scope)
-        task = define_task(task_config, encoder, vocab, device)
+        task = define_task(sess, task_config, encoder, vocab, device)
       self.tasks[task_name] = task
 
     self.losses = [t.loss for t in self.tasks.values()]
@@ -104,19 +104,18 @@ class MTLManager(ManagerBase):
     return input_feed
 
   def train(self, batches, summary_writer=None):
-    return self.step(batches, summary_writer=summary_writer)
+    return self.step(batches, True, summary_writer=summary_writer)
 
   def valid(self, batches, summary_writer=None):
-    return self.step(batches, summary_writer=summary_writer)
+    return self.step(batches, False, summary_writer=summary_writer)
 
   def test(self, batches, summary_writer=None):
     raise NotImplementedError("")
 
-  def step(self, batches, summary_writer=None):
+  def step(self, batches, is_training, summary_writer=None):
     start_time = time.time()
     n_losses = len(self.losses)
     loss = np.array([0.0] * n_losses)
-    is_training = batches['is_training']
     output_feed = self.output_feed['train'] if is_training else self.output_feed['valid']
 
     # Pass a batch of each dataset that is necessary for each task.
@@ -143,9 +142,7 @@ class MTLManager(ManagerBase):
       loss += step_loss
 
       if math.isnan(step_loss[0]):
-        raise ValueError("Nan loss ...")
-      if False and self.debug and i == 31:
-        break
+        raise ValueError("Nan loss detection ...")
 
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)

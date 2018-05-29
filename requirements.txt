@@ -8,4 +8,4 @@ numpy
 pandas
 scipy
 seaborn
-tensorflow-gpu==1.2.0
+tensorflow==1.2.1

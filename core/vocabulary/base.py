@@ -118,7 +118,6 @@ class VocabularyBase(object):
   def size(self):
     return len(self.vocab)
 
-
 class WordVocabularyBase(VocabularyBase):
   def id2token(self, _id):
     if type(_id) != int or _id < 0 or _id > len(self.rev_vocab):
@@ -145,11 +144,16 @@ class WordVocabularyBase(VocabularyBase):
   def token2id(self, token):
     return self.vocab.get(token, UNK_ID)
 
-  def sent2ids(self, sentence):
+  def sent2ids(self, sentence, word_dropout=0.0):
     if type(sentence) == list:
       sentence = " ".join(sentence)
     tokens = self.tokenizer(sentence) 
-    res = [self.token2id(word) for word in tokens]
+    if word_dropout:
+      res = [self.token2id(word) if np.random.rand() <= word_dropout else UNK_ID
+             for word in tokens]
+    else:
+      res = [self.token2id(word) for word in tokens]
+
     return res
 
   def padding(self, sentences, max_sentence_length=None):

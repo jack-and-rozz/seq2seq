@@ -86,29 +86,34 @@ class _CoNLL2012CorefDataset(object):
       yield batches
 
 class CoNLL2012CorefDataset(DatasetBase):
-  def __init__(self, w_vocab, c_vocab,
-               source_dir='dataset/coref/source',
-               processed_dir='dataset/coref/processed',
-               train_file='train.english.jsonlines',
-               valid_file='dev.english.jsonlines',
-               test_file='test.english.jsonlines'):
+  def __init__(self, dataset_path, w_vocab, c_vocab):
+    '''
+    Args:
+    - dataset_path : A dictionary which contains pathes of CoNLL datasets.
+    - w_vocab :
+    - c_vocab :
+    '''
+    source_dir = dataset_path.source_dir
+    train_file = dataset_path.train_data
+    valid_file= dataset_path.valid_data
+    test_file= dataset_path.test_data
     self.w_vocab = w_vocab
     self.c_vocab = c_vocab
+
     if not w_vocab and not c_vocab:
       raise ValueError('You have to prepare vocabularies in advance.')
 
-    def load_source(fname):
+    def load_source(source_dir, fname):
       fpath = os.path.join(source_dir, fname)
       sys.stderr.write("Loading coref dataset from \'%s\'... \n" % fpath)
       return [json.loads(line) for line in open(fpath)]
 
-    # This dataset is relatively small, we have to prepare vocabularies in advance and we don't create processed(tokenized) files.
-    self.train = load_source(train_file)
-    self.valid = load_source(valid_file)
-    self.test = load_source(test_file)
+    # As this dataset is relatively small, we don't need to create processed (symbolized) files.
+    self.train = load_source(source_dir, train_file)
+    self.valid = load_source(source_dir, valid_file)
+    self.test = load_source(source_dir, test_file)
 
     genre_tokens = [d['doc_key'][:2] for d in self.train] # wb/c2e/00/c2e_0022_0 -> wb
-    speaker_tokens = common.flatten(common.flatten([d['speakers'] for d in self.train]))
     self.genre_vocab = FeatureVocab(genre_tokens)
 
     self.train = _CoNLL2012CorefDataset(self.train, w_vocab, c_vocab, self.genre_vocab)

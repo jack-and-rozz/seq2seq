@@ -1,39 +1,26 @@
 #coding: utf-8
-import sys, os, random, copy, socket, collections, time, re
+import sys, os, random, copy, socket, collections, time, re, argparse
 from pprint import pprint
 import tensorflow as tf
 import numpy as np
-from logging import FileHandler
 
 from base import ManagerBase
 from core.utils import common, tf_utils
+import core.dataset 
 import core.models.wikiP2D.mtl as mtl_model
 from core.models.wikiP2D.coref.demo import run_model
-from core.dataset.wikiP2D import WikiP2DDataset, DemoBatch
-from core.dataset.coref import CoNLL2012CorefDataset
+
 from core.vocabulary.base import VocabularyWithEmbedding, PredefinedCharVocab
 from tensorflow.contrib.tensorboard.plugins import projector
 
-# Common arguments are defined in base.py
-tf.app.flags.DEFINE_string("port", "", "")
-tf.app.flags.DEFINE_boolean("debug", False, "")
-
-log_file = os.path.join(tf.app.flags.FLAGS.checkpoint_path,  
-                        tf.app.flags.FLAGS.mode + '.log')
-logger = common.logManager(handler=FileHandler(log_file)) if log_file else common.logManager()
-
-
 class MTLManager(ManagerBase):
   @common.timewatch()
-  def __init__(self, FLAGS, sess):
+  def __init__(self, args, sess):
     # If embeddings are not pretrained, make trainable True.
-    super(MTLManager, self).__init__(FLAGS, sess)
-    config = self.config
-    config.debug = True if FLAGS.debug == True else False
+    super(MTLManager, self).__init__(args, sess)
+    self.config = config = self.load_config(args)
 
-    self.port = int(FLAGS.port) if FLAGS.port.isdigit() else None
-    self.checkpoint_path = FLAGS.checkpoint_path
-
+    #self.port = int(args.port) if args.port.isdigit() else None
     self.vocab = common.dotDict()
     # Load pretrained embeddings.
     self.vocab.word = VocabularyWithEmbedding(
@@ -43,55 +30,59 @@ class MTLManager(ManagerBase):
       config.char_vocab_path, config.c_vocab_size,
       lowercase=config.lowercase,
     )
-    self.dataset = collections.defaultdict(None)
-    return
-    exit(1)
-    if self.use_wikiP2D:
-      self.w2p_dataset = WikiP2DDataset(
-        config.w_vocab_size, config.c_vocab_size,
-        filename=config.wikiP2D.dataset,
-        lowercase=config.lowercase,
-        w_vocab=self.vocab.word, c_vocab=self.vocab.char
-      )
-      self.vocab.rel = self.w2p_dataset.r_vocab
-      self.vocab.obj = self.w2p_dataset.o_vocab
 
-    if self.use_coref:
-      self.coref_dataset = CoNLL2012CorefDataset(
-        self.vocab.word, self.vocab.char
-      )
-      self.vocab.genre = self.coref_dataset.genre_vocab
+    # Load Dataset.
+    self.dataset = common.recDotDict()
+    for k, v in config.tasks.items():
+      dataset_type = getattr(core.dataset, v.dataset.dataset_type)
+      if dataset_type == core.dataset.WikiP2DDataset:
+        self.dataset[k] = dataset_type(
+          v.dataset,
+          lowercase=config.lowercase,
+          w_vocab=self.vocab.word, c_vocab=self.vocab.char
+        )
+        self.vocab.rel = self.dataset[k].r_vocab
+        self.vocab.obj = self.dataset[k].o_vocab
+      elif dataset_type == core.dataset.CoNLL2012CorefDataset:
+        self.dataset[k] = dataset_type(
+          v.dataset, self.vocab.word, self.vocab.char
+        )
+        self.vocab.genre = self.dataset[k].genre_vocab
+      else:
+        raise ValueError('Dataset type %s is undefined.' % t.dataset.dataset_type)
+    self.use_coref = 'coref' in self.config.tasks
+    self.use_wikiP2D = 'wikiP2D' in self.config.tasks
 
   def get_batch(self, batch_type):
     batches = {'is_training': False}
     if batch_type == 'train':
       do_shuffle = True
       batches['is_training'] = True
-      batches['wikiP2D'] = self.w2p_dataset.train.get_batch(
-        self.config.wikiP2D.batch_size, do_shuffle=True,
+      batches['wikiP2D'] = self.dataset.wikiP2D.train.get_batch(
+        self.config.tasks.wikiP2D.batch_size, do_shuffle=True,
         min_sent_len=None, 
-        max_sent_len=self.config.wikiP2D.max_sent_length.encode,
-        n_pos_triples=self.config.wikiP2D.n_triples) if self.use_wikiP2D else None
-      batches['coref'] = self.coref_dataset.train.get_batch(
-        self.config.coref.batch_size, do_shuffle=True) if self.use_coref else None
+        max_sent_len=self.config.tasks.wikiP2D.max_sent_length.encode,
+        n_pos_triples=self.config.tasks.wikiP2D.n_triples) if self.use_wikiP2D else None
+      batches['coref'] = self.dataset.coref.train.get_batch(
+        self.config.tasks.coref.batch_size, do_shuffle=True) if self.use_coref else None
 
     elif batch_type == 'valid':
-      batches['wikiP2D'] = self.w2p_dataset.valid.get_batch(
-        self.config.wikiP2D.batch_size, do_shuffle=False,
+      batches['wikiP2D'] = self.dataset.wikiP2D.valid.get_batch(
+        self.config.tasks.wikiP2D.batch_size, do_shuffle=False,
         min_sent_len=None, 
-        max_sent_len=self.config.wikiP2D.max_sent_length.encode,
+        max_sent_len=self.config.tasks.wikiP2D.max_sent_length.encode,
         n_pos_triples=None) if self.use_wikiP2D else None
-      batches['coref'] = self.coref_dataset.valid.get_batch(
-        self.config.coref.batch_size, 
+      batches['coref'] = self.dataset.coref.valid.get_batch(
+        self.config.tasks.coref.batch_size, 
         do_shuffle=False) if self.use_coref else None
     elif batch_type == 'test':
-      batches['wikiP2D'] = self.w2p_dataset.test.get_batch(
-        self.config.wikiP2D.batch_size, do_shuffle=False,
+      batches['wikiP2D'] = self.dataset.wikiP2D.test.get_batch(
+        self.config.tasks.wikiP2D.batch_size, do_shuffle=False,
         min_sent_len=None, 
-        max_sent_len=self.config.wikiP2D.max_sent_length.encode,
+        max_sent_len=self.config.tasks.wikiP2D.max_sent_length.encode,
         n_pos_triples=None, n_neg_triples=None) if self.use_wikiP2D else None
-      batches['coref'] = self.coref_dataset.test.get_batch(
-        self.config.coref.batch_size, 
+      batches['coref'] = self.dataset.coref.test.get_batch(
+        self.config.tasks.coref.batch_size, 
         do_shuffle=False) if self.use_coref else None
     return batches
 
@@ -107,13 +98,13 @@ class MTLManager(ManagerBase):
     self.saver = tf.train.Saver(tf.global_variables(), 
                                 max_to_keep=config.max_to_keep)
     if checkpoint_path and os.path.exists(checkpoint_path + '.index'):
-      logger.info("Reading model parameters from %s" % checkpoint_path)
+      self.logger.info("Reading model parameters from %s" % checkpoint_path)
       self.saver.restore(self.sess, checkpoint_path)
     else:
-      logger.info("Created model with fresh parameters.")
+      self.logger.info("Created model with fresh parameters.")
       tf.global_variables_initializer().run()
 
-    variables_path = self.checkpoint_path + '/variables/variables.list'
+    variables_path = self.root_path + '/variables.list'
     with open(variables_path, 'w') as f:
       variable_names = sorted([v.name + ' ' + str(v.get_shape()) for v in tf.global_variables()])
       f.write('\n'.join(variable_names) + '\n')
@@ -122,30 +113,28 @@ class MTLManager(ManagerBase):
                                                 self.sess.graph)
     return m
 
-  @common.timewatch(logger)
   def train(self):
     m = self.create_model(self.config, 'train')
-    exit(1)
     if m.epoch.eval() == 0:
       if self.use_coref:
-        logger.info("Dataset stats (CoNLL 2012)")
-        logger.info("train, valid, test = (%d, %d, %d)" % (self.coref_dataset.train.size, self.coref_dataset.valid.size, self.coref_dataset.test.size))
+        self.logger.info("Dataset stats (CoNLL 2012)")
+        self.logger.info("train, valid, test = (%d, %d, %d)" % (self.dataset.coref.train.size, self.dataset.coref.valid.size, self.dataset.coref.test.size))
 
       if self.use_wikiP2D:
-        logger.info("Dataset stats (WikiP2D)")
-        logger.info("(train) articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.train.size))
-        logger.info("(valid) articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.valid.size))
-        logger.info("(test)  articles, triples, subjects = (%d, %d, %d)" % (self.w2p_dataset.test.size))
+        self.logger.info("Dataset stats (WikiP2D)")
+        self.logger.info("(train) articles, triples, subjects = (%d, %d, %d)" % (self.dataset.wikiP2D.train.size))
+        self.logger.info("(valid) articles, triples, subjects = (%d, %d, %d)" % (self.dataset.wikiP2D.valid.size))
+        self.logger.info("(test)  articles, triples, subjects = (%d, %d, %d)" % (self.dataset.wikiP2D.test.size))
 
     for epoch in range(m.epoch.eval(), self.config.max_epoch):
       batches = self.get_batch('train')
       epoch_time, step_time, train_loss, summary = m.train(batches, summary_writer=self.summary_writer)
-      logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, train_loss))
+      self.logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, train_loss))
 
       batches = self.get_batch('valid')
       epoch_time, step_time, valid_loss, summary = m.valid(batches)
       self.summary_writer.add_summary(summary, m.global_step.eval())
-      logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, valid_loss))
+      self.logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, valid_loss))
 
       checkpoint_path = self.checkpoints_path + "/model.ckpt"
       if epoch == 0 or (epoch+1) % 1 == 0:
@@ -174,7 +163,6 @@ class MTLManager(ManagerBase):
     ############################################
 
 
-  @common.timewatch(logger)
   def c_test(self, mode="valid"): # mode: 'valid' or 'test'
     conll_eval_path = {
       'train': 'dataset/coref/source/train.english.v4_auto_conll',
@@ -244,7 +232,6 @@ class MTLManager(ManagerBase):
     eval_data = [d for d in self.get_batch('valid')['coref']]
     run_model(m, eval_data, self.port)
 
-  @common.timewatch(logger)
   def g_test(self):
 
     self.config.coref_task = False
@@ -259,9 +246,9 @@ class MTLManager(ManagerBase):
     output_path = self.tests_path + '/g_test.ep%02d' % m.epoch.eval()
     with open(output_path, 'w') as f:
       m.graph.print_results(batches, scores, ranks, 
-                            output_file=f, batch2text=self.w2p_dataset.batch2text)
+                            output_file=f, batch2text=self.dataset.wikiP2D.batch2text)
 
-    logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (m.epoch.eval(), mrr, hits_10))
+    self.logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (m.epoch.eval(), mrr, hits_10))
 
   def g_demo(self):
     m = self.create_model(self.self.config, 'test')
@@ -282,7 +269,7 @@ class MTLManager(ManagerBase):
         'w_articles': [w_article],
         'c_articles': [c_article],
         'link_spans': [link_span],
-        'p_triples': [p_triples], #self.w2p_dataset.get_all_triples(),
+        'p_triples': [p_triples], #self.dataset.wikiP2D.get_all_triples(),
         'n_triples': None
       }
       demo_data = DemoBatch(batch)
@@ -318,8 +305,7 @@ class MTLManager(ManagerBase):
       conn.close()
     return
 
-@common.timewatch(logger)
-def main(_):
+def main(args):
   tf_config = tf.ConfigProto(
     log_device_placement=False,
     allow_soft_placement=True, # GPU上で実行できない演算を自動でCPUに
@@ -330,9 +316,9 @@ def main(_):
 
   with tf.Graph().as_default(), tf.Session(config=tf_config) as sess:
     tf.set_random_seed(0)
-    FLAGS = tf.app.flags.FLAGS
-    manager = MTLManager(FLAGS, sess)
-    if FLAGS.mode == "train":
+    args = args
+    manager = MTLManager(args, sess)
+    if args.mode == "train":
       # TODO: set a process that simultaneously evaluate the model at each epoch.
       #       (Some techniques are required to parallely run instance methods...)
       # with tf.device('/cpu:0'):
@@ -340,15 +326,15 @@ def main(_):
       #    worker.daemon = True 
       #    worker.start()
       manager.train()
-    elif FLAGS.mode == "g_test":
+    elif args.mode == "g_test":
       manager.g_test()
-    elif FLAGS.mode == "c_test":
+    elif args.mode == "c_test":
       manager.c_test()
-    elif FLAGS.mode == "g_demo":
+    elif args.mode == "g_demo":
       manager.g_demo()
-    elif FLAGS.mode == "c_demo":
+    elif args.mode == "c_demo":
       manager.c_demo()
-    elif FLAGS.mode == 'self_test':
+    elif args.mode == 'self_test':
       manager.self_test()
     else:
       sys.stderr.write("Unknown mode.\n")
@@ -356,5 +342,16 @@ def main(_):
 
 
 if __name__ == "__main__":
-  tf.app.run()
-
+  # Common arguments are defined in base.py
+  desc = ""
+  parser = argparse.ArgumentParser(description=desc)
+  parser.add_argument('checkpoint_path', type=str, help ='')
+  parser.add_argument('mode', type=str, help ='')
+  parser.add_argument('--config_type', default='main', 
+                      type=str, help ='')
+  parser.add_argument('--config_path', default='configs/experiments.conf',
+                      type=str, help ='')
+  parser.add_argument('--debug', default=False,
+                      type=common.str2bool, help ='')
+  args = parser.parse_args()
+  main(args)
