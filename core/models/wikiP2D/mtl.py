@@ -80,14 +80,7 @@ class MTLManager(ManagerBase):
     self.losses = [t.loss for t in self.tasks.values()]
     _, self.updates = self.get_loss_and_updates(self.losses)
 
-    ## About outputs
-    self.output_feed = {
-      'train' : self.losses + [self.updates], 
-      'valid': self.losses,
-      'test' : [
-        [t.predictions for t in self.tasks.values()],
-      ]
-    }
+
   def get_sent_encoder(self, config, scope):
     if config.use_local_rnn:
       encoder = get_multi_encoder(config, self.shared_sent_encoder, 
@@ -104,19 +97,23 @@ class MTLManager(ManagerBase):
     return input_feed
 
   def train(self, batches, summary_writer=None):
-    return self.step(batches, True, summary_writer=summary_writer)
+    output_feed = self.losses + [self.updates]
+    # DEBUG
+    #output_feed = [self.tasks['coref'].w_sentences, 
+    #               tf.reduce_sum(self.tasks['coref'].sentence_length)]
+    return self.step(batches, output_feed, True, summary_writer=summary_writer)
 
   def valid(self, batches, summary_writer=None):
-    return self.step(batches, False, summary_writer=summary_writer)
+    output_feed = self.losses
+    return self.step(batches, output_feed, False, summary_writer=summary_writer)
 
   def test(self, batches, summary_writer=None):
     raise NotImplementedError("")
 
-  def step(self, batches, is_training, summary_writer=None):
+  def step(self, batches, output_feed, is_training, summary_writer=None):
     start_time = time.time()
     n_losses = len(self.losses)
     loss = np.array([0.0] * n_losses)
-    output_feed = self.output_feed['train'] if is_training else self.output_feed['valid']
 
     # Pass a batch of each dataset that is necessary for each task.
     dataset_names = list(OrderedSet([t.dataset for t in self.tasks.values() if hasattr(t, 'dataset')]))
@@ -136,7 +133,6 @@ class MTLManager(ManagerBase):
       # else:
       outputs = self.sess.run(output_feed, input_feed)
       t = time.time() - t
-
       step_loss = np.array([l for l in outputs[:n_losses]])
       print(self.epoch.eval(), i, step_loss, 'step_time: %f' % t)
       loss += step_loss
@@ -147,8 +143,6 @@ class MTLManager(ManagerBase):
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)
     loss /= (i+1)
-
-    assert len(self.tasks.values())+1 == len(loss)
 
     input_feed = {t.summary_loss:l for t, l in zip(self.tasks.values(), loss[1:])}
     summary_ops = tf.summary.merge([tf.summary.scalar(t.name + '_loss', t.summary_loss) for t in self.tasks.values()])

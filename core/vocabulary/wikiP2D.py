@@ -3,20 +3,20 @@ from pprint import pprint
 import os, time, re, sys
 from collections import defaultdict, OrderedDict, Counter
 import core.utils.common as common
-from core.vocabulary.base import ERROR_ID, PAD_ID, BOS_ID, EOS_ID, UNK_ID, _PAD, _BOS, _EOS, _UNK, word_tokenizer, char_tokenizer
+from core.vocabulary.base import  PAD_ID, BOS_ID, UNK_ID, _PAD, _BOS, _UNK, word_tokenizer, char_tokenizer
 from core.vocabulary.base import WordVocabularyBase, CharVocabularyBase, VocabularyBase
 
 class WikiP2DVocabularyBase(VocabularyBase):
   def __init__(self, sentences, vocab_path, vocab_size,
                cbase=False, lowercase=False, special_words=None,
-               normalize_digits=False, add_bos=False, add_eos=False):
-    super(WikiP2DVocabularyBase, self).__init__(add_bos=add_bos, add_eos=add_eos)
+               normalize_digits=False):
+    super(WikiP2DVocabularyBase, self).__init__()
 
 
 class WikiP2DVocabulary(VocabularyBase):
   def __init__(self, sentences, vocab_path, vocab_size,
                cbase=False, lowercase=False, special_words=None,
-               normalize_digits=False, add_bos=False, add_eos=False):
+               normalize_digits=False):
     self.cbase = cbase
     if self.cbase:
       self.tokenizer = char_tokenizer(special_words=special_words, 
@@ -27,13 +27,7 @@ class WikiP2DVocabulary(VocabularyBase):
                                       normalize_digits=normalize_digits) 
 
     self.vocab, self.rev_vocab = self.init_vocab(sentences, vocab_path, vocab_size)
-    self.start_offset = [BOS_ID] if add_bos else []
-    self.end_offset = [EOS_ID] if add_eos else []
-    self.n_start_offset = len(self.start_offset)
-    self.n_end_offset = len(self.end_offset)
 
-    # Number of additonal tokens (e.g. EOS) when articles are padded.
-    # self.n_additional_paddings = 1
 
   def init_vocab(self, sentences, vocab_path, vocab_size):
     if os.path.exists(vocab_path):
@@ -41,7 +35,7 @@ class WikiP2DVocabulary(VocabularyBase):
     elif not sentences:
       raise ValueError('This vocabulary does not exist and no sentences were passed when initializing.')
 
-    START_VOCAB = [(_PAD, 0), (_BOS, 0), (_EOS, 0), (_UNK, 0) ]
+    START_VOCAB = [(_PAD, 0), (_BOS, 0),  (_UNK, 0) ]
     tokenized = common.flatten([self.tokenizer(s) for s in sentences])
     if isinstance(tokenized[0], list):
       tokenized = common.flatten(tokenized)
@@ -53,7 +47,6 @@ class WikiP2DVocabulary(VocabularyBase):
 
     START_VOCAB[UNK_ID] = (_UNK, sum([f for _, f in tokens[vocab_size:]]))
     START_VOCAB[BOS_ID] = (_BOS, len(sentences))
-    START_VOCAB[EOS_ID] = (_EOS, len(sentences))
     restored_data = START_VOCAB + tokens[:(vocab_size - len(START_VOCAB))]
     self.save_vocab(restored_data, vocab_path)
     return vocab, rev_vocab
@@ -71,7 +64,7 @@ class WikiP2DVocabulary(VocabularyBase):
   def id2token(self, _id):
     if _id < 0 or _id > len(self.rev_vocab):
       raise ValueError('Token ID must be between 0 and %d' % len(self.rev_vocab))
-    elif _id in set([PAD_ID, EOS_ID, BOS_ID]):
+    elif _id in set([PAD_ID, BOS_ID]):
       return ''
     else:
       return self.rev_vocab[_id]

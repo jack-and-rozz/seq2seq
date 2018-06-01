@@ -1,12 +1,14 @@
 # coding: utf-8 
 import operator
 import math, time, sys, random, re
+import numpy as np
 import tensorflow as tf
+from pprint import pprint
+
 from core.utils import common, tf_utils
 from core.models.base import ModelBase
 from core.models.wikiP2D.coref import coref_ops, conll, metrics, util
-import numpy as np
-from pprint import pprint
+from core.vocabulary.base import _UNK, PAD_ID
 from collections import OrderedDict
 
 class CoreferenceResolution(ModelBase):
@@ -41,9 +43,10 @@ class CoreferenceResolution(ModelBase):
       self.c_sentences = tf.placeholder(
         tf.int32, name='c_sentences',
         shape=[None, None, None]) if self.encoder.cbase else None
-
-      self.sentence_length = tf.placeholder(tf.int32, shape=[None], 
-                                            name="sentence_length")
+      # TODO: truncate_exampleしたものをw_sentencesにfeedした時、何故かtruncate前の単語数を数えてしまう。とりあえずsentence_lengthを直接feedすれば問題なし？
+      #self.sentence_length = tf.count_nonzero(self.w_sentences,
+      #                                        axis=1, dtype=tf.int32)
+      self.sentence_length = tf.placeholder(tf.int32, shape=[None])
       self.speaker_ids = tf.placeholder(tf.int32, shape=[None], 
                                         name="speaker_ids")
       self.genre = tf.placeholder(tf.int32, shape=[], name="genre")
@@ -76,7 +79,6 @@ class CoreferenceResolution(ModelBase):
     with tf.name_scope('ReshapeEncoderOutputs'):
       num_sentences = tf.shape(text_emb)[0]
       max_sentence_length = tf.shape(text_emb)[1]
-
       text_len_mask = tf.sequence_mask(text_len, maxlen=max_sentence_length)
       text_len_mask = tf.reshape(text_len_mask, [num_sentences * max_sentence_length])
       genre_emb = tf.nn.embedding_lookup(self.genre_emb, genre)
@@ -234,21 +236,18 @@ class CoreferenceResolution(ModelBase):
   def get_input_feed(self, batch, is_training):
     input_feed = {}
     clusters = batch["clusters"]
-    c_sentences = batch['c_sentences']
-    w_sentences = batch['w_sentences']
+    c_sentences = np.array(batch['c_sentences'])
+    w_sentences = np.array(batch['w_sentences'])
     speaker_ids = batch['speakers'] #common.flatten(batch['speakers'])
     genre = batch["genre"]
-
     ## Texts
     if self.encoder.cbase:
-      c_sentences, sentence_length, word_length = self.encoder.vocab.char.padding(c_sentences)
-      input_feed[self.c_sentences] = np.array(c_sentences)
+      input_feed[self.c_sentences] = c_sentences
 
     if self.encoder.wbase:
-      w_sentences, sentence_length = self.encoder.vocab.word.padding(w_sentences)
-      input_feed[self.w_sentences] = np.array(w_sentences)
-      input_feed[self.sentence_length] = np.array(sentence_length)
+      input_feed[self.w_sentences] = w_sentences
 
+    input_feed[self.sentence_length] = np.array([len([w for w in s if w != PAD_ID]) for s in w_sentences])
     ## Mention spans and their clusters
     gold_mentions = sorted(tuple(m) for m in common.flatten(clusters))
     gold_mention_map = {m:i for i,m in enumerate(gold_mentions)}
@@ -296,26 +295,29 @@ class CoreferenceResolution(ModelBase):
     else:
       return input_feed
 
-  #def truncate_example(self, word_emb, char_index, text_len, speaker_ids, genre, is_training, gold_starts, gold_ends, cluster_ids):
   def truncate_example(self, input_feed):
+    # DEBUG
+    # print ('length of w_sentences', len(input_feed[self.w_sentences]), sum([len([w for w in s if w != PAD_ID]) for s in input_feed[self.w_sentences]]))
     max_training_sentences = self.max_training_sentences
     num_sentences = input_feed[self.w_sentences].shape[0]
     assert num_sentences > max_training_sentences
-    
 
     sentence_offset = random.randint(0, num_sentences - max_training_sentences)
-    word_offset = input_feed[self.sentence_length][:sentence_offset].sum()
-    num_words = input_feed[self.sentence_length][sentence_offset:sentence_offset + max_training_sentences].sum()
-    
-    #w_sentences = input_feed[self.w_sentences][sentence_offset:sentence_offset + max_training_sentences,:,:]
+
+    sentence_length = np.array([len([w for w in sent if w != PAD_ID]) for sent in input_feed[self.w_sentences]]) # Number of words except PAD in each sentence.
+
+    word_offset = sentence_length[:sentence_offset].sum() # The sum of the number of truncated words except PAD.
+    num_words = sentence_length[sentence_offset:sentence_offset + max_training_sentences].sum()
+
     w_sentences = input_feed[self.w_sentences][sentence_offset:sentence_offset + max_training_sentences,:]
     c_sentences = input_feed[self.c_sentences][sentence_offset:sentence_offset + max_training_sentences,:,:]
-    sentence_length = input_feed[self.sentence_length][sentence_offset:sentence_offset + max_training_sentences]
+    sentence_length = sentence_length[sentence_offset:sentence_offset + max_training_sentences]
     speaker_ids = input_feed[self.speaker_ids][word_offset: word_offset + num_words]
     gold_spans = np.logical_and(input_feed[self.gold_ends] >= word_offset, input_feed[self.gold_starts] < word_offset + num_words)
     gold_starts = input_feed[self.gold_starts][gold_spans] - word_offset
     gold_ends = input_feed[self.gold_ends][gold_spans] - word_offset
     cluster_ids = input_feed[self.cluster_ids][gold_spans]
+
 
     input_feed[self.w_sentences] = w_sentences
     input_feed[self.c_sentences] = c_sentences
@@ -324,6 +326,8 @@ class CoreferenceResolution(ModelBase):
     input_feed[self.gold_starts] = gold_starts
     input_feed[self.gold_ends] = gold_ends
     input_feed[self.cluster_ids] = cluster_ids
+    # DEBUG
+    #print ('length of trun w_sentences', len(input_feed[self.w_sentences]), sum([len([w for w in s if w != PAD_ID]) for s in input_feed[self.w_sentences]]))
     return input_feed
 
   ##############################################
@@ -494,10 +498,8 @@ class CoreferenceResolution(ModelBase):
       for x in both_area:
         decorated_text[x] = RED + UNDERLINE + decorated_text[x] + RESET
         spaces[x] = RED + UNDERLINE + spaces[x] + RESET if x+1 in both_area else spaces[x]
-        
 
-      print("".join([d+s for d, s in zip(decorated_text, spaces)]).encode('utf-8'))
-
+      print("".join([d+s for d, s in zip(decorated_text, spaces)]))
 
     for i, (doc_key, result) in enumerate(results.items()):
       if i == 0:

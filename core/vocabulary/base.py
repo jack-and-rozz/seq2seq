@@ -8,15 +8,14 @@ import numpy as np
 
 _PAD = "_PAD"
 _BOS = "_BOS"
-_EOS = "_EOS"
+#_EOS = "_EOS"
 _UNK = "_UNK"
 
-START_VOCAB = [_PAD, _BOS, _EOS, _UNK]
-ERROR_ID = -1
-PAD_ID = 0
-BOS_ID = 1
-EOS_ID = 2
-UNK_ID = 3
+START_VOCAB = [_PAD, _BOS, _UNK]
+PAD_ID = START_VOCAB.index(_PAD) # PAD_ID must be 0 for sequence length counting.
+BOS_ID = START_VOCAB.index(_BOS)
+#EOS_ID = START_VOCAB.index(_EOS)
+UNK_ID = START_VOCAB.index(_UNK)
 
 _DIGIT_RE = re.compile(r"\d")
 
@@ -41,7 +40,7 @@ def word_tokenizer(lowercase=False, normalize_digits=False):
     return sent.replace('\n', '').split()
   return _tokenizer
 
-def char_tokenizer(special_words=set([_PAD, _BOS, _UNK, _EOS]), 
+def char_tokenizer(special_words=START_VOCAB, 
                    lowercase=False, normalize_digits=False):
   def _tokenizer(sent, flatten=False):
     if normalize_digits:
@@ -49,11 +48,7 @@ def char_tokenizer(special_words=set([_PAD, _BOS, _UNK, _EOS]),
     if lowercase:
       sent = sent.lower()
     def word2chars(word):
-      if not special_words or word not in special_words:
-        if not type(word) == str:
-          word = word.decode('utf-8')
-        return [c.encode('utf-8') for c in word]
-      return [word]
+      return [c for c in word]
     words = sent.replace('\n', '').split()
     chars = [word2chars(w) for w in words]
     if flatten:
@@ -67,7 +62,8 @@ def fill_empty_brackets(sequence, max_len):
   """
   return sequence + [[] for _ in range(max_len - len(sequence))]
 
-def word_sent_padding(self, inputs, max_sent_len=None):
+
+def word_sent_padding(inputs, max_sent_len=None):
   _max_sent_len = max([len(sent) for sent in inputs])
   if not max_sent_len or _max_sent_len < max_sent_len:
     max_sent_len = _max_sent_len
@@ -76,7 +72,7 @@ def word_sent_padding(self, inputs, max_sent_len=None):
     inputs, maxlen=max_sent_len, padding='post', truncating='post', value=PAD_ID)
   return padded_sentences # [batch_size, max_sent_len]
 
-def char_sent_padding(self, inputs, 
+def char_sent_padding(inputs, 
                       max_sent_len=None, max_word_len=None):
 
   _max_sent_len = max([len(sent) for sent in inputs])
@@ -146,6 +142,7 @@ class WordVocabularyBase(VocabularyBase):
 
   def sent2ids(self, sentence, word_dropout=0.0):
     if type(sentence) == list:
+      assert type(sentence[0]) == str
       sentence = " ".join(sentence)
     tokens = self.tokenizer(sentence) 
     if word_dropout:

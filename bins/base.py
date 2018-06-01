@@ -25,7 +25,7 @@ class ManagerBase(object):
 
   def load_config(self, args):
     config_stored_path = os.path.join(args.checkpoint_path, 'experiments.conf')
-    if os.path.exists(config_stored_path): 
+    if os.path.exists(config_stored_path) and not args.cleanup and args.mode == 'train': 
       config_read_path = config_stored_path
       config = common.get_config(config_read_path)
       sys.stderr.write("Found an existing config file %s.\n" % (config_stored_path))

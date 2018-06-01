@@ -22,13 +22,16 @@ class MTLManager(ManagerBase):
 
     #self.port = int(args.port) if args.port.isdigit() else None
     self.vocab = common.dotDict()
+
     # Load pretrained embeddings.
     self.vocab.word = VocabularyWithEmbedding(
       config.embeddings_conf, config.w_vocab_size,
-      lowercase=config.lowercase)
+      lowercase=config.lowercase,
+      normalize_digits=config.normalize_digits
+    )
     self.vocab.char = PredefinedCharVocab(
       config.char_vocab_path, config.c_vocab_size,
-      lowercase=config.lowercase,
+      lowercase=False,
     )
 
     # Load Dataset.
@@ -36,17 +39,11 @@ class MTLManager(ManagerBase):
     for k, v in config.tasks.items():
       dataset_type = getattr(core.dataset, v.dataset.dataset_type)
       if dataset_type == core.dataset.WikiP2DDataset:
-        self.dataset[k] = dataset_type(
-          v.dataset,
-          lowercase=config.lowercase,
-          w_vocab=self.vocab.word, c_vocab=self.vocab.char
-        )
-        self.vocab.rel = self.dataset[k].r_vocab
-        self.vocab.obj = self.dataset[k].o_vocab
+        self.dataset[k] = dataset_type(v.dataset, self.vocab)
+        #self.vocab.rel = self.dataset[k].r_vocab
+        #self.vocab.obj = self.dataset[k].o_vocab
       elif dataset_type == core.dataset.CoNLL2012CorefDataset:
-        self.dataset[k] = dataset_type(
-          v.dataset, self.vocab.word, self.vocab.char
-        )
+        self.dataset[k] = dataset_type(v.dataset, self.vocab)
         self.vocab.genre = self.dataset[k].genre_vocab
       else:
         raise ValueError('Dataset type %s is undefined.' % t.dataset.dataset_type)
@@ -112,6 +109,25 @@ class MTLManager(ManagerBase):
     self.summary_writer = tf.summary.FileWriter(self.summaries_path, 
                                                 self.sess.graph)
     return m
+
+  def debug(self):
+    # coref = self.dataset.coref
+    # for batch in self.dataset.coref.valid.get_batch(self.config.tasks.coref.batch_size, do_shuffle=False):
+    #   pprint(batch)
+
+    batches = self.dataset.wikiP2D.valid.get_batch(self.config.tasks.wikiP2D.batch_size, do_shuffle=False)
+
+    for i, batch in enumerate(batches):
+      print (i)
+      for j ,k in enumerate(batch):
+        print (i, j)
+        print (k)
+        print (batch[k])
+      print (self.vocab.word.rev_vocab[:10])
+      print (self.vocab.word.sent2ids('This is , a pen .'))
+      exit(1)
+    exit(1)
+
 
   def train(self):
     m = self.create_model(self.config, 'train')
@@ -318,6 +334,8 @@ def main(args):
     tf.set_random_seed(0)
     args = args
     manager = MTLManager(args, sess)
+    getattr(manager, args.mode)()
+    return 
     if args.mode == "train":
       # TODO: set a process that simultaneously evaluate the model at each epoch.
       #       (Some techniques are required to parallely run instance methods...)
@@ -336,6 +354,8 @@ def main(args):
       manager.c_demo()
     elif args.mode == 'self_test':
       manager.self_test()
+    elif args.mode == 'debug':
+      manager.self_test()
     else:
       sys.stderr.write("Unknown mode.\n")
       exit(1)
@@ -352,6 +372,8 @@ if __name__ == "__main__":
   parser.add_argument('--config_path', default='configs/experiments.conf',
                       type=str, help ='')
   parser.add_argument('--debug', default=False,
+                      type=common.str2bool, help ='')
+  parser.add_argument('--cleanup', default=False,
                       type=common.str2bool, help ='')
   args = parser.parse_args()
   main(args)

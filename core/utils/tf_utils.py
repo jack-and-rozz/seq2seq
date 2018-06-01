@@ -94,3 +94,5 @@ def ffnn(inputs, num_hidden_layers, hidden_size, output_size, dropout, output_we
 
 def projection(inputs, output_size, initializer=None):
   return ffnn(inputs, 0, -1, output_size, dropout=None, output_weights_initializer=initializer)
+
+
