@@ -96,7 +96,7 @@ class recDotDefaultDict(collections.defaultdict):
     super(recDotDefaultDict, self).__init__(recDotDefaultDict)
 
 
-def add_entry_to_batch(batch, d):
+def batching_dicts(batch, d):
   '''
   Recursively add to batch an entry whose type is recDotDict.
   '''
@@ -104,7 +104,7 @@ def add_entry_to_batch(batch, d):
   assert type(batch) == recDotDefaultDict
   for k in d:
     if isinstance(d[k], dict):
-      add_entry_to_batch(batch[k], d[k])
+      batching_dicts(batch[k], d[k])
     else:
       if batch[k]:
         batch[k].append(d[k])

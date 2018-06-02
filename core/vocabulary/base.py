@@ -58,9 +58,22 @@ def char_tokenizer(special_words=START_VOCAB,
 
 def fill_empty_brackets(sequence, max_len):
   """
-  - sequence: 1D list of list.
+  - sequence: A 1D list of list.
   """
   return sequence + [[] for _ in range(max_len - len(sequence))]
+
+def fill_zero(sequence, length): # 最長系列が短すぎたときに0埋め
+  '''
+  Make the length of a sequence at least 'length' by truncating of filling 0.
+  Args:
+  sequence: A 1D list of integer.
+  length: an integer.
+  '''
+  if len(sequence) < length:
+    return sequence + [0 for _ in range(length - len(sequence))]
+  else:
+    return sequence
+
 
 
 def word_sent_padding(inputs, max_sent_len=None):

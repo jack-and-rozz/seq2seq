@@ -118,15 +118,11 @@ class MTLManager(ManagerBase):
     batches = self.dataset.wikiP2D.valid.get_batch(self.config.tasks.wikiP2D.batch_size, do_shuffle=False)
 
     for i, batch in enumerate(batches):
-      print (i)
+      print ('----------')
       for j ,k in enumerate(batch):
-        print (i, j)
-        print (k)
-        print (batch[k])
-      print (self.vocab.word.rev_vocab[:10])
-      print (self.vocab.word.sent2ids('This is , a pen .'))
+        print ('<%s>' % k)
+        pprint(batch[k])
       exit(1)
-    exit(1)
 
 
   def train(self):
@@ -367,7 +363,7 @@ if __name__ == "__main__":
   parser = argparse.ArgumentParser(description=desc)
   parser.add_argument('checkpoint_path', type=str, help ='')
   parser.add_argument('mode', type=str, help ='')
-  parser.add_argument('--config_type', default='main', 
+  parser.add_argument('--config_type', default='small', 
                       type=str, help ='')
   parser.add_argument('--config_path', default='configs/experiments.conf',
                       type=str, help ='')
