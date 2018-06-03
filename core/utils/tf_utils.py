@@ -23,13 +23,15 @@ def batch_dot(t1, t2, n_unk_dims=1):
 def shape(x, dim):
   return x.get_shape()[dim].value or tf.shape(x)[dim]
 
-def linear(inputs, output_size,
+def linear(inputs, output_size=None,
            activation=tf.nn.tanh, scope=None):
   """
   Args:
     inputs : Rank 2 or 3 Tensor of shape [batch_size, (sequence_size,) hidden_size].
     output_size : An integer.
   """
+  if output_size is None:
+    output_size = shape(inputs, -1)
   with tf.variable_scope(scope or "linear"):
     inputs_rank = len(inputs.get_shape().as_list())
     hidden_size = shape(inputs, -1)

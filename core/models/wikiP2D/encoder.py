@@ -50,6 +50,9 @@ class WordEncoder(ModelBase):
 
   def encode(self, wc_inputs):
     # inputs: the list of [None, max_sentence_length] or [None, max_sentence_length, max_word_length]
+    if not isinstance(wc_inputs, list):
+      wc_inputs = [wc_inputs]
+      
     outputs = []
     with tf.variable_scope(self.shared_scope or "WordEncoder", reuse=self.reuse):
       for inputs in wc_inputs:
@@ -128,34 +131,6 @@ class SentenceEncoder(ModelBase):
       if self.shared_scope:
         self.reuse = True 
     return word_repls, outputs, state
-
-  # https://stackoverflow.com/questions/44940767/how-to-get-slices-of-different-dimensions-from-tensorflow-tensor
-  def extract_span(self, repls, span, entity_indices, max_batch_size):
-    with tf.name_scope('ExtractSpan'):
-      def loop_func(idx, span_repls, start, end):
-        res = tf.reduce_mean(span_repls[idx][start[idx]:end[idx]+1], axis=0)
-        return tf.expand_dims(res, axis=0)
-
-      sol, eol = tf.unstack(span, axis=1)
-      batch_size = shape(repls, 0)
-      hidden_size = shape(repls, -1)
-      idx = tf.zeros((), dtype=tf.int32)
-
-      # Continue concatenating the obtained representation of one span in a row of the batch with the results of previous loop (=res).
-      res = tf.zeros((0, hidden_size))
-      cond = lambda idx, res: idx < batch_size
-      body = lambda idx, res: (idx + 1, tf.concat([res, loop_func(idx, repls, sol, eol)], axis=0))
-      loop_vars = [idx, res]
-      _, res = tf.while_loop(
-        cond, body, loop_vars,
-        shape_invariants=[idx.get_shape(),
-                          tf.TensorShape([None, hidden_size])])
-      spans_by_subj = tf.dynamic_partition(res, entity_indices, max_batch_size)
-
-      # Apply max-pooling for spans of an entity.
-      spans_by_subj = tf.stack([tf.reduce_max(s, axis=0) for s in spans_by_subj], 
-                               axis=0)
-      return spans_by_subj
 
 
 class MultiEncoderWrapper(SentenceEncoder):

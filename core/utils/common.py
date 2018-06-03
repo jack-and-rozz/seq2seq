@@ -95,10 +95,31 @@ class recDotDefaultDict(collections.defaultdict):
   def __init__(self, _=None):
     super(recDotDefaultDict, self).__init__(recDotDefaultDict)
 
+# TODO : batchを再帰的にたどってdictの配列に戻せないかな
+{}
+def flatten_batch(batch):
+  '''
+  e.g.
+  {'a': [1, 10], 'b': [2, 20]} -> [{'a': 1, 'b':2}, {'a':10, 'b':20}]
+  '''
+  entries = None
+  for k in batch:
+    if isinstance(batch[k], dict):
+      subtrees = flatten_batch(batch[k])
+    else:
+      subtrees = [value for value in batch[k]]
+
+    if not entries:
+      entries = [dotDict({k:sbt}) for sbt in subtrees]
+    else:
+      for i, subtree in enumerate(subtrees):
+        entries[i][k] = subtree
+  return entries # Lists of a tree.
 
 def batching_dicts(batch, d):
   '''
   Recursively add to batch an entry whose type is recDotDict.
+  e.g. [{'a': 1, 'b':2}, {'a':10, 'b':20}] -> {'a': [1, 10], 'b': [2, 20]}
   '''
   assert type(d) == recDotDefaultDict
   assert type(batch) == recDotDefaultDict
@@ -110,7 +131,7 @@ def batching_dicts(batch, d):
         batch[k].append(d[k])
       else:
         batch[k] = [d[k]]
-  return batch
+  return batch # A tree of lists.
 
 
 def modulize(dictionary):

@@ -65,7 +65,7 @@ def padding_3d(batch, minlen=[None, None], maxlen=[None, None]):
   padded_batch = []
   for l in batch:
     l = fill_empty_brackets(l[:length_of_this_dim], length_of_this_dim)
-    # 別々にpadding_2dしたら
+    # 別々にpadding_2dしたらそれぞれmaxlenが異なってしまうけどどうしよう
     l = padding_2d(l, minlen=minlen[1:], maxlen=maxlen[1:])
     padded_batch.append(l)
   return np.array(padded_batch)
@@ -93,39 +93,55 @@ class _WikiP2DDataset():
     self.vocab = vocab
     self.properties = properties
     self.data = [] # Lazy loading.
-    self.max_rows = None
+    self.max_rows = config.max_rows
 
   def preprocess(self, article):
-    #raw_text = [s.split() for s in article.text]
-    #entry.text.raw = raw_text
-    #entry.text.word = [self.vocab.word.sent2ids(s) for s in raw_text]
-    #entry.text.char = [self.vocab.char.sent2ids(s) for s in raw_text]
+    def flatten_text_and_link(article):
+      raw_text = [s.split() for s in article.text]
+      num_words = [len(s) for s in raw_text]
+      links = {}
+      for qid, link in article.link.items():
+        (sent_id, (begin, end)) = link
+        flatten_begin = begin + sum(num_words[:sent_id])
+        flatten_end = end + sum(num_words[:sent_id])
+        links[qid] = (flatten_begin, flatten_end)
+      article.link = links
+      article.text = flatten(raw_text)
+      return article
 
     def qid2position(qid, article):
       assert qid in article.link
-      sid, (begin, end) = article.link[qid]
-      entity = recDotDefaultDict()
-      entity.raw_span = article.text[sid].split()[begin:end+1] 
-      entity.raw_text = article.text[sid].split()
-      _, entity.position = article.link[qid]
-      entity.text.word = self.vocab.word.sent2ids(article.text[sid])
-      entity.text.char = self.vocab.char.sent2ids(article.text[sid])
+      begin, end = article.link[qid]
+      entity =  recDotDefaultDict()
+      entity.raw  = article.text[begin:end+1] 
+      entity.position = (begin, end)
       return entity
 
     def triple2entry(triple, article, label):
       entry = recDotDefaultDict()
+      entry.text.raw = article.text
+      entry.text.word = self.vocab.word.sent2ids(article.text)
+      entry.text.char = self.vocab.char.sent2ids(article.text)
+
       subj_qid, rel_pid, obj_qid = triple
       rel = self.properties[rel_pid].name.split()
       entry.rel.raw = rel
       entry.rel.word = self.vocab.word.sent2ids(rel)
       entry.rel.char = self.vocab.char.sent2ids(rel)
+
       entry.subj = qid2position(subj_qid, article)
       entry.obj = qid2position(obj_qid, article)
       entry.label = label
       return entry
-    positive = triple2entry(article.positive_triple, article, 1.0)
-    negative = triple2entry(article.negative_triple, article, 0.0)
+
+    article = flatten_text_and_link(article)
+    positive = triple2entry(article.positive_triple, article, 1)
+    negative = triple2entry(article.negative_triple, article, 0)
     return positive, negative
+
+  @property
+  def size(self):
+    return len(self.data)
 
   def load_data(self):
     sys.stderr.write("Loading wikiP2D dataset from \'%s\'... \n" % self.source_path)
@@ -140,27 +156,24 @@ class _WikiP2DDataset():
     return batch
 
   def padding(self, batch):
-    batch.subj.text.word = padding_2d(
-      batch.subj.text.word, 
-      minlen=self.config.minlen.word,
-      maxlen=self.config.maxlen.word)
 
-    batch.subj.text.char = padding_3d(
-      batch.subj.text.char, 
+    '''
+    TODO: paddingどうする？paddingfifoqueueをちゃんと使ったほうが良いかも. 
+    '''
+    batch.text.word = padding_2d(
+       batch.text.word, 
+       minlen=self.config.minlen.word,
+       maxlen=self.config.maxlen.word)
+
+    batch.text.char = padding_3d(
+      batch.text.char, 
       minlen=[self.config.minlen.word, self.config.minlen.char],
       maxlen=[self.config.maxlen.word, self.config.maxlen.char])
 
-    batch.rel.word = padding_2d(batch.rel.word, minlen=2, maxlen=None)
-    #batch.rel.char = padding_3d(batch.rel.char)
-
-    batch.obj.text.word = padding_2d(
-      batch.obj.text.word, 
-      minlen=self.config.minlen.word,
-      maxlen=self.config.maxlen.word)
-    batch.obj.text.char = padding_3d(
-      batch.obj.text.char, 
-      minlen=[self.config.minlen.word, self.config.minlen.char],
-      maxlen=[self.config.maxlen.word, self.config.maxlen.char])
+    batch.rel.word = padding_2d(batch.rel.word, minlen=3, maxlen=None)
+    batch.rel.char = padding_3d(batch.rel.char, 
+                                minlen=[3, self.config.minlen.char], 
+                                maxlen=[None, self.config.maxlen.char])
     return batch
 
   def get_batch(self, batch_size, do_shuffle=False):

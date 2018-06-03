@@ -50,7 +50,6 @@ class MTLManager(ManagerBase):
   def __init__(self, sess, config, vocab,
                activation=tf.nn.relu):
     super(MTLManager, self).__init__(sess, config)
-    self.activation = activation
     self.is_training = tf.placeholder(tf.bool, name='is_training', shape=[]) 
 
     if config.use_local_rnn:
@@ -65,12 +64,11 @@ class MTLManager(ManagerBase):
                                                  self.word_encoder,
                                                  shared_scope=scope)
     ## Define each task
-    self.tasks = defaultdict(None)
-    for task_config in config.tasks.values():
+    self.tasks = common.dotDict()
+    for task_name, task_config in config.tasks.items():
       #device = '/gpu:1' if config.coref_task and len(tf_utils.get_available_gpus()) > 1 else '/gpu:0'
       device = None # TODO
 
-      task_name = task_config.name
       sys.stderr.write('Building %s model...\n' % task_name)
       with tf.variable_scope(task_name) as task_scope:
         encoder = self.get_sent_encoder(config, task_scope)
@@ -108,7 +106,7 @@ class MTLManager(ManagerBase):
     return self.step(batches, output_feed, False, summary_writer=summary_writer)
 
   def test(self, batches, summary_writer=None):
-    raise NotImplementedError("")
+    raise NotImplementedError("Directly call MTLManager.tasks[task_name].test()")
 
   def step(self, batches, output_feed, is_training, summary_writer=None):
     start_time = time.time()
@@ -138,17 +136,16 @@ class MTLManager(ManagerBase):
       loss += step_loss
 
       if math.isnan(step_loss[0]):
+        pprint(raw_batch)
         raise ValueError("Nan loss detection ...")
 
     epoch_time = (time.time() - start_time)
     step_time = epoch_time / (i+1)
     loss /= (i+1)
-
+    mode = 'train' if is_training else 'valid'
     input_feed = {t.summary_loss:l for t, l in zip(self.tasks.values(), loss[1:])}
-    summary_ops = tf.summary.merge([tf.summary.scalar(t.name + '_loss', t.summary_loss) for t in self.tasks.values()])
-    summary_dict = {'%s_loss' % (t.name): l for t,l in zip(self.tasks.values(), loss)}
+    summary_dict = {'%s/%s/loss' % (mode, task_name): l for task_name, l in zip(self.tasks.keys(), loss)}
     summary = tf_utils.make_summary(summary_dict)
-    loss = " ".join(["%.3f" % l for l in loss])
     return epoch_time, step_time, loss, summary
 
   def get_loss_and_updates(self, losses):

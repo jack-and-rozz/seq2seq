@@ -15,8 +15,7 @@ class CoreferenceResolution(ModelBase):
   def __init__(self, sess, config, encoder, vocab,
                activation=tf.nn.tanh):
     super(CoreferenceResolution, self).__init__(sess, config)
-    self.name = 'coref'
-    self.dataset = 'coref'
+    self.dataset = config.dataset.name
     self.sess = sess
     self.encoder = encoder
     self.vocab = vocab
@@ -33,7 +32,6 @@ class CoreferenceResolution(ModelBase):
     self.model_heads = config.model_heads
     self.ffnn_depth = config.ffnn_depth
     self.ffnn_size = config.ffnn_size
-    self.loss_weight = config.loss_weight
 
     # Placeholders
     with tf.name_scope('Placeholder'):

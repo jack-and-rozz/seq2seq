@@ -40,45 +40,39 @@ class MTLManager(ManagerBase):
       dataset_type = getattr(core.dataset, v.dataset.dataset_type)
       if dataset_type == core.dataset.WikiP2DDataset:
         self.dataset[k] = dataset_type(v.dataset, self.vocab)
-        #self.vocab.rel = self.dataset[k].r_vocab
-        #self.vocab.obj = self.dataset[k].o_vocab
       elif dataset_type == core.dataset.CoNLL2012CorefDataset:
         self.dataset[k] = dataset_type(v.dataset, self.vocab)
         self.vocab.genre = self.dataset[k].genre_vocab
       else:
         raise ValueError('Dataset type %s is undefined.' % t.dataset.dataset_type)
+
     self.use_coref = 'coref' in self.config.tasks
-    self.use_wikiP2D = 'wikiP2D' in self.config.tasks
+    self.use_graph = 'graph' in self.config.tasks
 
   def get_batch(self, batch_type):
-    batches = {'is_training': False}
+    batches = common.recDotDict({'is_training': False})
     if batch_type == 'train':
-      do_shuffle = True
-      batches['is_training'] = True
-      batches['wikiP2D'] = self.dataset.wikiP2D.train.get_batch(
-        self.config.tasks.wikiP2D.batch_size, do_shuffle=True,
-        min_sent_len=None, 
-        max_sent_len=self.config.tasks.wikiP2D.max_sent_length.encode,
-        n_pos_triples=self.config.tasks.wikiP2D.n_triples) if self.use_wikiP2D else None
-      batches['coref'] = self.dataset.coref.train.get_batch(
-        self.config.tasks.coref.batch_size, do_shuffle=True) if self.use_coref else None
+      batches.is_training = True
+      batches.graph = self.dataset.graph.train.get_batch(
+        self.config.tasks.graph.batch_size, 
+        do_shuffle=True) if self.use_graph else None
+      batches.coref = self.dataset.coref.train.get_batch(
+        self.config.tasks.coref.batch_size, 
+        do_shuffle=True) if self.use_coref else None
 
     elif batch_type == 'valid':
-      batches['wikiP2D'] = self.dataset.wikiP2D.valid.get_batch(
-        self.config.tasks.wikiP2D.batch_size, do_shuffle=False,
-        min_sent_len=None, 
-        max_sent_len=self.config.tasks.wikiP2D.max_sent_length.encode,
-        n_pos_triples=None) if self.use_wikiP2D else None
-      batches['coref'] = self.dataset.coref.valid.get_batch(
+      batches.graph = self.dataset.graph.valid.get_batch(
+        self.config.tasks.graph.batch_size, 
+        do_shuffle=False) if self.use_graph else None
+      batches.coref = self.dataset.coref.valid.get_batch(
         self.config.tasks.coref.batch_size, 
         do_shuffle=False) if self.use_coref else None
+
     elif batch_type == 'test':
-      batches['wikiP2D'] = self.dataset.wikiP2D.test.get_batch(
-        self.config.tasks.wikiP2D.batch_size, do_shuffle=False,
-        min_sent_len=None, 
-        max_sent_len=self.config.tasks.wikiP2D.max_sent_length.encode,
-        n_pos_triples=None, n_neg_triples=None) if self.use_wikiP2D else None
-      batches['coref'] = self.dataset.coref.test.get_batch(
+      batches.graph = self.dataset.graph.test.get_batch(
+        self.config.tasks.graph.batch_size, 
+        do_shuffle=False) if self.use_graph else None
+      batches.coref = self.dataset.coref.test.get_batch(
         self.config.tasks.coref.batch_size, 
         do_shuffle=False) if self.use_coref else None
     return batches
@@ -115,45 +109,67 @@ class MTLManager(ManagerBase):
     # for batch in self.dataset.coref.valid.get_batch(self.config.tasks.coref.batch_size, do_shuffle=False):
     #   pprint(batch)
 
-    batches = self.dataset.wikiP2D.valid.get_batch(self.config.tasks.wikiP2D.batch_size, do_shuffle=False)
-
+    batches = self.dataset.graph.valid.get_batch(
+      self.config.tasks.graph.batch_size, do_shuffle=False)
+    for i, batch in enumerate(batches):
+      #pprint(batch)
+      print ('#####################################')
+      print (common.flatten_batch(batch)[0])
+      exit(1)
+    exit(1)
     for i, batch in enumerate(batches):
       print ('----------')
       for j ,k in enumerate(batch):
         print ('<%s>' % k)
         pprint(batch[k])
+      print(len(batch.text))
+      for text, subj, obj in zip(batch.text.raw, batch.text.subj, batch.text.obj):
+        print ('##########')
+        print (len(text), text)
+        pprint (subj)
+        pprint (obj)
       exit(1)
-
 
   def train(self):
     m = self.create_model(self.config, 'train')
     if m.epoch.eval() == 0:
       if self.use_coref:
         self.logger.info("Dataset stats (CoNLL 2012)")
-        self.logger.info("train, valid, test = (%d, %d, %d)" % (self.dataset.coref.train.size, self.dataset.coref.valid.size, self.dataset.coref.test.size))
+        sizes = (self.dataset.coref.train.size, self.dataset.coref.valid.size, self.dataset.coref.test.size)
+        self.logger.info("train, valid, test = (%d, %d, %d)" % sizes)
 
-      if self.use_wikiP2D:
+      if self.use_graph:
+        sizes = (self.dataset.graph.train.size, self.dataset.graph.valid.size, self.dataset.graph.test.size)
         self.logger.info("Dataset stats (WikiP2D)")
-        self.logger.info("(train) articles, triples, subjects = (%d, %d, %d)" % (self.dataset.wikiP2D.train.size))
-        self.logger.info("(valid) articles, triples, subjects = (%d, %d, %d)" % (self.dataset.wikiP2D.valid.size))
-        self.logger.info("(test)  articles, triples, subjects = (%d, %d, %d)" % (self.dataset.wikiP2D.test.size))
+        self.logger.info("train, valid, test = (%d, %d, %d)" % sizes)
 
     for epoch in range(m.epoch.eval(), self.config.max_epoch):
       batches = self.get_batch('train')
       epoch_time, step_time, train_loss, summary = m.train(batches, summary_writer=self.summary_writer)
-      self.logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, train_loss))
+      self.logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, " ".join(["%.3f" % l for l in train_loss])))
 
       batches = self.get_batch('valid')
       epoch_time, step_time, valid_loss, summary = m.valid(batches)
       self.summary_writer.add_summary(summary, m.global_step.eval())
-      self.logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, valid_loss))
+      self.logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, " ".join(["%.3f" % l for l in valid_loss])))
 
       checkpoint_path = self.checkpoints_path + "/model.ckpt"
       if epoch == 0 or (epoch+1) % 1 == 0:
-        self.saver.save(self.sess, checkpoint_path, global_step=m.epoch)
-        #results, ranks, mrr, hits_10 = mvalid.test(test_data, 20)
-        #logger.info("Epoch %d (valid): MRR %f, Hits@10 %f" % (epoch, mrr, hits_10))
+        self.save_model(m)
+
       m.add_epoch()
+
+  def save_model(self, model, save_as_best=False):
+    checkpoint_path = self.checkpoints_path + '/model.ckpt'
+    self.saver.save(self.sess, checkpoint_path, global_step=model.epoch)
+    if save_as_best:
+      suffixes = ['data-00000-of-00001', 'index', 'meta']
+      for sfx in suffixes:
+        if os.path.exists(source_path):
+          source_path = self.checkpoints_path + "/model.ckpt-%d.%s" % (model.epoch.eval(), sfx)
+          target_path = self.checkpoints_path + "/model.ckpt.best.%s" % (sfx)
+          cmd = "cp %s %s" % (source_path, target_path)
+          os.system(cmd)
 
   def self_test(self):
     ##############################################
@@ -165,41 +181,38 @@ class MTLManager(ManagerBase):
       'test': 'dataset/coref/source/test.english.v4_gold_conll',
     }
     m = self.create_model(self.config, mode)
-    #batches = self.get_batch(mode)[m.coref.dataset]
-    batches = self.get_batch(mode)[m.graph.dataset]
+    #batches = self.get_batch(mode)[m.tasks.coref.dataset]
+    batches = self.get_batch(mode)[m.tasks.graph.dataset]
     for i, b in enumerate(batches):
       print(('======== %02d ==========' % i))
-      m.graph.print_batch(b)
-    #eval_summary, f1 = m.coref.test(batches, conll_eval_path[mode])
+      m.tasks.graph.print_batch(b)
+    #eval_summary, f1 = m.tasks.coref.test(batches, conll_eval_path[mode])
     exit(1)
     ############################################
 
 
-  def c_test(self, mode="valid"): # mode: 'valid' or 'test'
-    conll_eval_path = {
-      'train': 'dataset/coref/source/train.english.v4_auto_conll',
-      'valid': 'dataset/coref/source/dev.english.v4_auto_conll',
-      'test': 'dataset/coref/source/test.english.v4_gold_conll',
-    }
+  def c_test(self, use_test_data=True): # mode: 'valid' or 'test'
+    mode = 'test' if use_test_data else 'valid'
+    conll_eval_path = os.path.join(
+      self.config.tasks.coref.dataset.source_dir, 
+      self.config.tasks.coref.dataset['%s_gold' % mode]
+    )
+
     tmp_checkpoint_path = os.path.join(self.checkpoints_path, "model.ctmp.ckpt")
     max_checkpoint_path = os.path.join(self.checkpoints_path, "model.cmax.ckpt")
-
-    self.config.desc_task = False
-    self.config.graph_task = False
-    self.config.adv_task = False
 
     # Retry evaluation if the best checkpoint is already found.
     if os.path.exists(max_checkpoint_path + '.index'):
       sys.stderr.write('Found a checkpoint {}.\n'.format(max_checkpoint_path))
       m = self.create_model(self.config, mode, 
                             checkpoint_path=max_checkpoint_path)
-      batches = self.get_batch(mode)[m.coref.dataset]
-      eval_summary, f1, results = m.coref.test(batches, conll_eval_path[mode])
+      batches = self.get_batch(mode)[m.tasks.coref.dataset]
+      eval_summary, f1, results = m.tasks.coref.test(batches, conll_eval_path)
       output_path = self.tests_path + '/c_test.%s.ep%02d.detailed' % (mode, m.epoch.eval())
       sys.stderr.write('Output the predicted and gold clusters to {}.\n'.format(output_path))
       with open(output_path, 'w') as f:
         sys.stdout = f
-        m.coref.print_results(results)
+        m.tasks.coref.print_results(results)
         sys.stdout = sys.__stdout__
       return
 
@@ -216,11 +229,11 @@ class MTLManager(ManagerBase):
         tf_utils.copy_checkpoint(checkpoint_path, tmp_checkpoint_path)
         m = self.create_model(self.config, mode, checkpoint_path=checkpoint_path)
         print(("Found a new checkpoint: %s" % checkpoint_path))
-        batches = self.get_batch(mode)[m.coref.dataset]
+        batches = self.get_batch(mode)[m.tasks.coref.dataset]
         output_path = self.tests_path + '/c_test.%s.ep%02d' % (mode, m.epoch.eval())
         with open(output_path, 'w') as f:
           sys.stdout = f
-          eval_summary, f1, results = m.coref.test(batches, conll_eval_path[mode])
+          eval_summary, f1, results = m.tasks.coref.test(batches, conll_eval_path)
           if f1 > max_f1:
             max_f1 = f1
             tf_utils.copy_checkpoint(tmp_checkpoint_path, max_checkpoint_path)
@@ -237,28 +250,24 @@ class MTLManager(ManagerBase):
     if os.path.exists(max_checkpoint_path + '.index'):
       sys.stderr.write('Found a checkpoint {}.\n'.format(max_checkpoint_path))
       ckpt_path = max_checkpoint_path
-
-    self.config.graph_task = False
-    self.config.desc_task = False
     m = self.create_model(self.config, checkpoint_path=ckpt_path)
     eval_data = [d for d in self.get_batch('valid')['coref']]
     run_model(m, eval_data, self.port)
 
-  def g_test(self):
+  def g_test(self, use_test_data=True):
+    mode = 'test' if use_test_data else 'valid'
+    m = self.create_model(self.config, mode)
+    batches = self.get_batch(mode)[m.tasks.graph.dataset]
+    results, summary = m.tasks.graph.test(batches)
 
-    self.config.coref_task = False
-    self.config.desc_task = False
-    m = self.create_model(self.config, 'test')
-
-    batches = self.get_batch('test')[m.graph.dataset]
-    summary, res = m.graph.test(batches)
+    return
     scores, ranks, mrr, hits_10 = res
     self.summary_writer.add_summary(summary, m.global_step.eval())
 
     output_path = self.tests_path + '/g_test.ep%02d' % m.epoch.eval()
     with open(output_path, 'w') as f:
-      m.graph.print_results(batches, scores, ranks, 
-                            output_file=f, batch2text=self.dataset.wikiP2D.batch2text)
+      m.tasks.graph.print_results(batches, scores, ranks, 
+                                  output_file=f, batch2text=self.dataset.graph.batch2text)
 
     self.logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (m.epoch.eval(), mrr, hits_10))
 
@@ -281,7 +290,7 @@ class MTLManager(ManagerBase):
         'w_articles': [w_article],
         'c_articles': [c_article],
         'link_spans': [link_span],
-        'p_triples': [p_triples], #self.dataset.wikiP2D.get_all_triples(),
+        'p_triples': [p_triples], #self.dataset.graph.get_all_triples(),
         'n_triples': None
       }
       demo_data = DemoBatch(batch)
@@ -363,11 +372,11 @@ if __name__ == "__main__":
   parser = argparse.ArgumentParser(description=desc)
   parser.add_argument('checkpoint_path', type=str, help ='')
   parser.add_argument('mode', type=str, help ='')
-  parser.add_argument('--config_type', default='small', 
+  parser.add_argument('-ct','--config_type', default='small', 
                       type=str, help ='')
-  parser.add_argument('--config_path', default='configs/experiments.conf',
+  parser.add_argument('-cp','--config_path', default='configs/experiments.conf',
                       type=str, help ='')
-  parser.add_argument('--debug', default=False,
+  parser.add_argument('-d', '--debug', default=False,
                       type=common.str2bool, help ='')
   parser.add_argument('--cleanup', default=False,
                       type=common.str2bool, help ='')
