@@ -1,6 +1,6 @@
 # coding: utf-8 
 import operator
-import math, time, sys, random, re
+import math, time, sys, random, re, math
 import numpy as np
 import tensorflow as tf
 from pprint import pprint
@@ -17,6 +17,7 @@ class CoreferenceResolution(ModelBase):
     super(CoreferenceResolution, self).__init__(sess, config)
     self.dataset = config.dataset.name
     self.sess = sess
+    self.config = config
     self.encoder = encoder
     self.vocab = vocab
     self.activation = activation
@@ -332,7 +333,7 @@ class CoreferenceResolution(ModelBase):
   ##           Evaluation
   ##############################################
 
-  def test(self, batches, gold_path, official_stdout=False):
+  def test(self, batches, gold_path, mode, official_stdout=False):
     def _k_to_tag(k):
       if k == -3:
         return "oracle" # use only gold spans.
@@ -371,20 +372,20 @@ class CoreferenceResolution(ModelBase):
       results_to_print = []
       for t, v in zip(tags, evaluator.metrics()):
         results_to_print.append("{:<10}: {:.2f}".format(t, v))
-        summary_dict[t] = v
+        summary_dict["%s/Coref/" % mode + t] = v
       print(", ".join(results_to_print))
 
     conll_results = conll.evaluate_conll(gold_path, coref_predictions, official_stdout)
     average_f1 = sum(results["f"] for results in list(conll_results.values())) / len(conll_results)
-    summary_dict["Average F1 (conll)"] = average_f1
+    summary_dict["%s/Coref/Average F1 (conll)" % mode] = average_f1
     print("Average F1 (conll): {:.2f}%".format(average_f1))
 
     p,r,f = coref_evaluator.get_prf()
-    summary_dict["Average F1 (py)"] = f
+    summary_dict["%s/Coref/Average F1 (py)" % mode] = f
     print("Average F1 (py): {:.2f}%".format(f * 100))
-    summary_dict["Average precision (py)"] = p
+    summary_dict["%s/Coref/Average precision (py)" % mode] = p
     print("Average precision (py): {:.2f}%".format(p * 100))
-    summary_dict["Average recall (py)"] = r
+    summary_dict["%s/Coref/Average recall (py)" % mode] = r
     print("Average recall (py): {:.2f}%".format(r * 100))
 
     aligned_results = coref_evaluator.get_aligned_results()
@@ -418,7 +419,7 @@ class CoreferenceResolution(ModelBase):
           if k == -1: #exact
             num_predictions = len(gold_spans)
           else:
-            num_predictions = (k * text_length) / 100
+            num_predictions = math.floor((k * text_length) / 100)
           predicted_starts = sorted_starts[:num_predictions]
           predicted_ends = sorted_ends[:num_predictions]
         predicted_spans = set(zip(predicted_starts, predicted_ends))

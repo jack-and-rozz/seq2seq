@@ -13,6 +13,16 @@ try:
 except:
    import pickle
 
+
+RED = "\033[31m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+BLUE = "\033[34m"
+BLACK = "\033[30m"
+UNDERLINE = '\033[4m'
+BOLD = "\033[1m" + UNDERLINE
+RESET = "\033[0m"
+
 ############################################
 #       Vector
 ############################################
@@ -96,7 +106,7 @@ class recDotDefaultDict(collections.defaultdict):
     super(recDotDefaultDict, self).__init__(recDotDefaultDict)
 
 # TODO : batchを再帰的にたどってdictの配列に戻せないかな
-{}
+
 def flatten_batch(batch):
   '''
   e.g.

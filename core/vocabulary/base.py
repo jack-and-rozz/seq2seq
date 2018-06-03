@@ -129,9 +129,10 @@ class VocabularyBase(object):
 
 class WordVocabularyBase(VocabularyBase):
   def id2token(self, _id):
-    if type(_id) != int or _id < 0 or _id > len(self.rev_vocab):
+    if type(_id) not in [int, np.int32, np.int64] or _id < 0 or _id > len(self.rev_vocab):
+      sys.stderr.write(type(_id))
       raise ValueError('Token ID must be an integer between 0 and %d (ID=%d)' % (len(self.rev_vocab), _id))
-    elif _id in set([PAD_ID, EOS_ID, BOS_ID]):
+    elif _id in set([PAD_ID, BOS_ID]):
       return None
     else:
       return self.rev_vocab[_id]
@@ -183,7 +184,7 @@ class CharVocabularyBase(VocabularyBase):
   def id2token(self, _id):
     if _id < 0 or _id > len(self.rev_vocab):
       raise ValueError('Token ID must be between 0 and %d' % len(self.rev_vocab))
-    elif _id in set([PAD_ID, EOS_ID, BOS_ID]):
+    elif _id in set([PAD_ID, BOS_ID]):
       return ''
     else:
       return self.rev_vocab[_id]
@@ -257,15 +258,17 @@ class VocabularyWithEmbedding(WordVocabularyBase):
       for i, line in enumerate(f.readlines()):
         if skip_first and i == 0:
           continue
-        if i >= vocab_size:
+        if len(embedding_dict) >= vocab_size:
           break
 
         word_and_emb = line.split()
-        word = word_and_emb[0]
+        word = self.tokenizer(word_and_emb[0])
+        if len(word) > 1:
+          continue
+        word = word[0]
         vector = [float(s) for s in word_and_emb[1:]]
 
-        if len(self.tokenizer(word)) > 1:
-          continue
+        #word = word_and_emb[0] # あとで消す
         embedding_dict[word] = vector
     return embedding_dict
 

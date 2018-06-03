@@ -13,6 +13,7 @@ from core.models.wikiP2D.coref.demo import run_model
 from core.vocabulary.base import VocabularyWithEmbedding, PredefinedCharVocab
 from tensorflow.contrib.tensorboard.plugins import projector
 
+BEST_CHECKPOINT_NAME = '/model.ckpt.best'
 class MTLManager(ManagerBase):
   @common.timewatch()
   def __init__(self, args, sess):
@@ -82,7 +83,7 @@ class MTLManager(ManagerBase):
     mtl_model_type = getattr(mtl_model, config.model_type)
     m = mtl_model_type(self.sess, config, self.vocab) # Define computation graph
 
-    if not checkpoint_path:
+    if not checkpoint_path or not os.path.exists(checkpoint_path + '.index'):
       ckpt = tf.train.get_checkpoint_state(self.checkpoints_path)
       checkpoint_path = ckpt.model_checkpoint_path if ckpt else None
 
@@ -100,6 +101,9 @@ class MTLManager(ManagerBase):
       variable_names = sorted([v.name + ' ' + str(v.get_shape()) for v in tf.global_variables()])
       f.write('\n'.join(variable_names) + '\n')
 
+    vocab_path = self.root_path + '/vocab.word.list'
+    with open(vocab_path, 'w') as f:
+      f.write('\n'.join(self.vocab.word.rev_vocab) + '\n')
     self.summary_writer = tf.summary.FileWriter(self.summaries_path, 
                                                 self.sess.graph)
     return m
@@ -132,6 +136,9 @@ class MTLManager(ManagerBase):
 
   def train(self):
     m = self.create_model(self.config, 'train')
+    max_coref_f1 = 0
+    max_graph_f1 = 0
+
     if m.epoch.eval() == 0:
       if self.use_coref:
         self.logger.info("Dataset stats (CoNLL 2012)")
@@ -152,10 +159,27 @@ class MTLManager(ManagerBase):
       epoch_time, step_time, valid_loss, summary = m.valid(batches)
       self.summary_writer.add_summary(summary, m.global_step.eval())
       self.logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, " ".join(["%.3f" % l for l in valid_loss])))
+      
+      save_as_best = False
+      if self.use_coref:
+        coref_f1 = self.c_test(model=m, use_test_data=False)
+        if coref_f1 > max_coref_f1:
+          self.logger.info("Epoch %d (valid): coref max f1 update (%.3f->%.3f): " % (m.epoch.eval(), max_coref_f1, coref_f1))
+          save_as_best = True
+          max_coref_f1 = coref_f1
+
+      if self.use_graph:
+        acc, prec, recall = self.g_test(model=m, use_test_data=False)
+        graph_f1 = (prec + recall) /2
+        if graph_f1 > max_graph_f1:
+          self.logger.info("Epoch %d (valid): graph max f1 update (%.3f->%.3f): " % (m.epoch.eval(), max_graph_f1, graph_f1))
+          if not self.use_coref:
+            save_as_best = True
+          max_graph_f1 = graph_f1
 
       checkpoint_path = self.checkpoints_path + "/model.ckpt"
       if epoch == 0 or (epoch+1) % 1 == 0:
-        self.save_model(m)
+        self.save_model(m, save_as_best=save_as_best)
 
       m.add_epoch()
 
@@ -165,9 +189,9 @@ class MTLManager(ManagerBase):
     if save_as_best:
       suffixes = ['data-00000-of-00001', 'index', 'meta']
       for sfx in suffixes:
+        source_path = self.checkpoints_path + "/model.ckpt-%d.%s" % (model.epoch.eval(), sfx)
+        target_path = self.checkpoints_path + "/%s.%s" % (BEST_CHECKPOINT_NAME, sfx)
         if os.path.exists(source_path):
-          source_path = self.checkpoints_path + "/model.ckpt-%d.%s" % (model.epoch.eval(), sfx)
-          target_path = self.checkpoints_path + "/model.ckpt.best.%s" % (sfx)
           cmd = "cp %s %s" % (source_path, target_path)
           os.system(cmd)
 
@@ -190,59 +214,28 @@ class MTLManager(ManagerBase):
     exit(1)
     ############################################
 
-
-  def c_test(self, use_test_data=True): # mode: 'valid' or 'test'
+  def c_test(self, model=None, use_test_data=True): # mode: 'valid' or 'test'
+    m = model
     mode = 'test' if use_test_data else 'valid'
     conll_eval_path = os.path.join(
       self.config.tasks.coref.dataset.source_dir, 
       self.config.tasks.coref.dataset['%s_gold' % mode]
     )
+    if not m:
+      best_ckpt = os.path.join(self.checkpoint_path, BEST_CHECKPOINT_NAME)
+      m = self.create_model(self.config, mode, checkpoint_path=best_ckpt)
+    batches = self.get_batch(mode)[m.tasks.coref.dataset]
+    eval_summary, f1, results = m.tasks.coref.test(batches, conll_eval_path, mode)
+    output_path = self.tests_path + '/c_%s.ep%02d.detailed' % (mode, m.epoch.eval())
+    self.summary_writer.add_summary(eval_summary, m.global_step.eval())
+    sys.stderr.write('Output the predicted and gold clusters to {}.\n'.format(output_path))
+    with open(output_path, 'w') as f:
+      sys.stdout = f
+      m.tasks.coref.print_results(results)
+      sys.stdout = sys.__stdout__
 
-    tmp_checkpoint_path = os.path.join(self.checkpoints_path, "model.ctmp.ckpt")
-    max_checkpoint_path = os.path.join(self.checkpoints_path, "model.cmax.ckpt")
+    return f1
 
-    # Retry evaluation if the best checkpoint is already found.
-    if os.path.exists(max_checkpoint_path + '.index'):
-      sys.stderr.write('Found a checkpoint {}.\n'.format(max_checkpoint_path))
-      m = self.create_model(self.config, mode, 
-                            checkpoint_path=max_checkpoint_path)
-      batches = self.get_batch(mode)[m.tasks.coref.dataset]
-      eval_summary, f1, results = m.tasks.coref.test(batches, conll_eval_path)
-      output_path = self.tests_path + '/c_test.%s.ep%02d.detailed' % (mode, m.epoch.eval())
-      sys.stderr.write('Output the predicted and gold clusters to {}.\n'.format(output_path))
-      with open(output_path, 'w') as f:
-        sys.stdout = f
-        m.tasks.coref.print_results(results)
-        sys.stdout = sys.__stdout__
-      return
-
-    evaluated_checkpoints = set()
-    max_f1 = 0.0
-    # Evaluate each checkpoint while training and save the best one.
-    while True:
-      time.sleep(1)
-      ckpt = tf.train.get_checkpoint_state(self.checkpoints_path)
-      checkpoint_path = ckpt.model_checkpoint_path if ckpt else None
-
-      if checkpoint_path and checkpoint_path not in evaluated_checkpoints:
-        # Move it to a temporary location to avoid being deleted by the training supervisor.
-        tf_utils.copy_checkpoint(checkpoint_path, tmp_checkpoint_path)
-        m = self.create_model(self.config, mode, checkpoint_path=checkpoint_path)
-        print(("Found a new checkpoint: %s" % checkpoint_path))
-        batches = self.get_batch(mode)[m.tasks.coref.dataset]
-        output_path = self.tests_path + '/c_test.%s.ep%02d' % (mode, m.epoch.eval())
-        with open(output_path, 'w') as f:
-          sys.stdout = f
-          eval_summary, f1, results = m.tasks.coref.test(batches, conll_eval_path)
-          if f1 > max_f1:
-            max_f1 = f1
-            tf_utils.copy_checkpoint(tmp_checkpoint_path, max_checkpoint_path)
-            print(("Current max F1: {:.2f}".format(max_f1)))
-          sys.stdout = sys.__stdout__
-
-        self.summary_writer.add_summary(eval_summary, m.global_step.eval())
-        print(("Evaluation written to {} at epoch {}".format(self.checkpoints_path, m.epoch.eval())))
-        evaluated_checkpoints.add(checkpoint_path)
 
   def c_demo(self):
     max_checkpoint_path = os.path.join(self.checkpoints_path, "model.cmax.ckpt")
@@ -254,23 +247,21 @@ class MTLManager(ManagerBase):
     eval_data = [d for d in self.get_batch('valid')['coref']]
     run_model(m, eval_data, self.port)
 
-  def g_test(self, use_test_data=True):
+  def g_test(self, model=None, use_test_data=True):
+    m = model
     mode = 'test' if use_test_data else 'valid'
-    m = self.create_model(self.config, mode)
+    if not m:
+      best_ckpt = os.path.join(self.checkpoint_path, BEST_CHECKPOINT_NAME)
+      m = self.create_model(self.config, mode, checkpoint_path=best_ckpt)
+
     batches = self.get_batch(mode)[m.tasks.graph.dataset]
-    results, summary = m.tasks.graph.test(batches)
-
-    return
-    scores, ranks, mrr, hits_10 = res
+    output_path = self.tests_path + '/g_%s.ep%02d' % (mode, m.epoch.eval())
+    (acc, precision, recall), summary = m.tasks.graph.test(
+      batches, mode, output_path=output_path)
+    self.logger.info("Epoch %d (%s): accuracy, precision, recall, f1 = (%.3f, %.3f, %.3f, %.3f): " % (m.epoch.eval(), mode, acc, precision, recall, (precision+recall)/2)) 
     self.summary_writer.add_summary(summary, m.global_step.eval())
-
-    output_path = self.tests_path + '/g_test.ep%02d' % m.epoch.eval()
-    with open(output_path, 'w') as f:
-      m.tasks.graph.print_results(batches, scores, ranks, 
-                                  output_file=f, batch2text=self.dataset.graph.batch2text)
-
-    self.logger.info("Epoch %d (test): MRR %f, Hits@10 %f" % (m.epoch.eval(), mrr, hits_10))
-
+    return acc, precision, recall
+  
   def g_demo(self):
     m = self.create_model(self.self.config, 'test')
 

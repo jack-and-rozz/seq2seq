@@ -1,9 +1,12 @@
 # coding: utf-8 
+from pprint import pprint
 import math, time, sys
 import tensorflow as tf
-from core.utils import common, evaluation
-from core.utils.tf_utils import shape, batch_dot, linear, cnn
+#from core.utils import common, evaluation
+from core.utils.common import dotDict, flatten_batch, RED, BLUE, RESET, UNDERLINE
+from core.utils.tf_utils import shape, batch_dot, linear, cnn, make_summary
 from core.models.base import ModelBase
+from core.vocabulary.base import UNK_ID, PAD_ID
 #import core.models.graph as graph
 import numpy as np
 
@@ -63,16 +66,59 @@ def extract_span(encoder_outputs, spans):
     #                           axis=0)
     #return spans_by_subj
 
-def calc_precision_recall(results):
-  pass
+def print_batch(batch, prediction=None, vocab=None,
+                color_link=True, underline_unk=True):
+  text = batch.text.raw
+  num_words = sum([1 for w_id in batch.text.word if w_id != PAD_ID])
+  if color_link:
+    for begin, end in (batch.subj.position, batch.obj.position):
+      for i in range(begin, end+1):
+        text[i] = BLUE + text[i] + RESET
+  if underline_unk:
+    for i, w_id in enumerate(batch.text.word):
+      if w_id == UNK_ID:
+        text[i] = UNDERLINE + text[i] + RESET
+  text = ' '.join(text[:num_words])
+  triple = '(%s, %s, %s)' % (' '.join(batch.subj.raw), ' '.join(batch.rel.raw), ' '.join(batch.obj.raw))
 
-def evaluate(results):
-  for batch, batched_results in results:
-    for l, prediction in zip(batch, batched_results):
-      
-      print (l, prediction)
-      exit(1)
-      
+  print ('<text>:\t', text)
+  print ('<triple>:\t', triple)
+  if prediction:
+    print ('<label/prediction>:\t', '%d/%d' % (batch.label, prediction))
+  print ('')
+  if vocab:
+    print ("<word-level>:\t", vocab.word.ids2tokens(batch.text.word))
+    print ("<char-level>:\t", vocab.char.ids2tokens(batch.text.char))
+  return
+
+def evaluate(flat_batches, predictions, vocab=None):
+  def _calc_acc_prec_recall(labels, predictions):
+    TP, FP, FN, TN = 0, 0, 0, 0
+    for l, p in zip(labels, predictions):
+      if l == 1 and p == 1:
+        TP +=1
+      elif l == 1 and p == 0:
+        FN += 1
+      elif l == 0 and p == 1:
+        FP += 1
+      elif l == 0 and p == 0:
+        TN += 1
+      else:
+        raise ValueError
+    sys.stderr.write("%d, %d, %d, %d\n" % (TP, FN, FP, TN))
+    acc = 1.0 * (TP+TN) / len(labels)
+    prec = 1.0 * (TP) / (TP+FP) if TP+FP > 0 else 0
+    recall = 1.0 * (TP) / (TP+FN) if TP+FN > 0 else 0
+    return acc, prec, recall
+
+  labels = [] 
+  for i, (b, p) in enumerate(zip(flat_batches, predictions)):
+    print ('<%04d>' % i)
+    print_batch(b, prediction=p, vocab=vocab)
+    labels.append(b.label)
+  return _calc_acc_prec_recall(labels, predictions)
+
+
 class GraphLinkPrediction(ModelBase):
   def __init__(self, sess, config, encoder, vocab,
                activation=tf.nn.relu):
@@ -91,7 +137,7 @@ class GraphLinkPrediction(ModelBase):
 
     # Placeholders
     with tf.name_scope('Placeholder'):
-      self.text_ph = common.dotDict()
+      self.text_ph = dotDict()
       self.text_ph.word = tf.placeholder(
         tf.int32, name='text.word',
         shape=[None, None]) if self.encoder.wbase else None
@@ -105,7 +151,7 @@ class GraphLinkPrediction(ModelBase):
       self.obj_ph = tf.placeholder(
         tf.int32, name='obj.position', shape=[None, 2]) 
 
-      self.rel_ph = common.dotDict()
+      self.rel_ph = dotDict()
       self.rel_ph.word =  tf.placeholder(
         tf.int32, name='rel.word',
         shape=[None, None]) if self.encoder.wbase else None
@@ -131,10 +177,11 @@ class GraphLinkPrediction(ModelBase):
       obj_outputs = extract_span(outputs, self.obj_ph)
 
     with tf.variable_scope('Inference'):
-      self.outputs = self.inference(subj_outputs, rel_outputs, obj_outputs) # [batch_size]
+      outputs = self.inference(subj_outputs, rel_outputs, obj_outputs) # [batch_size, 1]
+      self.outputs = tf.round(tf.reshape(outputs, [shape(outputs, 0)])) # [batch_size]
 
     with tf.name_scope("Loss"):
-      self.losses = self.cross_entropy(self.outputs, self.target_ph)
+      self.losses = self.cross_entropy(outputs, self.target_ph)
       self.loss = tf.reduce_mean(self.losses)
     self.debug_ops = [self.sentence_length]
 
@@ -149,6 +196,7 @@ class GraphLinkPrediction(ModelBase):
 
     with tf.variable_scope('ffnn2'):
       score = linear(triple, output_size=1, activation=tf.nn.sigmoid) # true or false
+    
     return score
 
   def cross_entropy(self, scores, labels):
@@ -174,20 +222,30 @@ class GraphLinkPrediction(ModelBase):
     input_feed[self.target_ph] = batch.label
     return input_feed
 
-  def test(self, batches):
+  def test(self, batches, mode, output_path=None):
     t = time.time()
     results = []
+    used_batches = []
     for i, batch in enumerate(batches):
       input_feed = self.get_input_feed(batch, False)
+      ce = self.sess.run(self.loss, input_feed)
       outputs = self.sess.run(self.outputs, input_feed)
-      results.append((batch, outputs))
-    results, summary = evaluate(results)
-    pprint(results)
-    exit(1)
-    return results, summary
+      used_batches += flatten_batch(batch)
+      results.append(outputs)
+    results = np.concatenate(results, axis=0)
 
-  def print_batch(self, batch):
-    return
+    sys.stdout = open(output_path, 'w') if output_path else sys.stdout
+    acc, prec, recall = evaluate(used_batches, results, vocab=self.vocab)
+    sys.stdout = sys.__stdout__
+
+    summary_dict = {}
+    summary_dict['%s/Graph/Accuracy' % mode] = acc
+    summary_dict['%s/Graph/Precision' % mode] = prec
+    summary_dict['%s/Graph/Recall' % mode] = recall
+    summary_dict['%s/Graph/F1' % mode] = (prec + recall) / 2
+    summary = make_summary(summary_dict)
+    return (acc, prec, recall), summary
+
 
 #def summarize_results
 

@@ -25,7 +25,7 @@ class ManagerBase(object):
 
   def load_config(self, args):
     config_stored_path = os.path.join(args.checkpoint_path, 'experiments.conf')
-    if not os.path.exists(config_stored_path) or (args.cleanup and args.mode in ['debug', 'train']): 
+    if not os.path.exists(config_stored_path) or args.cleanup: 
       config_read_path = args.config_path
       config = common.get_config(config_read_path)[args.config_type]
       sys.stderr.write("Store the specified config file %s(%s) to %s.\n" % (config_read_path, args.config_type, config_stored_path))
