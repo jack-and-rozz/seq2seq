@@ -158,6 +158,8 @@ class _WikiP2DDataset():
 
   @property
   def size(self):
+    if len(self.data) == 0:
+      self.load_data()
     return len(self.data)
 
   def load_data(self):
@@ -187,7 +189,10 @@ class _WikiP2DDataset():
       minlen=[self.config.minlen.word, self.config.minlen.char],
       maxlen=[self.config.maxlen.word, self.config.maxlen.char])
 
-    batch.rel.word = padding_2d(batch.rel.word, minlen=3, maxlen=None)
+    cnn_max_filter_width = 3
+    batch.rel.word = padding_2d(batch.rel.word, 
+                                minlen=cnn_max_filter_width, 
+                                maxlen=None)
     batch.rel.char = padding_3d(batch.rel.char, 
                                 minlen=[3, self.config.minlen.char], 
                                 maxlen=[None, self.config.maxlen.char])

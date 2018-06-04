@@ -245,6 +245,12 @@ class VocabularyWithEmbedding(WordVocabularyBase):
       embeddings = [common.flatten([common.normalize_vector(emb[w]) for emb in pretrained]) for w in vocab]
     else:
       embeddings = [common.flatten([emb[w] for emb in pretrained]) for w in vocab]
+
+    # tokens in START_VOCAB are randomly initialized.
+    rand_gen = random_embedding_generator(len(embeddings[0]))
+    for i in range(len(self.start_vocab)):
+      embeddings[i] = rand_gen()
+
     embeddings = np.array(embeddings)
     sys.stderr.write("Done loading word embeddings.\n")
 

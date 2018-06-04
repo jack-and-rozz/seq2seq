@@ -119,8 +119,9 @@ class MTLManager(ManagerBase):
     for i, batch in enumerate(batches):
       #pprint(batch)
       print ('#####################################')
-      print (common.flatten_batch(batch)[0])
-      exit(1)
+      for b in common.flatten_batch(batch):
+        pprint (b)
+        exit(1)
     exit(1)
     for i, batch in enumerate(batches):
       print ('----------')
@@ -153,13 +154,13 @@ class MTLManager(ManagerBase):
 
     for epoch in range(m.epoch.eval(), self.config.max_epoch):
       batches = self.get_batch('train')
-      epoch_time, step_time, train_loss, summary = m.train(batches, summary_writer=self.summary_writer)
-      self.logger.info("Epoch %d (train): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, " ".join(["%.3f" % l for l in train_loss])))
+      epoch_time, train_loss, summary = m.train(batches, summary_writer=self.summary_writer)
+      self.logger.info("Epoch %d (train): epoch-time %.2f, loss %s" % (epoch, epoch_time, " ".join(["%.3f" % l for l in train_loss])))
 
       batches = self.get_batch('valid')
-      epoch_time, step_time, valid_loss, summary = m.valid(batches)
+      epoch_time,  valid_loss, summary = m.valid(batches)
       self.summary_writer.add_summary(summary, m.global_step.eval())
-      self.logger.info("Epoch %d (valid): epoch-time %.2f, step-time %.2f, loss %s" % (epoch, epoch_time, step_time, " ".join(["%.3f" % l for l in valid_loss])))
+      self.logger.info("Epoch %d (valid): epoch-time %.2f, loss %s" % (epoch, epoch_time, " ".join(["%.3f" % l for l in valid_loss])))
       
       save_as_best = False
       if self.use_coref:
@@ -196,24 +197,6 @@ class MTLManager(ManagerBase):
           cmd = "cp %s %s" % (source_path, target_path)
           os.system(cmd)
 
-  def self_test(self):
-    ##############################################
-    ## DEBUG
-    mode = 'valid'
-    conll_eval_path = {
-      'train': 'dataset/coref/source/train.english.v4_auto_conll',
-      'valid': 'dataset/coref/source/dev.english.v4_auto_conll',
-      'test': 'dataset/coref/source/test.english.v4_gold_conll',
-    }
-    m = self.create_model(self.config, mode)
-    #batches = self.get_batch(mode)[m.tasks.coref.dataset]
-    batches = self.get_batch(mode)[m.tasks.graph.dataset]
-    for i, b in enumerate(batches):
-      print(('======== %02d ==========' % i))
-      m.tasks.graph.print_batch(b)
-    #eval_summary, f1 = m.tasks.coref.test(batches, conll_eval_path[mode])
-    exit(1)
-    ############################################
 
   def c_test(self, model=None, use_test_data=True): # mode: 'valid' or 'test'
     m = model
@@ -225,6 +208,9 @@ class MTLManager(ManagerBase):
     if not m:
       best_ckpt = os.path.join(self.checkpoints_path, BEST_CHECKPOINT_NAME)
       m = self.create_model(self.config, mode, checkpoint_path=best_ckpt)
+    else:
+      best_ckpt = None
+    
     batches = self.get_batch(mode)[m.tasks.coref.dataset]
 
     if best_ckpt and os.path.exists(best_ckpt + '.index'):
@@ -233,10 +219,11 @@ class MTLManager(ManagerBase):
       output_path = self.tests_path + '/c_%s.ep%02d' % (mode, m.epoch.eval())
 
     with open(output_path + '.stat', 'w') as f:
+      sys.stdout = f
       eval_summary, f1, results = m.tasks.coref.test(
-        batches, conll_eval_path, mode, official_stdout=f)
+        batches, conll_eval_path, mode)
+      sys.stdout = sys.__stdout__
 
-    sys.stderr.write('Output the predicted and gold clusters to {}.\n'.format(output_path))
 
     self.summary_writer.add_summary(eval_summary, m.global_step.eval())
     with open(output_path + '.detail', 'w') as f:
@@ -244,6 +231,7 @@ class MTLManager(ManagerBase):
       m.tasks.coref.print_results(results)
       sys.stdout = sys.__stdout__
 
+    sys.stderr.write("Output the predicted and gold clusters to \'{}\' .\n".format(output_path))
     return f1
 
 
@@ -364,8 +352,6 @@ def main(args):
       manager.g_demo()
     elif args.mode == "c_demo":
       manager.c_demo()
-    elif args.mode == 'self_test':
-      manager.self_test()
     elif args.mode == 'debug':
       manager.self_test()
     else:

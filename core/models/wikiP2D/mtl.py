@@ -65,18 +65,25 @@ class MTLManager(ManagerBase):
                                                  shared_scope=scope)
     ## Define each task
     self.tasks = common.dotDict()
-    for task_name, task_config in config.tasks.items():
-      #device = '/gpu:1' if config.coref_task and len(tf_utils.get_available_gpus()) > 1 else '/gpu:0'
-      device = None # TODO
+    for i, (task_name, task_config) in enumerate(config.tasks.items()):
+      num_gpus = len(tf_utils.get_available_gpus())
+      if num_gpus:
+        device = '/gpu:%d' % (i % num_gpus)
+        sys.stderr.write('Building %s model to %s...\n' % (task_name, device))
+      else:
+        device = None
+        sys.stderr.write('Building %s model to cpu ...\n' % (task_name))
 
-      sys.stderr.write('Building %s model...\n' % task_name)
       with tf.variable_scope(task_name) as task_scope:
         encoder = self.get_sent_encoder(config, task_scope)
         task = define_task(sess, task_config, encoder, vocab, device)
       self.tasks[task_name] = task
 
     self.losses = [t.loss for t in self.tasks.values()]
-    _, self.updates = self.get_loss_and_updates(self.losses)
+    self.updates = common.dotDict()
+    #_, self.updates.total = self.get_loss_and_updates(self.losses)
+    for task_name, task_model in self.tasks.items():
+      self.updates[task_name] = self.get_updates(task_model.loss)
 
 
   def get_sent_encoder(self, config, scope):
@@ -90,8 +97,9 @@ class MTLManager(ManagerBase):
   def get_input_feed(self, batch, is_training):
     input_feed = {}
     input_feed[self.is_training] = is_training
-    for t in self.tasks.values():
-      input_feed.update(t.get_input_feed(batch[t.dataset], is_training))
+    for task_name, task_model in self.tasks.items():
+      if task_name in batch:
+        input_feed.update(task_model.get_input_feed(batch[task_name], is_training))
     return input_feed
 
   def train(self, batches, summary_writer=None):
@@ -99,54 +107,75 @@ class MTLManager(ManagerBase):
     # DEBUG
     #output_feed = [self.tasks['coref'].w_sentences, 
     #               tf.reduce_sum(self.tasks['coref'].sentence_length)]
-    return self.step(batches, output_feed, True, summary_writer=summary_writer)
+    return self.step(batches, True, summary_writer=summary_writer)
 
   def valid(self, batches, summary_writer=None):
     output_feed = self.losses
-    return self.step(batches, output_feed, False, summary_writer=summary_writer)
+    return self.step(batches, False, summary_writer=summary_writer)
 
   def test(self, batches, summary_writer=None):
     raise NotImplementedError("Directly call MTLManager.tasks[task_name].test()")
 
-  def step(self, batches, output_feed, is_training, summary_writer=None):
+  def step(self, batches, is_training, summary_writer=None):
     start_time = time.time()
     n_losses = len(self.losses)
     loss = np.array([0.0] * n_losses)
 
     # Pass a batch of each dataset that is necessary for each task.
-    dataset_names = list(OrderedSet([t.dataset for t in self.tasks.values() if hasattr(t, 'dataset')]))
-    datasets = OrderedSet([batches[d] for d in dataset_names]) 
-    for i, data in enumerate(zip(*datasets)):
-      raw_batch = {t.dataset:data[dataset_names.index(t.dataset)] 
-                   for t in self.tasks.values()}
-      input_feed = self.get_input_feed(raw_batch, is_training)
-      t = time.time()
-      # if summary_writer is not None and i % 30 == 0 and self.debug:
-      #   run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-      #   run_metadata = tf.RunMetadata()
-      #   outputs = self.sess.run(output_feed, input_feed,
-      #                           options=run_options,
-      #                           run_metadata=run_metadata)
-      #   summary_writer.add_run_metadata(run_metadata, 'step%d' % (self.global_step.eval()))
-      # else:
-      outputs = self.sess.run(output_feed, input_feed)
-      t = time.time() - t
-      step_loss = np.array([l for l in outputs[:n_losses]])
-      print(self.epoch.eval(), i, step_loss, 'step_time: %f' % t)
-      loss += step_loss
+    # dataset_names = list(OrderedSet([t.dataset for t in self.tasks.values() if hasattr(t, 'dataset')]))
+    # datasets = OrderedSet([batches[d] for d in dataset_names]) 
+    # for i, data in enumerate(zip(*datasets)):
+    #   raw_batch = {t.dataset:data[dataset_names.index(t.dataset)] 
+    #                for t in self.tasks.values()}
+    #   input_feed = self.get_input_feed(raw_batch, is_training)
+    #   t = time.time()
+    #   outputs = self.sess.run(output_feed, input_feed)
+    #   t = time.time() - t
+    #   step_loss = np.array([l for l in outputs[:n_losses]])
+    #   print(self.epoch.eval(), i, step_loss, 'step_time: %f' % t)
+    #   loss += step_loss
 
-      if math.isnan(step_loss[0]):
-        pprint(raw_batch)
-        raise ValueError("Nan loss detection ...")
+    #   if math.isnan(step_loss[0]):
+    #     pprint(raw_batch)
+    #     raise ValueError("Nan loss detection ...")
+    num_steps = [0 for _ in self.tasks]
+    loss = [0.0 for _ in self.tasks]
+    is_uncomplete = True
+    while is_uncomplete:
+      is_uncomplete = False
+      t = time.time()
+      for i, (task_name, task_model) in enumerate(self.tasks.items()):
+        try:
+          raw_batch = batches[task_name].__next__()
+          batch = {task_name:raw_batch}
+          input_feed = self.get_input_feed(batch, is_training)
+          output_feed = [task_model.loss]
+          if is_training:
+            output_feed.append(self.updates[task_name])
+          t = time.time()
+          outputs = self.sess.run(output_feed, input_feed)
+          t = time.time() - t
+          step_loss = outputs[0]
+
+          print('epoch: %d,' % self.epoch.eval(), 
+                'step: %d,' % num_steps[i],
+                'task: %s,' % task_name, 
+                'step_loss: %f,' % step_loss, 
+                'step_time: %f,' % t)
+          num_steps[i] += 1
+          loss[i] += step_loss
+          is_uncomplete = True
+      
+        except StopIteration as e:
+          pass
 
     epoch_time = (time.time() - start_time)
-    step_time = epoch_time / (i+1)
-    loss /= (i+1)
+    loss = [l/ns for l, ns in zip(loss, num_steps)]
+
     mode = 'train' if is_training else 'valid'
-    input_feed = {t.summary_loss:l for t, l in zip(self.tasks.values(), loss[1:])}
-    summary_dict = {'%s/%s/loss' % (mode, task_name): l for task_name, l in zip(self.tasks.keys(), loss)}
+    summary_dict = {'%s/%s/loss' % (task_name, mode): l for task_name, l in zip(self.tasks, loss)}
     summary = tf_utils.make_summary(summary_dict)
-    return epoch_time, step_time, loss, summary
+    return epoch_time, loss, summary
 
   def get_loss_and_updates(self, losses):
     raise NotImplementedError()

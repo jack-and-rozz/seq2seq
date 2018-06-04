@@ -112,7 +112,7 @@ def evaluate(flat_batches, predictions, vocab=None):
         TN += 1
       else:
         raise ValueError
-    sys.stderr.write("%d, %d, %d, %d\n" % (TP, FN, FP, TN))
+    print("TP, FN, FP, TN = %d, %d, %d, %d\n" % (TP, FN, FP, TN))
     acc = 1.0 * (TP+TN) / len(labels)
     prec = 1.0 * (TP) / (TP+FP) if TP+FP > 0 else 0
     recall = 1.0 * (TP) / (TP+FN) if TP+FN > 0 else 0
@@ -252,10 +252,10 @@ class GraphLinkPrediction(ModelBase):
     sys.stdout = sys.__stdout__
 
     summary_dict = {}
-    summary_dict['%s/Graph/Accuracy' % mode] = acc
-    summary_dict['%s/Graph/Precision' % mode] = prec
-    summary_dict['%s/Graph/Recall' % mode] = recall
-    summary_dict['%s/Graph/F1' % mode] = (prec + recall) / 2
+    summary_dict['graph/%s/Accuracy' % mode] = acc
+    summary_dict['graph/%s/Precision' % mode] = prec
+    summary_dict['graph/%s/Recall' % mode] = recall
+    summary_dict['graph/%s/F1' % mode] = (prec + recall) / 2
     summary = make_summary(summary_dict)
     return (acc, prec, recall), summary
 

@@ -52,3 +52,4 @@ class ModelBase(object):
 
   def get_input_feed(self, batch, is_training):
     return {}
+

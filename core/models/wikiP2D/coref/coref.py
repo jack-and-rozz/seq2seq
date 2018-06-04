@@ -374,20 +374,20 @@ class CoreferenceResolution(ModelBase):
       results_to_print = []
       for t, v in zip(tags, evaluator.metrics()):
         results_to_print.append("{:<10}: {:.2f}".format(t, v))
-        summary_dict["%s/Coref/" % mode + t] = v
+        summary_dict["coref/%s/" % mode + t] = v
       print(", ".join(results_to_print))
 
     conll_results = conll.evaluate_conll(gold_path, coref_predictions, official_stdout)
     average_f1 = sum(results["f"] for results in list(conll_results.values())) / len(conll_results)
-    summary_dict["%s/Coref/Average F1 (conll)" % mode] = average_f1
+    summary_dict["coref/%s/Average F1 (conll)" % mode] = average_f1
     print("Average F1 (conll): {:.2f}%".format(average_f1))
 
     p,r,f = coref_evaluator.get_prf()
-    summary_dict["%s/Coref/Average F1 (py)" % mode] = f
+    summary_dict["coref/%s/Average F1 (py)" % mode] = f
     print("Average F1 (py): {:.2f}%".format(f * 100))
-    summary_dict["%s/Coref/Average precision (py)" % mode] = p
+    summary_dict["coref/%sls/Average precision (py)" % mode] = p
     print("Average precision (py): {:.2f}%".format(p * 100))
-    summary_dict["%s/Coref/Average recall (py)" % mode] = r
+    summary_dict["coref/%s/Average recall (py)" % mode] = r
     print("Average recall (py): {:.2f}%".format(r * 100))
 
     aligned_results = coref_evaluator.get_aligned_results()
