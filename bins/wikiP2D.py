@@ -13,7 +13,8 @@ from core.models.wikiP2D.coref.demo import run_model
 from core.vocabulary.base import VocabularyWithEmbedding, PredefinedCharVocab
 from tensorflow.contrib.tensorboard.plugins import projector
 
-BEST_CHECKPOINT_NAME = '/model.ckpt.best'
+BEST_CHECKPOINT_NAME = 'model.ckpt.best'
+
 class MTLManager(ManagerBase):
   @common.timewatch()
   def __init__(self, args, sess):
@@ -222,14 +223,23 @@ class MTLManager(ManagerBase):
       self.config.tasks.coref.dataset['%s_gold' % mode]
     )
     if not m:
-      best_ckpt = os.path.join(self.checkpoint_path, BEST_CHECKPOINT_NAME)
+      best_ckpt = os.path.join(self.checkpoints_path, BEST_CHECKPOINT_NAME)
       m = self.create_model(self.config, mode, checkpoint_path=best_ckpt)
     batches = self.get_batch(mode)[m.tasks.coref.dataset]
-    eval_summary, f1, results = m.tasks.coref.test(batches, conll_eval_path, mode)
-    output_path = self.tests_path + '/c_%s.ep%02d.detailed' % (mode, m.epoch.eval())
-    self.summary_writer.add_summary(eval_summary, m.global_step.eval())
+
+    if best_ckpt and os.path.exists(best_ckpt + '.index'):
+      output_path = self.tests_path + '/c_%s.best' % (mode)
+    else:
+      output_path = self.tests_path + '/c_%s.ep%02d' % (mode, m.epoch.eval())
+
+    with open(output_path + '.stat', 'w') as f:
+      eval_summary, f1, results = m.tasks.coref.test(
+        batches, conll_eval_path, mode, official_stdout=f)
+
     sys.stderr.write('Output the predicted and gold clusters to {}.\n'.format(output_path))
-    with open(output_path, 'w') as f:
+
+    self.summary_writer.add_summary(eval_summary, m.global_step.eval())
+    with open(output_path + '.detail', 'w') as f:
       sys.stdout = f
       m.tasks.coref.print_results(results)
       sys.stdout = sys.__stdout__
@@ -238,24 +248,30 @@ class MTLManager(ManagerBase):
 
 
   def c_demo(self):
-    max_checkpoint_path = os.path.join(self.checkpoints_path, "model.cmax.ckpt")
-    ckpt_path = None
-    if os.path.exists(max_checkpoint_path + '.index'):
-      sys.stderr.write('Found a checkpoint {}.\n'.format(max_checkpoint_path))
-      ckpt_path = max_checkpoint_path
-    m = self.create_model(self.config, checkpoint_path=ckpt_path)
-    eval_data = [d for d in self.get_batch('valid')['coref']]
-    run_model(m, eval_data, self.port)
+    pass
+    # max_checkpoint_path = os.path.join(self.checkpoints_path, "model.cmax.ckpt")
+    # ckpt_path = None
+    # if os.path.exists(max_checkpoint_path + '.index'):
+    #   sys.stderr.write('Found a checkpoint {}.\n'.format(max_checkpoint_path))
+    #   ckpt_path = max_checkpoint_path
+    # m = self.create_model(self.config, checkpoint_path=ckpt_path)
+    # eval_data = [d for d in self.get_batch('valid')['coref']]
+    # run_model(m, eval_data, self.port)
 
   def g_test(self, model=None, use_test_data=True):
     m = model
     mode = 'test' if use_test_data else 'valid'
+
+    best_ckpt = None
     if not m:
-      best_ckpt = os.path.join(self.checkpoint_path, BEST_CHECKPOINT_NAME)
+      best_ckpt = os.path.join(self.checkpoints_path, BEST_CHECKPOINT_NAME)
       m = self.create_model(self.config, mode, checkpoint_path=best_ckpt)
 
     batches = self.get_batch(mode)[m.tasks.graph.dataset]
-    output_path = self.tests_path + '/g_%s.ep%02d' % (mode, m.epoch.eval())
+    if best_ckpt and os.path.exists(best_ckpt + '.index'):
+      output_path = self.tests_path + '/g_%s.best' % (mode)
+    else:
+      output_path = self.tests_path + '/g_%s.ep%02d' % (mode, m.epoch.eval())
     (acc, precision, recall), summary = m.tasks.graph.test(
       batches, mode, output_path=output_path)
     self.logger.info("Epoch %d (%s): accuracy, precision, recall, f1 = (%.3f, %.3f, %.3f, %.3f): " % (m.epoch.eval(), mode, acc, precision, recall, (precision+recall)/2)) 
@@ -361,7 +377,7 @@ if __name__ == "__main__":
   # Common arguments are defined in base.py
   desc = ""
   parser = argparse.ArgumentParser(description=desc)
-  parser.add_argument('checkpoint_path', type=str, help ='')
+  parser.add_argument('model_root_path', type=str, help ='')
   parser.add_argument('mode', type=str, help ='')
   parser.add_argument('-ct','--config_type', default='small', 
                       type=str, help ='')

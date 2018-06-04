@@ -10,7 +10,7 @@ from tensorflow.python.platform import gfile
 from core.utils.common import recDotDefaultDict, recDotDict, flatten, batching_dicts, pad_sequences
 #from core.utils import visualize
 from core.dataset.base import DatasetBase
-from core.vocabulary.base import UNK_ID, PAD_ID, fill_empty_brackets, fill_zero
+from core.vocabulary.base import _UNK, UNK_ID, PAD_ID, fill_empty_brackets, fill_zero
 from core.vocabulary.wikiP2D import WikiP2DVocabulary, WikiP2DSubjVocabulary, WikiP2DRelVocabulary, WikiP2DObjVocabulary
 
 random.seed(0)
@@ -94,12 +94,15 @@ class _WikiP2DDataset():
     self.properties = properties
     self.data = [] # Lazy loading.
     self.max_rows = config.max_rows
+    self.mask_link = config.mask_link
 
   def preprocess(self, article):
     def flatten_text_and_link(article):
       raw_text = [s.split() for s in article.text]
       num_words = [len(s) for s in raw_text]
       links = {}
+
+      # Convert a list of sentneces to a flattened sequence of words.
       for qid, link in article.link.items():
         (sent_id, (begin, end)) = link
         flatten_begin = begin + sum(num_words[:sent_id])
@@ -117,21 +120,35 @@ class _WikiP2DDataset():
       entity.position = (begin, end)
       return entity
 
+    def span2unk(raw_text, position):
+      assert type(raw_text) == list
+      raw_text = copy.deepcopy(raw_text)
+      begin, end = position
+      for i in range(begin, end+1):
+        raw_text[i] = _UNK
+      return raw_text
+
     def triple2entry(triple, article, label):
       entry = recDotDefaultDict()
-      entry.text.raw = article.text
-      entry.text.word = self.vocab.word.sent2ids(article.text)
-      entry.text.char = self.vocab.char.sent2ids(article.text)
 
       subj_qid, rel_pid, obj_qid = triple
       rel = self.properties[rel_pid].name.split()
-      entry.rel.raw = rel
-      entry.rel.word = self.vocab.word.sent2ids(rel)
-      entry.rel.char = self.vocab.char.sent2ids(rel)
+      entry.rel.raw = rel  # 1D tensor of str. 
+      entry.rel.word = self.vocab.word.sent2ids(rel) # 1D tensor of int.
+      entry.rel.char = self.vocab.char.sent2ids(rel) # 2D tensor of int.
 
-      entry.subj = qid2position(subj_qid, article)
-      entry.obj = qid2position(obj_qid, article)
-      entry.label = label
+      entry.subj = qid2position(subj_qid, article) # (begin, end)
+      entry.obj = qid2position(obj_qid, article)# (begin, end)
+      entry.label = label # 1 or 0.
+
+      entry.text.raw = article.text
+      raw_text = article.text
+      if self.mask_link:
+        raw_text = span2unk(raw_text, entry.subj.position)
+        raw_text = span2unk(raw_text, entry.obj.position)
+      entry.text.word = self.vocab.word.sent2ids(raw_text)
+      entry.text.char = self.vocab.char.sent2ids(raw_text)
+
       return entry
 
     article = flatten_text_and_link(article)

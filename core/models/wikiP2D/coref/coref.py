@@ -5,11 +5,13 @@ import numpy as np
 import tensorflow as tf
 from pprint import pprint
 
-from core.utils import common, tf_utils
+from core.utils import tf_utils
+from core.utils.common import RED, BLACK, UNDERLINE, RESET, flatten, dotDict
 from core.models.base import ModelBase
 from core.models.wikiP2D.coref import coref_ops, conll, metrics, util
 from core.vocabulary.base import _UNK, PAD_ID
 from collections import OrderedDict
+from copy import deepcopy
 
 class CoreferenceResolution(ModelBase):
   def __init__(self, sess, config, encoder, vocab,
@@ -237,7 +239,7 @@ class CoreferenceResolution(ModelBase):
     clusters = batch["clusters"]
     c_sentences = np.array(batch['c_sentences'])
     w_sentences = np.array(batch['w_sentences'])
-    speaker_ids = batch['speakers'] #common.flatten(batch['speakers'])
+    speaker_ids = batch['speakers'] #flatten(batch['speakers'])
     genre = batch["genre"]
     ## Texts
     if self.encoder.cbase:
@@ -248,7 +250,7 @@ class CoreferenceResolution(ModelBase):
 
     input_feed[self.sentence_length] = np.array([len([w for w in s if w != PAD_ID]) for s in w_sentences])
     ## Mention spans and their clusters
-    gold_mentions = sorted(tuple(m) for m in common.flatten(clusters))
+    gold_mentions = sorted(tuple(m) for m in flatten(clusters))
     gold_mention_map = {m:i for i,m in enumerate(gold_mentions)}
     cluster_ids = np.zeros(len(gold_mentions))
     for cluster_id, cluster in enumerate(clusters):
@@ -364,7 +366,7 @@ class CoreferenceResolution(ModelBase):
         #print "Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data))
         #print "Evaluated {} examples.".format(example_num + 1)
         pass
-      results[example['doc_key']] = common.dotDict({'raw_text': example['raw_text']})
+      results[example['doc_key']] = dotDict({'raw_text': example['raw_text']})
 
     summary_dict = {}
     for k, evaluator in sorted(list(mention_evaluators.items()), key=operator.itemgetter(0)):
@@ -474,17 +476,12 @@ class CoreferenceResolution(ModelBase):
     Args:
        - results: An Ordereddict keyed by 'doc_key', whose elements are a dictionary that has the keys, 'raw_text' and 'aligned_results'
     '''
-    RESET = "\033[0m"
-    BLACK = "\033[30m"
-    RED = "\033[31m"
-    UNDERLINE = '\033[4m'
-    from copy import deepcopy
 
     def print_colored_text(raw_text, aligned):
       # Show the gold mentions in red, and the predicted mentions with underline.
       decorated_text = deepcopy(raw_text)
-      colored_area = set(common.flatten([common.flatten([[h for h in range(s, e+1)] for s,e in gold_cluster]) for (gold_cluster, _) in aligned]))
-      underlined_area = set(common.flatten([common.flatten([[h for h in range(s, e+1)] for s,e in predicted_cluster]) for (_, predicted_cluster) in aligned]))
+      colored_area = set(flatten([flatten([[h for h in range(s, e+1)] for s,e in gold_cluster]) for (gold_cluster, _) in aligned]))
+      underlined_area = set(flatten([flatten([[h for h in range(s, e+1)] for s,e in predicted_cluster]) for (_, predicted_cluster) in aligned]))
       both_area = colored_area.intersection(underlined_area)
 
       spaces = [" " for x in range(len(decorated_text))]
@@ -504,7 +501,7 @@ class CoreferenceResolution(ModelBase):
       if i == 0:
         print((type(result['raw_text'][0][0])))
       print("===%03d===\t%s" % (i, doc_key))
-      raw_text = common.flatten(result['raw_text'])
+      raw_text = flatten(result['raw_text'])
       aligned = result['aligned_results']
       print('<text>')
       print_colored_text(raw_text, aligned)

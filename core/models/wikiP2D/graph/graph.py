@@ -1,9 +1,9 @@
 # coding: utf-8 
 from pprint import pprint
-import math, time, sys
+import math, time, sys, copy
 import tensorflow as tf
 #from core.utils import common, evaluation
-from core.utils.common import dotDict, flatten_batch, RED, BLUE, RESET, UNDERLINE
+from core.utils.common import dotDict, flatten_batch, RED, BLUE, RESET, UNDERLINE, BOLD
 from core.utils.tf_utils import shape, batch_dot, linear, cnn, make_summary
 from core.models.base import ModelBase
 from core.vocabulary.base import UNK_ID, PAD_ID
@@ -68,12 +68,17 @@ def extract_span(encoder_outputs, spans):
 
 def print_batch(batch, prediction=None, vocab=None,
                 color_link=True, underline_unk=True):
-  text = batch.text.raw
+  text = copy.deepcopy(batch.text.raw)
   num_words = sum([1 for w_id in batch.text.word if w_id != PAD_ID])
   if color_link:
-    for begin, end in (batch.subj.position, batch.obj.position):
-      for i in range(begin, end+1):
-        text[i] = BLUE + text[i] + RESET
+    title_color = BLUE
+    link_color = BLUE if batch.label == 1 else RED
+    begin, end = batch.subj.position
+    for i in range(begin, end+1):
+      text[i] = title_color + text[i] + RESET
+    begin, end = batch.obj.position
+    for i in range(begin, end+1):
+      text[i] = link_color + text[i] + RESET
   if underline_unk:
     for i, w_id in enumerate(batch.text.word):
       if w_id == UNK_ID:
@@ -83,12 +88,14 @@ def print_batch(batch, prediction=None, vocab=None,
 
   print ('<text>:\t', text)
   print ('<triple>:\t', triple)
-  if prediction:
-    print ('<label/prediction>:\t', '%d/%d' % (batch.label, prediction))
-  print ('')
   if vocab:
-    print ("<word-level>:\t", vocab.word.ids2tokens(batch.text.word))
-    print ("<char-level>:\t", vocab.char.ids2tokens(batch.text.char))
+    print ("<word-encode>:\t", vocab.word.ids2tokens(batch.text.word))
+    print ("<char-encode>:\t", vocab.char.ids2tokens(batch.text.char))
+  if prediction is not None:
+    label = True if batch.label == 1 else False
+    prediction = True if prediction == 1 else False
+    print ('<label/prediction>:\t', '%s/%s' % (str(label), str(prediction)))
+  print ('')
   return
 
 def evaluate(flat_batches, predictions, vocab=None):
@@ -113,7 +120,12 @@ def evaluate(flat_batches, predictions, vocab=None):
 
   labels = [] 
   for i, (b, p) in enumerate(zip(flat_batches, predictions)):
-    print ('<%04d>' % i)
+    is_success = 'Success' if b.label == p else 'Fail'
+    _id = '<%04d:%s>' % (i, is_success)
+    if b.label == p:
+      _id = BOLD + _id + RESET
+
+    print (_id)
     print_batch(b, prediction=p, vocab=vocab)
     labels.append(b.label)
   return _calc_acc_prec_recall(labels, predictions)
@@ -170,7 +182,8 @@ class GraphLinkPrediction(ModelBase):
       subj_outputs = extract_span(outputs, self.subj_ph)
 
     with tf.variable_scope('Relation') as scope:
-      rel_outputs = tf.stop_gradient(self.encoder.word_encoder.encode([self.rel_ph.word, self.rel_ph.char]))
+      # Stop gradient to prevent biased learning to the words used as relation labels.
+      rel_outputs = tf.stop_gradient(self.encoder.word_encoder.encode([self.rel_ph.word, self.rel_ph.char])) 
       rel_outputs = cnn(rel_outputs, filter_sizes=[2, 3])
 
     with tf.variable_scope('Object') as scope:

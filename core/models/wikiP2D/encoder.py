@@ -31,7 +31,6 @@ class WordEncoder(ModelBase):
     self.activation = activation
     self.shared_scope = shared_scope # to reuse variables
     self.reuse = None
-
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
 
     w_trainable = config.trainable_emb

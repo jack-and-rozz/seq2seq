@@ -107,6 +107,9 @@ def char_sent_padding(inputs,
 def random_embedding_generator(embedding_size):
   return lambda: np.random.uniform(-math.sqrt(3), math.sqrt(3), 
                                    size=embedding_size)
+def zero_embedding_generator(embedding_size):
+  return lambda: np.array([0.0 for _ in range(embedding_size)])
+
 
 class VocabularyBase(object):
   def __init__(self):
@@ -250,9 +253,15 @@ class VocabularyWithEmbedding(WordVocabularyBase):
   def load(self, embedding_path, vocab_size, embedding_size, skip_first):
     """
     Load pretrained vocabularies.
+    Args:
+    - embedding_path: a string.
+    - vocab_size: an integer.
+    - embedding_size: an integer.
     """
     sys.stderr.write("Loading word embeddings from {}...\n".format(embedding_path))
-    embedding_dict = collections.defaultdict(random_embedding_generator(embedding_size))
+    # TODO: embeddingも訓練するならランダム初期化で良いけど、くっつけるならゼロ初期化のほうがいいんじゃないか？
+    #embedding_dict = collections.defaultdict(random_embedding_generator(embedding_size))
+    embedding_dict = collections.defaultdict(zero_embedding_generator(embedding_size))
 
     with open(embedding_path) as f:
       for i, line in enumerate(f.readlines()):
@@ -268,8 +277,12 @@ class VocabularyWithEmbedding(WordVocabularyBase):
         word = word[0]
         vector = [float(s) for s in word_and_emb[1:]]
 
-        #word = word_and_emb[0] # あとで消す
-        embedding_dict[word] = vector
+        # If a capitalized (or digit-normalized) word is changed to its lowercased, it is used as an alternative only when the exact one is not still registered. 
+        # e.g. Texas -> texas, 1999->0000, etc.
+        if word == word_and_emb:
+          embedding_dict[word] = vector
+        elif word not in embedding_dict: 
+          embedding_dict[word] = vector
     return embedding_dict
 
 

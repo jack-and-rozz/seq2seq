@@ -44,10 +44,6 @@ class ModelBase(object):
 
   def initialize_embeddings(self, name, emb_shape, initializer=None, 
                             trainable=True):
-    # if embeddings is not None:
-    #   initializer = tf.constant_initializer(embeddings)
-    #   emb_shape = embeddings.shape
-    # else:
     if not initializer:
       initializer = tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3))
     embeddings = tf.get_variable(name, emb_shape, trainable=trainable,

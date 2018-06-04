@@ -15,16 +15,16 @@ def get_logger(logfile_path=None):
 
 class ManagerBase(object):
   def __init__(self, args, sess):
-    self.root_path = args.checkpoint_path
-    self.checkpoints_path = args.checkpoint_path +'/checkpoints'
-    self.tests_path = args.checkpoint_path + '/tests'
-    self.summaries_path = args.checkpoint_path + '/summaries'
+    self.root_path = args.model_root_path
+    self.checkpoints_path = args.model_root_path +'/checkpoints'
+    self.tests_path = args.model_root_path + '/tests'
+    self.summaries_path = args.model_root_path + '/summaries'
     self.sess = sess
     self.create_dir(args)
-    self.logger = get_logger(logfile_path=os.path.join(args.checkpoint_path, args.mode + '.log'))
+    self.logger = get_logger(logfile_path=os.path.join(args.model_root_path, args.mode + '.log'))
 
   def load_config(self, args):
-    config_stored_path = os.path.join(args.checkpoint_path, 'experiments.conf')
+    config_stored_path = os.path.join(args.model_root_path, 'experiments.conf')
     if not os.path.exists(config_stored_path) or args.cleanup: 
       config_read_path = args.config_path
       config = common.get_config(config_read_path)[args.config_type]
@@ -42,8 +42,8 @@ class ManagerBase(object):
     return config
 
   def create_dir(self, args):
-    if not os.path.exists(args.checkpoint_path):
-      os.makedirs(args.checkpoint_path)
+    if not os.path.exists(args.model_root_path):
+      os.makedirs(args.model_root_path)
     if not os.path.exists(self.checkpoints_path):
       os.makedirs(self.checkpoints_path)
     if not os.path.exists(self.tests_path):
