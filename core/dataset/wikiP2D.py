@@ -26,11 +26,15 @@ random.seed(0)
 #   if minlen and minlen > length:
 #     length = minlen
 #   return length
-def define_length(batch, minlen, maxlen):
+
+def define_length(batch, minlen=None, maxlen=None):
+  if minlen is None:
+    minlen = 0
+
   if maxlen:
-    return maxlen
+    return max(maxlen, minlen)
   else:
-    return max([len(b) for b in batch])
+    return max([len(b) for b in batch] + [minlen])
 
 
 def padding_2d(batch, minlen=None, maxlen=None, pad=PAD_ID, pad_type='post'):

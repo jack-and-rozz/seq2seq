@@ -82,8 +82,11 @@ class MTLManager(ManagerBase):
     self.losses = [t.loss for t in self.tasks.values()]
     self.updates = common.dotDict()
     #_, self.updates.total = self.get_loss_and_updates(self.losses)
+    reuse = False
+    #with tf.variable_scope('update', reuse=reuse) as scope:
     for task_name, task_model in self.tasks.items():
-      self.updates[task_name] = self.get_updates(task_model.loss)
+      self.updates[task_name] = self.get_updates(task_model.loss) #, scope=scope)
+      reuse = True
 
 
   def get_sent_encoder(self, config, scope):
@@ -121,23 +124,6 @@ class MTLManager(ManagerBase):
     n_losses = len(self.losses)
     loss = np.array([0.0] * n_losses)
 
-    # Pass a batch of each dataset that is necessary for each task.
-    # dataset_names = list(OrderedSet([t.dataset for t in self.tasks.values() if hasattr(t, 'dataset')]))
-    # datasets = OrderedSet([batches[d] for d in dataset_names]) 
-    # for i, data in enumerate(zip(*datasets)):
-    #   raw_batch = {t.dataset:data[dataset_names.index(t.dataset)] 
-    #                for t in self.tasks.values()}
-    #   input_feed = self.get_input_feed(raw_batch, is_training)
-    #   t = time.time()
-    #   outputs = self.sess.run(output_feed, input_feed)
-    #   t = time.time() - t
-    #   step_loss = np.array([l for l in outputs[:n_losses]])
-    #   print(self.epoch.eval(), i, step_loss, 'step_time: %f' % t)
-    #   loss += step_loss
-
-    #   if math.isnan(step_loss[0]):
-    #     pprint(raw_batch)
-    #     raise ValueError("Nan loss detection ...")
     num_steps = [0 for _ in self.tasks]
     loss = [0.0 for _ in self.tasks]
     is_uncomplete = True
@@ -153,7 +139,13 @@ class MTLManager(ManagerBase):
           if is_training:
             output_feed.append(self.updates[task_name])
           t = time.time()
+          #self.tasks[task_name].add_step()
+
+          # for j, r in enumerate(self.sess.run(task_model.debug_ops, input_feed)):
+          #   print (task_model.debug_ops[j], r)
           outputs = self.sess.run(output_feed, input_feed)
+          #for j, r in enumerate(self.sess.run(task_model.debug_ops, input_feed)):
+          #  print (task_model.debug_ops[j], r)
           t = time.time() - t
           step_loss = outputs[0]
 
@@ -162,12 +154,24 @@ class MTLManager(ManagerBase):
                 'task: %s,' % task_name, 
                 'step_loss: %f,' % step_loss, 
                 'step_time: %f,' % t)
+
+          if math.isnan(step_loss):
+            raise ValueError(
+              "Nan loss detection ... (%s: step %d)" % (task_name, num_steps[i])
+            )
           num_steps[i] += 1
           loss[i] += step_loss
           is_uncomplete = True
-      
         except StopIteration as e:
           pass
+        except ValueError as e:
+          print (e)
+          print('text.raw\n', raw_batch.text.raw)
+          print('text.word\n', raw_batch.text.word)
+          print('text.char\n', raw_batch.text.char)
+          print('rel.word\n', raw_batch.rel.word)
+          print('rel.char\n', raw_batch.rel.char)
+          exit(1)
 
     epoch_time = (time.time() - start_time)
     loss = [l/ns for l, ns in zip(loss, num_steps)]

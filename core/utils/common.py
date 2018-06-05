@@ -95,8 +95,8 @@ class recDotDict(dict):
 
 
 class rec_defaultdict(collections.defaultdict):
-    def __init__(self):
-        self.default_factory = type(self)
+  def __init__(self):
+    self.default_factory = type(self)
 
 class recDotDefaultDict(collections.defaultdict):
   __getattr__ = collections.defaultdict.__getitem__
@@ -106,7 +106,6 @@ class recDotDefaultDict(collections.defaultdict):
     super(recDotDefaultDict, self).__init__(recDotDefaultDict)
 
 # TODO : batchを再帰的にたどってdictの配列に戻せないかな
-
 def flatten_batch(batch):
   '''
   e.g.

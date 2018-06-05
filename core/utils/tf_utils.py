@@ -51,14 +51,13 @@ def linear(inputs, output_size=None,
     #if out_keep_prob is not None and out_keep_prob < 1.0:
     return outputs
 
-def cnn(inputs, filter_sizes=[3, 4, 5], num_filters=50):
+def cnn(inputs, filter_sizes=[3, 4, 5], num_filters=50, scope=None):
   num_words = shape(inputs, 0)
   num_chars = shape(inputs, 1)
   input_size = shape(inputs, 2)
   outputs = []
-  with tf.variable_scope('CNN'):
+  with tf.variable_scope(scope or 'CNN'):
     for i, filter_size in enumerate(filter_sizes):
-    #with tf.variable_scope("conv_{}".format(i)):
       with tf.variable_scope("conv_width{}".format(filter_size)):
         w = tf.get_variable("w", [filter_size, input_size, num_filters])
         b = tf.get_variable("b", [num_filters])

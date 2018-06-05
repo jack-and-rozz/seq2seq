@@ -141,6 +141,7 @@ class MultiEncoderWrapper(SentenceEncoder):
     self.encoders = encoders
     self.is_training = encoders[0].is_training
     self.vocab = encoders[0].vocab
+    self.word_encoder = encoders[0].word_encoder
     self.w_embeddings = encoders[0].w_embeddings
     self.c_embeddings = encoders[0].c_embeddings
     self.cbase = encoders[0].cbase

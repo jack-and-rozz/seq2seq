@@ -41,6 +41,10 @@ class ManagerBase(object):
 class ModelBase(object):
   def __init__(self, sess, config):
     self.sess = sess
+    self.debug_ops = []
+    # self.step = tf.get_variable(
+    #   "step", trainable=False, shape=[],  dtype=tf.int32,
+    #   initializer=tf.constant_initializer(0, dtype=tf.int32)) 
 
   def initialize_embeddings(self, name, emb_shape, initializer=None, 
                             trainable=True):
@@ -53,3 +57,6 @@ class ModelBase(object):
   def get_input_feed(self, batch, is_training):
     return {}
 
+
+  def add_step(self):
+    self.sess.run(tf.assign(self.epoch, tf.add(self.step, tf.constant(1, dtype=tf.int32))))

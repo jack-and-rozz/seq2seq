@@ -184,7 +184,9 @@ class GraphLinkPrediction(ModelBase):
     with tf.variable_scope('Relation') as scope:
       # Stop gradient to prevent biased learning to the words used as relation labels.
       rel_outputs = tf.stop_gradient(self.encoder.word_encoder.encode([self.rel_ph.word, self.rel_ph.char])) 
-      rel_outputs = cnn(rel_outputs, filter_sizes=[2, 3])
+      rel_outputs_bak = rel_outputs
+      with tf.name_scope("compose_words"):
+        rel_outputs = cnn(rel_outputs, filter_sizes=[2, 3])
 
     with tf.variable_scope('Object') as scope:
       obj_outputs = extract_span(outputs, self.obj_ph)
@@ -192,11 +194,17 @@ class GraphLinkPrediction(ModelBase):
     with tf.variable_scope('Inference'):
       outputs = self.inference(subj_outputs, rel_outputs, obj_outputs) # [batch_size, 1]
       self.outputs = tf.round(tf.reshape(outputs, [shape(outputs, 0)])) # [batch_size]
-
     with tf.name_scope("Loss"):
       self.losses = self.cross_entropy(outputs, self.target_ph)
       self.loss = tf.reduce_mean(self.losses)
-    self.debug_ops = [self.sentence_length]
+    self.debug_ops = [
+      self.sentence_length, 
+      tf.reshape(outputs, [shape(outputs, 0)]),
+      #subj_outputs,
+      rel_outputs, 
+      rel_outputs_bak
+      #obj_outputs
+    ]
 
   def inference(self, subj, rel, obj):
     with tf.variable_scope('ffnn1'):

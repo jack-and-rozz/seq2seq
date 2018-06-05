@@ -165,6 +165,7 @@ class MTLManager(ManagerBase):
       save_as_best = False
       if self.use_coref:
         coref_f1 = self.c_test(model=m, use_test_data=False)
+        coref_f1 = sum(coref_f1) / len(coref_f1)
         if coref_f1 > max_coref_f1:
           self.logger.info("Epoch %d (valid): coref max f1 update (%.3f->%.3f): " % (m.epoch.eval(), max_coref_f1, coref_f1))
           save_as_best = True
@@ -210,7 +211,7 @@ class MTLManager(ManagerBase):
       m = self.create_model(self.config, mode, checkpoint_path=best_ckpt)
     else:
       best_ckpt = None
-    
+
     batches = self.get_batch(mode)[m.tasks.coref.dataset]
 
     if best_ckpt and os.path.exists(best_ckpt + '.index'):
@@ -223,6 +224,9 @@ class MTLManager(ManagerBase):
       eval_summary, f1, results = m.tasks.coref.test(
         batches, conll_eval_path, mode)
       sys.stdout = sys.__stdout__
+
+    muc_f1, bcub_f1, ceaf_f1 = f1
+    self.logger.info("Epoch %d (%s): MUC, B^3, Ceaf, ave_f1 = (%.3f, %.3f, %.3f, %.3f): " % (m.epoch.eval(), mode, muc_f1, bcub_f1, ceaf_f1, sum(f1)/len(f1)))
 
 
     self.summary_writer.add_summary(eval_summary, m.global_step.eval())
@@ -322,6 +326,8 @@ class MTLManager(ManagerBase):
     return
 
 def main(args):
+  # if args.log_error:
+  #   sys.stderr = open(os.path.join(args.model_root_path, '%s.err'  % args.mode), 'w')
   tf_config = tf.ConfigProto(
     log_device_placement=False,
     allow_soft_placement=True, # GPU上で実行できない演算を自動でCPUに
@@ -335,28 +341,7 @@ def main(args):
     args = args
     manager = MTLManager(args, sess)
     getattr(manager, args.mode)()
-    return 
-    if args.mode == "train":
-      # TODO: set a process that simultaneously evaluate the model at each epoch.
-      #       (Some techniques are required to parallely run instance methods...)
-      # with tf.device('/cpu:0'):
-      #    worker = mp.Process(target=manager.c_test, kwargs={'mode':'valid'})
-      #    worker.daemon = True 
-      #    worker.start()
-      manager.train()
-    elif args.mode == "g_test":
-      manager.g_test()
-    elif args.mode == "c_test":
-      manager.c_test()
-    elif args.mode == "g_demo":
-      manager.g_demo()
-    elif args.mode == "c_demo":
-      manager.c_demo()
-    elif args.mode == 'debug':
-      manager.self_test()
-    else:
-      sys.stderr.write("Unknown mode.\n")
-      exit(1)
+    return
 
 
 if __name__ == "__main__":
@@ -373,5 +358,7 @@ if __name__ == "__main__":
                       type=common.str2bool, help ='')
   parser.add_argument('--cleanup', default=False,
                       type=common.str2bool, help ='')
+  #parser.add_argument('-le', '--log_error', default=False,
+  #                    type=common.str2bool, help ='')
   args = parser.parse_args()
   main(args)

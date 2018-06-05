@@ -370,7 +370,7 @@ class CoreferenceResolution(ModelBase):
 
     summary_dict = {}
     for k, evaluator in sorted(list(mention_evaluators.items()), key=operator.itemgetter(0)):
-      tags = ["{} @ {}".format(t, _k_to_tag(k)) for t in ("R", "P", "F")]
+      tags = ["mention/{} @ {}".format(t, _k_to_tag(k)) for t in ("R", "P", "F")]
       results_to_print = []
       for t, v in zip(tags, evaluator.metrics()):
         results_to_print.append("{:<10}: {:.2f}".format(t, v))
@@ -378,7 +378,16 @@ class CoreferenceResolution(ModelBase):
       print(", ".join(results_to_print))
 
     conll_results = conll.evaluate_conll(gold_path, coref_predictions, official_stdout)
-    average_f1 = sum(results["f"] for results in list(conll_results.values())) / len(conll_results)
+    for metric in conll_results:
+      for val_type in ('p', 'r', 'f'):
+        summary_dict["coref/%s/%s/%s" % (mode, metric, val_type)] = conll_results[metric][val_type]
+      print ("%s (%s) : %s" % (
+        metric, 
+        ", ".join(val_type), 
+        " ".join(["%.2f" % x for x in conll_results[metric].values()])
+      ))
+
+    average_f1 = sum(conll_res["f"] for conll_res in list(conll_results.values())) / len(conll_results)
     summary_dict["coref/%s/Average F1 (conll)" % mode] = average_f1
     print("Average F1 (conll): {:.2f}%".format(average_f1))
 
@@ -394,7 +403,8 @@ class CoreferenceResolution(ModelBase):
     for doc_key, aligned in zip(results, aligned_results):
       results[doc_key]['aligned_results'] = aligned
 
-    return util.make_summary(summary_dict), average_f1, results
+    return util.make_summary(summary_dict), [values['f'] for metric, values in conll_results.items()], results
+    #return util.make_summary(summary_dict), average_f1, results
 
   def evaluate_mentions(self, candidate_starts, candidate_ends, mention_starts, mention_ends, mention_scores, gold_starts, gold_ends, example, evaluators):
     text_length = sum(len(s) for s in example["w_sentences"])
