@@ -21,7 +21,7 @@ class ManagerBase(object):
         config.learning_rate, self.global_step,
         config.decay_frequency, config.decay_rate, staircase=True)
 
-  def get_updates(self, loss):
+  def get_updates(self, loss, global_step):
     with tf.name_scope("update"):
       # TODO: root_scopeの下でroot_scopeを含む変数を呼んでるからスコープが重なる
       params = tf.contrib.framework.get_trainable_variables()
@@ -31,7 +31,7 @@ class ManagerBase(object):
                                                     self.max_gradient_norm)
       grad_and_vars = [(g, v) for g, v in zip(clipped_gradients, params)]
       updates = opt.apply_gradients(
-        grad_and_vars, global_step=self.global_step)
+        grad_and_vars, global_step=global_step)
     return updates
 
   def add_epoch(self):
@@ -42,9 +42,9 @@ class ModelBase(object):
   def __init__(self, sess, config):
     self.sess = sess
     self.debug_ops = []
-    # self.step = tf.get_variable(
-    #   "step", trainable=False, shape=[],  dtype=tf.int32,
-    #   initializer=tf.constant_initializer(0, dtype=tf.int32)) 
+    self.global_step = tf.get_variable(
+      "global_step", trainable=False, shape=[],  dtype=tf.int32,
+      initializer=tf.constant_initializer(0, dtype=tf.int32)) 
 
   def initialize_embeddings(self, name, emb_shape, initializer=None, 
                             trainable=True):
@@ -59,4 +59,9 @@ class ModelBase(object):
 
 
   def add_step(self):
-    self.sess.run(tf.assign(self.epoch, tf.add(self.step, tf.constant(1, dtype=tf.int32))))
+    self.sess.run(tf.assign(self.global_step, tf.add(self.global_step, tf.constant(1, dtype=tf.int32))))
+
+  def update_max_score(self, score):
+    # todo
+    pass
+  

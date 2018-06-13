@@ -113,7 +113,7 @@ def evaluate(flat_batches, predictions, vocab=None):
       else:
         raise ValueError
     print("TP, FN, FP, TN = %d, %d, %d, %d\n" % (TP, FN, FP, TN))
-    acc = 1.0 * (TP+TN) / len(labels)
+    acc = 1.0 * (TP+TN) / (TP+TN+FP+FN)
     prec = 1.0 * (TP) / (TP+FP) if TP+FP > 0 else 0
     recall = 1.0 * (TP) / (TP+FN) if TP+FN > 0 else 0
     return acc, prec, recall
@@ -144,6 +144,9 @@ class GraphLinkPrediction(ModelBase):
     self.is_training = encoder.is_training
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
     self.ffnn_size = config.ffnn_size 
+    self.cnn_filter_widths = config.cnn.filter_widths
+    self.cnn_filter_size = config.cnn.filter_size
+
     self.scoring_function = distmult
     #self.max_batch_size = config.batch_size # for tf.dynamic_partition
 
@@ -175,35 +178,36 @@ class GraphLinkPrediction(ModelBase):
       self.sentence_length = tf.count_nonzero(self.text_ph.word, axis=1)
 
     with tf.name_scope('Encoder'):
-      text_emb, outputs, state = self.encoder.encode([self.text_ph.word, self.text_ph.char], self.sentence_length)
+      text_emb, encoder_outputs, encoder_state = self.encoder.encode([self.text_ph.word, self.text_ph.char], self.sentence_length)
 
 
     with tf.variable_scope('Subject') as scope:
-      subj_outputs = extract_span(outputs, self.subj_ph)
+      subj_outputs = extract_span(encoder_outputs, self.subj_ph)
 
     with tf.variable_scope('Relation') as scope:
       # Stop gradient to prevent biased learning to the words used as relation labels.
-      rel_outputs = tf.stop_gradient(self.encoder.word_encoder.encode([self.rel_ph.word, self.rel_ph.char])) 
-      rel_outputs_bak = rel_outputs
+      rel_words_emb = tf.stop_gradient(self.encoder.word_encoder.encode([self.rel_ph.word, self.rel_ph.char])) 
       with tf.name_scope("compose_words"):
-        rel_outputs = cnn(rel_outputs, filter_sizes=[2, 3])
+        rel_outputs = cnn(rel_words_emb, 
+                          self.cnn_filter_widths, 
+                          self.cnn_filter_size)
 
     with tf.variable_scope('Object') as scope:
-      obj_outputs = extract_span(outputs, self.obj_ph)
+      obj_outputs = extract_span(encoder_outputs, self.obj_ph)
 
     with tf.variable_scope('Inference'):
-      outputs = self.inference(subj_outputs, rel_outputs, obj_outputs) # [batch_size, 1]
-      self.outputs = tf.round(tf.reshape(outputs, [shape(outputs, 0)])) # [batch_size]
+      score_outputs = self.inference(subj_outputs, rel_outputs, obj_outputs) # [batch_size, 1]
+      self.outputs = tf.round(tf.reshape(score_outputs, [shape(score_outputs, 0)])) # [batch_size]
     with tf.name_scope("Loss"):
-      self.losses = self.cross_entropy(outputs, self.target_ph)
+      self.losses = self.cross_entropy(score_outputs, self.target_ph)
       self.loss = tf.reduce_mean(self.losses)
     self.debug_ops = [
       self.sentence_length, 
-      tf.reshape(outputs, [shape(outputs, 0)]),
-      #subj_outputs,
-      rel_outputs, 
-      rel_outputs_bak
-      #obj_outputs
+      tf.is_nan(encoder_outputs),
+      tf.is_nan(subj_outputs),
+      tf.is_nan(rel_outputs),
+      tf.is_nan(obj_outputs),
+      tf.is_nan(score_outputs),
     ]
 
   def inference(self, subj, rel, obj):
@@ -257,6 +261,12 @@ class GraphLinkPrediction(ModelBase):
 
     sys.stdout = open(output_path, 'w') if output_path else sys.stdout
     acc, prec, recall = evaluate(used_batches, results, vocab=self.vocab)
+    print ('acc, p, r, f = %.2f %.2f %.2f %.2f' % (
+      100.0 * acc,
+      100.0 * prec,
+      100.0 * recall,
+      100.0 * (prec + recall) /2
+    ))
     sys.stdout = sys.__stdout__
 
     summary_dict = {}

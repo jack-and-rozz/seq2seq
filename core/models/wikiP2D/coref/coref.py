@@ -378,12 +378,13 @@ class CoreferenceResolution(ModelBase):
       print(", ".join(results_to_print))
 
     conll_results = conll.evaluate_conll(gold_path, coref_predictions, official_stdout)
+    val_types = ('p', 'r', 'f')
     for metric in conll_results:
-      for val_type in ('p', 'r', 'f'):
+      for val_type in val_types:
         summary_dict["coref/%s/%s/%s" % (mode, metric, val_type)] = conll_results[metric][val_type]
       print ("%s (%s) : %s" % (
         metric, 
-        ", ".join(val_type), 
+        ", ".join(val_types), 
         " ".join(["%.2f" % x for x in conll_results[metric].values()])
       ))
 
@@ -394,7 +395,7 @@ class CoreferenceResolution(ModelBase):
     p,r,f = coref_evaluator.get_prf()
     summary_dict["coref/%s/Average F1 (py)" % mode] = f
     print("Average F1 (py): {:.2f}%".format(f * 100))
-    summary_dict["coref/%sls/Average precision (py)" % mode] = p
+    summary_dict["coref/%s/Average precision (py)" % mode] = p
     print("Average precision (py): {:.2f}%".format(p * 100))
     summary_dict["coref/%s/Average recall (py)" % mode] = r
     print("Average recall (py): {:.2f}%".format(r * 100))

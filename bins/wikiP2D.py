@@ -154,16 +154,18 @@ class MTLManager(ManagerBase):
 
     for epoch in range(m.epoch.eval(), self.config.max_epoch):
       batches = self.get_batch('train')
+      self.logger.info("Epoch %d: Start" % epoch)
       epoch_time, train_loss, summary = m.train(batches, summary_writer=self.summary_writer)
       self.logger.info("Epoch %d (train): epoch-time %.2f, loss %s" % (epoch, epoch_time, " ".join(["%.3f" % l for l in train_loss])))
 
       batches = self.get_batch('valid')
       epoch_time,  valid_loss, summary = m.valid(batches)
-      self.summary_writer.add_summary(summary, m.global_step.eval())
+      self.summary_writer.add_summary(summary, m.epoch.eval())
       self.logger.info("Epoch %d (valid): epoch-time %.2f, loss %s" % (epoch, epoch_time, " ".join(["%.3f" % l for l in valid_loss])))
       
       save_as_best = False
       if self.use_coref:
+        # Do validation.
         coref_f1 = self.c_test(model=m, use_test_data=False)
         coref_f1 = sum(coref_f1) / len(coref_f1)
         if coref_f1 > max_coref_f1:
@@ -171,7 +173,11 @@ class MTLManager(ManagerBase):
           save_as_best = True
           max_coref_f1 = coref_f1
 
+        # Do testing. (only for analysis)
+        coref_f1 = self.c_test(model=m, use_test_data=True)
+
       if self.use_graph:
+        # Do validation.
         acc, prec, recall = self.g_test(model=m, use_test_data=False)
         graph_f1 = (prec + recall) /2
         if graph_f1 > max_graph_f1:
@@ -179,6 +185,9 @@ class MTLManager(ManagerBase):
           if not self.use_coref:
             save_as_best = True
           max_graph_f1 = graph_f1
+
+        # Do testing. (only for analysis)
+        acc, prec, recall = self.g_test(model=m, use_test_data=True)
 
       checkpoint_path = self.checkpoints_path + "/model.ckpt"
       if epoch == 0 or (epoch+1) % 1 == 0:
@@ -229,7 +238,7 @@ class MTLManager(ManagerBase):
     self.logger.info("Epoch %d (%s): MUC, B^3, Ceaf, ave_f1 = (%.3f, %.3f, %.3f, %.3f): " % (m.epoch.eval(), mode, muc_f1, bcub_f1, ceaf_f1, sum(f1)/len(f1)))
 
 
-    self.summary_writer.add_summary(eval_summary, m.global_step.eval())
+    self.summary_writer.add_summary(eval_summary, m.epoch.eval())
     with open(output_path + '.detail', 'w') as f:
       sys.stdout = f
       m.tasks.coref.print_results(results)
@@ -267,7 +276,7 @@ class MTLManager(ManagerBase):
     (acc, precision, recall), summary = m.tasks.graph.test(
       batches, mode, output_path=output_path)
     self.logger.info("Epoch %d (%s): accuracy, precision, recall, f1 = (%.3f, %.3f, %.3f, %.3f): " % (m.epoch.eval(), mode, acc, precision, recall, (precision+recall)/2)) 
-    self.summary_writer.add_summary(summary, m.global_step.eval())
+    self.summary_writer.add_summary(summary, m.epoch.eval())
     return acc, precision, recall
   
   def g_demo(self):

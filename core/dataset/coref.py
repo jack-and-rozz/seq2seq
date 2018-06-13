@@ -13,7 +13,6 @@ from core.dataset.base import DatasetBase
 from core.vocabulary.base import _UNK, PAD_ID, fill_empty_brackets
 from core.utils.common import dotDict, flatten, pad_sequences
 
-
 class FeatureVocab(object):
   def __init__(self, all_tokens):
     counter = Counter(all_tokens)

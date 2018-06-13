@@ -85,7 +85,7 @@ class MTLManager(ManagerBase):
     reuse = False
     #with tf.variable_scope('update', reuse=reuse) as scope:
     for task_name, task_model in self.tasks.items():
-      self.updates[task_name] = self.get_updates(task_model.loss) #, scope=scope)
+      self.updates[task_name] = self.get_updates(task_model.loss, self.global_step) #, scope=scope)
       reuse = True
 
 
@@ -124,7 +124,7 @@ class MTLManager(ManagerBase):
     n_losses = len(self.losses)
     loss = np.array([0.0] * n_losses)
 
-    num_steps = [0 for _ in self.tasks]
+    num_steps_in_epoch = [0 for _ in self.tasks]
     loss = [0.0 for _ in self.tasks]
     is_uncomplete = True
     while is_uncomplete:
@@ -138,43 +138,54 @@ class MTLManager(ManagerBase):
           output_feed = [task_model.loss]
           if is_training:
             output_feed.append(self.updates[task_name])
+            self.tasks[task_name].add_step()
           t = time.time()
-          #self.tasks[task_name].add_step()
 
-          # for j, r in enumerate(self.sess.run(task_model.debug_ops, input_feed)):
-          #   print (task_model.debug_ops[j], r)
+          ##### DEBUG
+          # print ('======= epoch %d, step%d, before ======' % (self.epoch.eval(), num_steps_in_epoch[i]))
+          # tmp = []
+          # for j, ops_res in enumerate(self.sess.run(task_model.debug_ops, input_feed)):
+          #   print (task_model.debug_ops[j], True in np.array(ops_res).flatten())
+          #   tmp.append(True in np.array(ops_res).flatten())
+          # if True in tmp:
+          #   raise ValueError
+
+          # print ('======= epoch %d, step%d, after ======' % (self.epoch.eval(), num_steps_in_epoch[i]))
+          # for j, ops_res in enumerate(self.sess.run(task_model.debug_ops, input_feed)):
+          #   print (task_model.debug_ops[j], True in np.array(ops_res).flatten())
+
           outputs = self.sess.run(output_feed, input_feed)
-          #for j, r in enumerate(self.sess.run(task_model.debug_ops, input_feed)):
-          #  print (task_model.debug_ops[j], r)
           t = time.time() - t
           step_loss = outputs[0]
 
           print('epoch: %d,' % self.epoch.eval(), 
-                'step: %d,' % num_steps[i],
+                'step: %d,' % num_steps_in_epoch[i],
                 'task: %s,' % task_name, 
                 'step_loss: %f,' % step_loss, 
                 'step_time: %f,' % t)
 
           if math.isnan(step_loss):
             raise ValueError(
-              "Nan loss detection ... (%s: step %d)" % (task_name, num_steps[i])
+              "Nan loss detection ... (%s: step %d)" % (task_name, num_steps_in_epoch[i])
             )
-          num_steps[i] += 1
+          num_steps_in_epoch[i] += 1
           loss[i] += step_loss
           is_uncomplete = True
         except StopIteration as e:
           pass
         except ValueError as e:
           print (e)
+          print('subj.position\n', raw_batch.subj.position)
+          print('obj.position\n', raw_batch.obj.position)
           print('text.raw\n', raw_batch.text.raw)
-          print('text.word\n', raw_batch.text.word)
-          print('text.char\n', raw_batch.text.char)
-          print('rel.word\n', raw_batch.rel.word)
-          print('rel.char\n', raw_batch.rel.char)
+          #print('text.word\n', raw_batch.text.word)
+          # print('text.char\n', raw_batch.text.char)
+          # print('rel.word\n', raw_batch.rel.word)
+          # print('rel.char\n', raw_batch.rel.char)
           exit(1)
 
     epoch_time = (time.time() - start_time)
-    loss = [l/ns for l, ns in zip(loss, num_steps)]
+    loss = [l/num_steps for l, num_steps in zip(loss, num_steps_in_epoch)]
 
     mode = 'train' if is_training else 'valid'
     summary_dict = {'%s/%s/loss' % (task_name, mode): l for task_name, l in zip(self.tasks, loss)}
@@ -188,7 +199,7 @@ class MTLManager(ManagerBase):
 class MeanLoss(MTLManager):
   def get_loss_and_updates(self, losses):
     loss = tf.reduce_mean(losses)
-    updates = self.get_updates(loss)
+    updates = self.get_updates(loss, self.global_step)
     return loss, updates
 
 class WeightedLoss(MTLManager):
@@ -196,7 +207,7 @@ class WeightedLoss(MTLManager):
     #weights = tf.get_variable("loss_weights", [len(losses)])
     #loss = tf.reduce_sum(tf.nn.softmax(weights) * losses)
     loss = tf.reduce_mean(losses)
-    updates = self.get_updates(loss)
+    updates = self.get_updates(loss, self.global_step)
     return loss, updates
 
 

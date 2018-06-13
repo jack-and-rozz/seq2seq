@@ -111,6 +111,7 @@ class _WikiP2DDataset():
         (sent_id, (begin, end)) = link
         flatten_begin = begin + sum(num_words[:sent_id])
         flatten_end = end + sum(num_words[:sent_id])
+        assert flatten_begin >= 0 and flatten_end >= 0
         links[qid] = (flatten_begin, flatten_end)
       article.link = links
       article.text = flatten(raw_text)
@@ -134,6 +135,7 @@ class _WikiP2DDataset():
 
     def triple2entry(triple, article, label):
       entry = recDotDefaultDict()
+      entry.qid = article.qid
 
       subj_qid, rel_pid, obj_qid = triple
       rel = self.properties[rel_pid].name.split()
