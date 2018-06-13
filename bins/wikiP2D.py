@@ -138,8 +138,6 @@ class MTLManager(ManagerBase):
 
   def train(self):
     m = self.create_model(self.config, 'train')
-    max_coref_f1 = 0
-    max_graph_f1 = 0
 
     if m.epoch.eval() == 0:
       if self.use_coref:
@@ -166,34 +164,38 @@ class MTLManager(ManagerBase):
       save_as_best = False
       if self.use_coref:
         # Do validation.
-        coref_f1 = self.c_test(model=m, use_test_data=False)
-        coref_f1 = sum(coref_f1) / len(coref_f1)
-        if coref_f1 > max_coref_f1:
-          self.logger.info("Epoch %d (valid): coref max f1 update (%.3f->%.3f): " % (m.epoch.eval(), max_coref_f1, coref_f1))
+        valid_coref_f1 = self.c_test(model=m, use_test_data=False)
+        valid_coref_f1 = sum(valid_coref_f1) / len(valid_coref_f1)
+        valid_max_coref_f1 = m.tasks.coref.max_score.eval()
+        if valid_coref_f1 > valid_max_coref_f1:
+          self.logger.info("Epoch %d (valid): coref max f1 update (%.3f->%.3f): " % (m.epoch.eval(), max_coref_f1, valid_coref_f1))
           save_as_best = True
-          max_coref_f1 = coref_f1
+          m.tasks.coref.update_max_score(valid_coref_f1)
 
         # Do testing. (only for analysis)
-        coref_f1 = self.c_test(model=m, use_test_data=True)
+        test_coref_f1 = self.c_test(model=m, use_test_data=True)
 
       if self.use_graph:
         # Do validation.
         acc, prec, recall = self.g_test(model=m, use_test_data=False)
-        graph_f1 = (prec + recall) /2
-        if graph_f1 > max_graph_f1:
-          self.logger.info("Epoch %d (valid): graph max f1 update (%.3f->%.3f): " % (m.epoch.eval(), max_graph_f1, graph_f1))
+        valid_graph_f1 = (prec + recall) /2
+        valid_max_graph_f1 = m.tasks.graph.max_score.eval()
+        if valid_graph_f1 > valid_max_graph_f1:
+          self.logger.info("Epoch %d (valid): graph max f1 update (%.3f->%.3f): " % (m.epoch.eval(), valid_max_graph_f1, valid_graph_f1))
           if not self.use_coref:
             save_as_best = True
-          max_graph_f1 = graph_f1
+          m.tasks.graph.update_max_score(valid_graph_f1)
 
         # Do testing. (only for analysis)
-        acc, prec, recall = self.g_test(model=m, use_test_data=True)
+        #acc, prec, recall = self.g_test(model=m, use_test_data=True)
+        #test_graph_f1 = (prec + recall) /2
 
       checkpoint_path = self.checkpoints_path + "/model.ckpt"
       if epoch == 0 or (epoch+1) % 1 == 0:
         self.save_model(m, save_as_best=save_as_best)
 
       m.add_epoch()
+      #tf.reset_default_graph() 
 
   def save_model(self, model, save_as_best=False):
     checkpoint_path = self.checkpoints_path + '/model.ckpt'

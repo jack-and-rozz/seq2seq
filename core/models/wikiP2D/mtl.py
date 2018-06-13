@@ -85,7 +85,10 @@ class MTLManager(ManagerBase):
     reuse = False
     #with tf.variable_scope('update', reuse=reuse) as scope:
     for task_name, task_model in self.tasks.items():
-      self.updates[task_name] = self.get_updates(task_model.loss, self.global_step) #, scope=scope)
+      #self.updates[task_name] = self.get_updates(task_model.loss, self.global_step) #, scope=scope)
+      with tf.variable_scope(task_name):
+        self.updates[task_name] = self.get_updates(task_model.loss, 
+                                                   task_model.global_step) 
       reuse = True
 
 
@@ -163,7 +166,7 @@ class MTLManager(ManagerBase):
                 'task: %s,' % task_name, 
                 'step_loss: %f,' % step_loss, 
                 'step_time: %f,' % t)
-
+          sys.stdout.flush()
           if math.isnan(step_loss):
             raise ValueError(
               "Nan loss detection ... (%s: step %d)" % (task_name, num_steps_in_epoch[i])
@@ -175,9 +178,9 @@ class MTLManager(ManagerBase):
           pass
         except ValueError as e:
           print (e)
-          print('subj.position\n', raw_batch.subj.position)
-          print('obj.position\n', raw_batch.obj.position)
-          print('text.raw\n', raw_batch.text.raw)
+          #print('subj.position\n', raw_batch.subj.position)
+          #print('obj.position\n', raw_batch.obj.position)
+          #print('text.raw\n', raw_batch.text.raw)
           #print('text.word\n', raw_batch.text.word)
           # print('text.char\n', raw_batch.text.char)
           # print('rel.word\n', raw_batch.rel.word)

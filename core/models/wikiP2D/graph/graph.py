@@ -248,7 +248,7 @@ class GraphLinkPrediction(ModelBase):
     return input_feed
 
   def test(self, batches, mode, output_path=None):
-    t = time.time()
+    start_time = time.time()
     results = []
     used_batches = []
     for i, batch in enumerate(batches):
@@ -258,7 +258,7 @@ class GraphLinkPrediction(ModelBase):
       used_batches += flatten_batch(batch)
       results.append(outputs)
     results = np.concatenate(results, axis=0)
-
+    epoch_time = time.time() - start_time 
     sys.stdout = open(output_path, 'w') if output_path else sys.stdout
     acc, prec, recall = evaluate(used_batches, results, vocab=self.vocab)
     print ('acc, p, r, f = %.2f %.2f %.2f %.2f' % (
