@@ -24,15 +24,15 @@ class MTLManager(ManagerBase):
 
     #self.port = int(args.port) if args.port.isdigit() else None
     self.vocab = common.dotDict()
-
     # Load pretrained embeddings.
     self.vocab.word = VocabularyWithEmbedding(
-      config.embeddings_conf, config.w_vocab_size,
+      config.embeddings_conf, config.vocab_size.word,
       lowercase=config.lowercase,
-      normalize_digits=config.normalize_digits
+      normalize_digits=config.normalize_digits,
+      normalize_embedding=True
     )
     self.vocab.char = PredefinedCharVocab(
-      config.char_vocab_path, config.c_vocab_size,
+      config.char_vocab_path, config.vocab_size.char,
       lowercase=False,
     )
 
@@ -82,7 +82,7 @@ class MTLManager(ManagerBase):
   @common.timewatch()
   def create_model(self, config, mode, checkpoint_path=None):
     mtl_model_type = getattr(mtl_model, config.model_type)
-    m = mtl_model_type(self.sess, config, self.vocab) # Define computation graph
+    self.model = m = mtl_model_type(self.sess, config, self.vocab) # Define computation graph
 
     if not checkpoint_path or not os.path.exists(checkpoint_path + '.index'):
       ckpt = tf.train.get_checkpoint_state(self.checkpoints_path)
@@ -164,20 +164,21 @@ class MTLManager(ManagerBase):
       save_as_best = False
       if self.use_coref:
         # Do validation.
-        valid_coref_f1 = self.c_test(model=m, use_test_data=False)
+        valid_coref_f1 = self.c_test(model=m, use_test_data=False, add_summary=True)
         valid_coref_f1 = sum(valid_coref_f1) / len(valid_coref_f1)
         valid_max_coref_f1 = m.tasks.coref.max_score.eval()
         if valid_coref_f1 > valid_max_coref_f1:
-          self.logger.info("Epoch %d (valid): coref max f1 update (%.3f->%.3f): " % (m.epoch.eval(), max_coref_f1, valid_coref_f1))
+          self.logger.info("Epoch %d (valid): coref max f1 update (%.3f->%.3f): " % (m.epoch.eval(), valid_max_coref_f1, valid_coref_f1))
           save_as_best = True
           m.tasks.coref.update_max_score(valid_coref_f1)
 
         # Do testing. (only for analysis)
-        test_coref_f1 = self.c_test(model=m, use_test_data=True)
+        test_coref_f1 = self.c_test(model=m, use_test_data=True, add_summary=True)
 
       if self.use_graph:
         # Do validation.
-        acc, prec, recall = self.g_test(model=m, use_test_data=False)
+        acc, prec, recall = self.g_test(model=m, use_test_data=False, 
+                                        add_summary=True)
         valid_graph_f1 = (prec + recall) /2
         valid_max_graph_f1 = m.tasks.graph.max_score.eval()
         if valid_graph_f1 > valid_max_graph_f1:
@@ -187,8 +188,9 @@ class MTLManager(ManagerBase):
           m.tasks.graph.update_max_score(valid_graph_f1)
 
         # Do testing. (only for analysis)
-        #acc, prec, recall = self.g_test(model=m, use_test_data=True)
-        #test_graph_f1 = (prec + recall) /2
+        acc, prec, recall = self.g_test(model=m, use_test_data=True, 
+                                        add_summary=True)
+        test_graph_f1 = (prec + recall) /2
 
       checkpoint_path = self.checkpoints_path + "/model.ckpt"
       if epoch == 0 or (epoch+1) % 1 == 0:
@@ -210,7 +212,7 @@ class MTLManager(ManagerBase):
           os.system(cmd)
 
 
-  def c_test(self, model=None, use_test_data=True): # mode: 'valid' or 'test'
+  def c_test(self, model=None, use_test_data=True, add_summary=False): 
     m = model
     mode = 'test' if use_test_data else 'valid'
     conll_eval_path = os.path.join(
@@ -239,8 +241,8 @@ class MTLManager(ManagerBase):
     muc_f1, bcub_f1, ceaf_f1 = f1
     self.logger.info("Epoch %d (%s): MUC, B^3, Ceaf, ave_f1 = (%.3f, %.3f, %.3f, %.3f): " % (m.epoch.eval(), mode, muc_f1, bcub_f1, ceaf_f1, sum(f1)/len(f1)))
 
-
-    self.summary_writer.add_summary(eval_summary, m.epoch.eval())
+    if add_summary:
+      self.summary_writer.add_summary(eval_summary, m.epoch.eval())
     with open(output_path + '.detail', 'w') as f:
       sys.stdout = f
       m.tasks.coref.print_results(results)
@@ -261,7 +263,7 @@ class MTLManager(ManagerBase):
     # eval_data = [d for d in self.get_batch('valid')['coref']]
     # run_model(m, eval_data, self.port)
 
-  def g_test(self, model=None, use_test_data=True):
+  def g_test(self, model=None, use_test_data=True, add_summary=False):
     m = model
     mode = 'test' if use_test_data else 'valid'
 
@@ -278,7 +280,8 @@ class MTLManager(ManagerBase):
     (acc, precision, recall), summary = m.tasks.graph.test(
       batches, mode, output_path=output_path)
     self.logger.info("Epoch %d (%s): accuracy, precision, recall, f1 = (%.3f, %.3f, %.3f, %.3f): " % (m.epoch.eval(), mode, acc, precision, recall, (precision+recall)/2)) 
-    self.summary_writer.add_summary(summary, m.epoch.eval())
+    if add_summary:
+      self.summary_writer.add_summary(summary, m.epoch.eval())
     return acc, precision, recall
   
   def g_demo(self):
@@ -352,8 +355,20 @@ def main(args):
     args = args
     manager = MTLManager(args, sess)
     getattr(manager, args.mode)()
-    return
+    tf.get_variable_scope().reuse_variables()
+    if args.mode == 'c_test':
+      manager.c_test(model=manager.model, use_test_data=False)
+    if args.mode == 'g_test':
+      manager.g_test(model=manager.model, use_test_data=False)
 
+  if args.mode == 'train':
+    with tf.Graph().as_default(), tf.Session(config=tf_config) as sess:
+      manager = MTLManager(args, sess)
+      if 'coref' in config.tasks:
+        manager.c_test()
+      if 'graph' in config.tasks:
+        manager.g_test()
+    
 
 if __name__ == "__main__":
   # Common arguments are defined in base.py

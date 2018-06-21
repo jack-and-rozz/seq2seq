@@ -6,12 +6,99 @@ import tensorflow as tf
 from pprint import pprint
 
 from core.utils import tf_utils
-from core.utils.common import RED, BLACK, UNDERLINE, RESET, flatten, dotDict
+from core.utils.common import RED, BLUE, GREEN, YELLOW, MAGENTA, CYAN, BOLD, BLACK, UNDERLINE, RESET, flatten, dotDict
 from core.models.base import ModelBase
 from core.models.wikiP2D.coref import coref_ops, conll, metrics, util
 from core.vocabulary.base import _UNK, PAD_ID
 from collections import OrderedDict
 from copy import deepcopy
+
+def print_colored_text(raw_text, aligned, predicted_mentions, speakers):
+  """
+  Speakers: A list of speaker-id
+  """
+  
+  decorated_text = deepcopy(raw_text)
+  all_linked_mentions_in_gold = flatten([gold_cluster for gold_cluster, _ in aligned])
+  all_linked_mentions_in_pred = flatten([pred_cluster for _, pred_cluster in aligned])
+  all_extracted_mentions_in_pred = predicted_mentions
+
+  success_linked = []      # 正解 (blue)
+  failure_linked = []      # 別のクラスタにLinkされたgold (red)
+  failure_unlinked = []    # どこにもLinkされなかったgold (green)
+  failure_unextracted = [] # mention抽出の段階で省かれたgold (cyan)
+  failure_extracted = []   # goldに存在しないpredのmention (magenta)
+  failure_extracted_and_linked = []   # goldに存在せず，linkまでされたpredのmention (magenta+underline)
+  """
+  Color               | Gold |   Linking   | Extraction |
+  Blue                |  T   |     T       |    T      |
+  Red/Green           |  T   |     F       |    T      |
+  Cyan                |  T   |    T/F      |    F      |
+  Magenta (underline) |  F   |    T/F      |    T      |
+  """
+  for gold_cluster, pred_cluster in aligned:
+    for gm in gold_cluster:
+      if gm in pred_cluster:
+        success_linked.append(gm)
+      elif gm in all_linked_mentions_in_pred:
+        failure_linked.append(gm)
+      elif gm in all_extracted_mentions_in_pred:
+        failure_unlinked.append(gm)
+      else:
+        failure_unextracted.append(gm)
+  for pm in all_extracted_mentions_in_pred:
+    if pm not in all_linked_mentions_in_gold:
+      failure_extracted.append(pm)
+      if pm in all_linked_mentions_in_pred:
+        failure_extracted_and_linked.append(pm)
+
+  # Color words and spaces between the colored words as well for natural visualization in order from shorter ones.
+  spaces = [" " for x in range(len(decorated_text))] 
+  def _color(decorated_text, spaces, mentions_and_colors):
+    for (begin, end), color in mentions_and_colors:
+      for x in range(begin, end+1):
+        decorated_text[x] = color + decorated_text[x] + RESET
+        spaces[x] = color + spaces[x] + RESET if x < end else spaces[x]
+    return decorated_text, spaces
+
+
+  mentions_and_colors = [
+    (success_linked, BLUE+UNDERLINE),
+    (failure_linked, RED+UNDERLINE),
+    (failure_unlinked, GREEN+UNDERLINE),
+    (failure_unextracted, CYAN+UNDERLINE),
+    #(failure_extracted, MAGENTA),
+    (failure_extracted_and_linked, MAGENTA+UNDERLINE),
+  ]
+  
+  mentions_and_colors = flatten([[(mention, color) for mention in mentions] for mentions, color in mentions_and_colors])
+  mentions_and_colors = sorted(mentions_and_colors, key=lambda x: (x[0][1]-x[0][0]))
+  _color(decorated_text, spaces, mentions_and_colors)
+
+  # Enclose each mention with brackets in the order from the shortest one. (In order to put shorter mentions inside among overlapping ones)
+  decorated_punctuated_text = deepcopy(decorated_text)
+  gold_cluster_with_id = flatten([[(i, begin, end) for begin, end in gold_cluster] for i, (gold_cluster, _) in enumerate(aligned)])
+  gold_cluster_with_id = sorted(gold_cluster_with_id, key=lambda x: -(x[2]-x[1]))
+  for cluster_id, begin, end in gold_cluster_with_id:
+    decorated_punctuated_text[begin] = '[' + decorated_punctuated_text[begin]
+    decorated_punctuated_text[end] = decorated_punctuated_text[end] + BOLD + ']%02d' % cluster_id + RESET
+
+  # Concatenate spaces (to add underlines to the spaces between the words included in a mention as well)
+  decorated_text = [d+s for d, s in zip(decorated_text, spaces)]
+  decorated_punctuated_text = [d+s for d, s in zip(decorated_punctuated_text, spaces)]
+
+  # Add speakers info
+  current_speaker = speakers[0]
+  decorated_punctuated_text[0] = 'Speaker%d : ' % current_speaker + decorated_punctuated_text[0]
+  for i, speaker_id in enumerate(speakers):
+    if speaker_id != current_speaker:
+      current_speaker = speaker_id
+      decorated_punctuated_text[i-1] += '\n'
+      decorated_punctuated_text[i] = 'Speaker%d : ' % current_speaker + decorated_punctuated_text[i]
+
+  print("".join(decorated_punctuated_text) + '\n')
+  return decorated_text, (success_linked, failure_linked, failure_unlinked, failure_unextracted, failure_extracted_and_linked)
+
 
 class CoreferenceResolution(ModelBase):
   def __init__(self, sess, config, encoder, vocab,
@@ -38,14 +125,15 @@ class CoreferenceResolution(ModelBase):
 
     # Placeholders
     with tf.name_scope('Placeholder'):
-      self.w_sentences = tf.placeholder(
-        tf.int32, name='w_sentences',
+      self.text_ph = dotDict()
+      self.text_ph.word = tf.placeholder(
+        tf.int32, name='text.word',
         shape=[None, None]) if self.encoder.wbase else None
-      self.c_sentences = tf.placeholder(
-        tf.int32, name='c_sentences',
+      self.text_ph.char = tf.placeholder(
+        tf.int32, name='text.char',
         shape=[None, None, None]) if self.encoder.cbase else None
       # TODO: truncate_exampleしたものをw_sentencesにfeedした時、何故かtruncate前の単語数を数えてしまう。とりあえずsentence_lengthを直接feedすれば問題なし？
-      #self.sentence_length = tf.count_nonzero(self.w_sentences,
+      #self.sentence_length = tf.count_nonzero(self.text_ph.word,
       #                                        axis=1, dtype=tf.int32)
       self.sentence_length = tf.placeholder(tf.int32, shape=[None])
       self.speaker_ids = tf.placeholder(tf.int32, shape=[None], 
@@ -62,9 +150,8 @@ class CoreferenceResolution(ModelBase):
       self.genre_emb = self.initialize_embeddings('genre', [self.vocab.genre.size, self.feature_size])
       self.mention_width_emb = self.initialize_embeddings("mention_width", [self.max_mention_width, self.feature_size])
       self.mention_distance_emb = self.initialize_embeddings("mention_distance", [10, self.feature_size])
-    text_emb, text_outputs, state = encoder.encode([self.w_sentences, self.c_sentences], self.sentence_length)
+    text_emb, text_outputs, state = encoder.encode([self.text_ph.word, self.text_ph.char], self.sentence_length)
     self.encoder_outputs = text_outputs # for adversarial MTL
-
 
     with tf.name_scope('predictions_and_loss'):
       self.predictions, self.loss = self.get_predictions_and_loss(text_emb, text_outputs, self.sentence_length, self.speaker_ids, self.genre, self.gold_starts, self.gold_ends, self.cluster_ids)
@@ -243,10 +330,10 @@ class CoreferenceResolution(ModelBase):
     genre = batch["genre"]
     ## Texts
     if self.encoder.cbase:
-      input_feed[self.c_sentences] = c_sentences
+      input_feed[self.text_ph.char] = c_sentences
 
     if self.encoder.wbase:
-      input_feed[self.w_sentences] = w_sentences
+      input_feed[self.text_ph.word] = w_sentences
 
     input_feed[self.sentence_length] = np.array([len([w for w in s if w != PAD_ID]) for s in w_sentences])
     ## Mention spans and their clusters
@@ -275,7 +362,7 @@ class CoreferenceResolution(ModelBase):
     #     for k, v in input_feed.items():
     #       if re.search('w_sentences', k.name):
     #         print k.name
-    #         print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, self.w_sentences), input_feed)
+    #         print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, self.text_ph.word), input_feed)
     #       else:
     #         print k.name
     #         print v
@@ -298,20 +385,20 @@ class CoreferenceResolution(ModelBase):
 
   def truncate_example(self, input_feed):
     # DEBUG
-    # print ('length of w_sentences', len(input_feed[self.w_sentences]), sum([len([w for w in s if w != PAD_ID]) for s in input_feed[self.w_sentences]]))
+    # print ('length of w_sentences', len(input_feed[self.text_ph.word]), sum([len([w for w in s if w != PAD_ID]) for s in input_feed[self.text_ph.word]]))
     max_training_sentences = self.max_training_sentences
-    num_sentences = input_feed[self.w_sentences].shape[0]
+    num_sentences = input_feed[self.text_ph.word].shape[0]
     assert num_sentences > max_training_sentences
 
     sentence_offset = random.randint(0, num_sentences - max_training_sentences)
 
-    sentence_length = np.array([len([w for w in sent if w != PAD_ID]) for sent in input_feed[self.w_sentences]]) # Number of words except PAD in each sentence.
+    sentence_length = np.array([len([w for w in sent if w != PAD_ID]) for sent in input_feed[self.text_ph.word]]) # Number of words except PAD in each sentence.
 
     word_offset = sentence_length[:sentence_offset].sum() # The sum of the number of truncated words except PAD.
     num_words = sentence_length[sentence_offset:sentence_offset + max_training_sentences].sum()
 
-    w_sentences = input_feed[self.w_sentences][sentence_offset:sentence_offset + max_training_sentences,:]
-    c_sentences = input_feed[self.c_sentences][sentence_offset:sentence_offset + max_training_sentences,:,:]
+    w_sentences = input_feed[self.text_ph.word][sentence_offset:sentence_offset + max_training_sentences,:]
+    c_sentences = input_feed[self.text_ph.char][sentence_offset:sentence_offset + max_training_sentences,:,:]
     sentence_length = sentence_length[sentence_offset:sentence_offset + max_training_sentences]
     speaker_ids = input_feed[self.speaker_ids][word_offset: word_offset + num_words]
     gold_spans = np.logical_and(input_feed[self.gold_ends] >= word_offset, input_feed[self.gold_starts] < word_offset + num_words)
@@ -320,15 +407,15 @@ class CoreferenceResolution(ModelBase):
     cluster_ids = input_feed[self.cluster_ids][gold_spans]
 
 
-    input_feed[self.w_sentences] = w_sentences
-    input_feed[self.c_sentences] = c_sentences
+    input_feed[self.text_ph.word] = w_sentences
+    input_feed[self.text_ph.char] = c_sentences
     input_feed[self.sentence_length] = sentence_length
     input_feed[self.speaker_ids] = speaker_ids
     input_feed[self.gold_starts] = gold_starts
     input_feed[self.gold_ends] = gold_ends
     input_feed[self.cluster_ids] = cluster_ids
     # DEBUG
-    #print ('length of trun w_sentences', len(input_feed[self.w_sentences]), sum([len([w for w in s if w != PAD_ID]) for s in input_feed[self.w_sentences]]))
+    #print ('length of trun w_sentences', len(input_feed[self.text_ph.word]), sum([len([w for w in s if w != PAD_ID]) for s in input_feed[self.text_ph.word]]))
     return input_feed
 
   ##############################################
@@ -347,7 +434,8 @@ class CoreferenceResolution(ModelBase):
         return "threshold" # use only candidate_spans with a score greater than 0.
       else:
         return "{}%".format(k)
-    mention_evaluators = { k:util.RetrievalEvaluator() for k in [-3, -2, -1, 0, 10, 15, 20, 25, 30, 40, 50] }
+    #mention_evaluators = { k:util.RetrievalEvaluator() for k in [-3, -2, -1, 0, 10, 15, 20, 25, 30, 40, 50] }
+    mention_evaluators = { k:util.RetrievalEvaluator() for k in [-3, -2, -1, 0] }
 
     coref_predictions = {}
     coref_evaluator = metrics.CorefEvaluator()
@@ -366,7 +454,11 @@ class CoreferenceResolution(ModelBase):
         #print "Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data))
         #print "Evaluated {} examples.".format(example_num + 1)
         pass
-      results[example['doc_key']] = dotDict({'raw_text': example['raw_text']})
+      results[example['doc_key']] = dotDict({
+        'raw_text': example['raw_text'],
+        'mentions': [(begin, end) for begin, end in zip(mention_starts, mention_ends)],
+        'speakers': example['speakers'],
+      })
 
     summary_dict = {}
     for k, evaluator in sorted(list(mention_evaluators.items()), key=operator.itemgetter(0)):
@@ -487,42 +579,43 @@ class CoreferenceResolution(ModelBase):
     Args:
        - results: An Ordereddict keyed by 'doc_key', whose elements are a dictionary that has the keys, 'raw_text' and 'aligned_results'
     '''
-
-    def print_colored_text(raw_text, aligned):
-      # Show the gold mentions in red, and the predicted mentions with underline.
-      decorated_text = deepcopy(raw_text)
-      colored_area = set(flatten([flatten([[h for h in range(s, e+1)] for s,e in gold_cluster]) for (gold_cluster, _) in aligned]))
-      underlined_area = set(flatten([flatten([[h for h in range(s, e+1)] for s,e in predicted_cluster]) for (_, predicted_cluster) in aligned]))
-      both_area = colored_area.intersection(underlined_area)
-
-      spaces = [" " for x in range(len(decorated_text))]
-      for x in colored_area:
-        decorated_text[x] = RED + decorated_text[x] + RESET
-        spaces[x] = RED + spaces[x] + RESET if x+1 in colored_area else spaces[x]
-      for x in underlined_area:
-        decorated_text[x] = UNDERLINE + decorated_text[x] + RESET
-        spaces[x] = UNDERLINE + spaces[x] + RESET if x+1 in underlined_area else spaces[x]
-      for x in both_area:
-        decorated_text[x] = RED + UNDERLINE + decorated_text[x] + RESET
-        spaces[x] = RED + UNDERLINE + spaces[x] + RESET if x+1 in both_area else spaces[x]
-
-      print("".join([d+s for d, s in zip(decorated_text, spaces)]))
+    # mention groups of the results
+    n_success_linked = 0
+    n_failure_linked = 0
+    n_failure_unlinked = 0
+    n_failure_unextracted = 0
+    n_failure_extracted_and_linked = 0
 
     for i, (doc_key, result) in enumerate(results.items()):
-      if i == 0:
-        print((type(result['raw_text'][0][0])))
       print("===%03d===\t%s" % (i, doc_key))
       raw_text = flatten(result['raw_text'])
+      predicted_mentions = result['mentions']
       aligned = result['aligned_results']
+      speakers = result['speakers']
       print('<text>')
-      print_colored_text(raw_text, aligned)
-      print('')
+      decorated_text, mention_groups = print_colored_text(
+        raw_text, aligned, predicted_mentions, speakers)
+      success_linked, failure_linked, failure_unlinked, failure_unextracted, failure_extracted_and_linked = mention_groups
+      n_success_linked += len(success_linked)
+      n_failure_linked += len(failure_linked)
+      n_failure_unlinked += len(failure_unlinked)
+      n_failure_unextracted += len(failure_unextracted)
+      n_failure_extracted_and_linked += len(failure_extracted_and_linked)
+
       print('<cluster>')
 
       for j, (gold_cluster, predicted_cluster) in enumerate(aligned):
-        g = [" ".join(raw_text[s:e+1]) + "(%d,%d)" %(s,e) for (s,e) in gold_cluster]
-        p = [" ".join(raw_text[s:e+1]) + "(%d,%d)" %(s,e) for (s,e) in predicted_cluster]
-        print("G%02d  " % j , g)
-        print("P%02d  " % j , p)
+        g = ["".join(decorated_text[s:e+1]) + str((s, e)) for (s,e) in gold_cluster]
+        p = ["".join(decorated_text[s:e+1]) + str((s, e)) for (s,e) in predicted_cluster]
+        print("%03d-G%02d  " % (i, j) , ', '.join(g))
+        print("%03d-P%02d  " % (i, j) , ', '.join(p))
       print('')
-      
+    n_mentions = n_success_linked + n_failure_linked + n_failure_unlinked + n_failure_unextracted + n_failure_extracted_and_linked
+    print (
+      '<Mention group statistics>\n',
+      'success: %.2f\n' % (100.0 * n_success_linked / n_mentions),
+      'wrong_link: %.2f\n' % (100.0 * n_failure_linked / n_mentions),  
+      'unlinked: %.2f\n' % (100.0 * n_failure_unlinked / n_mentions),  
+      'unextracted: %.2f\n' % (100.0 * n_failure_unextracted / n_mentions),  
+      'wrong_extraction_and_linking: %.2f\n' % (100.0 * n_failure_extracted_and_linked / n_mentions),
+    )

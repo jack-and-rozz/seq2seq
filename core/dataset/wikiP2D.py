@@ -6,7 +6,6 @@ import subprocess, itertools
 import numpy as np
 from collections import OrderedDict, defaultdict, Counter
 
-from tensorflow.python.platform import gfile
 from core.utils.common import recDotDefaultDict, recDotDict, flatten, batching_dicts, pad_sequences
 #from core.utils import visualize
 from core.dataset.base import DatasetBase

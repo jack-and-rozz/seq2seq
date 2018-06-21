@@ -18,9 +18,12 @@ RED = "\033[31m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
 BLUE = "\033[34m"
+MAGENTA = "\033[35m"
+CYAN = "\033[36m"
+WHITE = "\033[37m"
 BLACK = "\033[30m"
 UNDERLINE = '\033[4m'
-BOLD = "\033[1m" + UNDERLINE
+BOLD =  BLACK + "\033[1m" #UNDERLINE
 RESET = "\033[0m"
 
 ############################################
@@ -183,10 +186,9 @@ def random_select_by_scale(size_arr):
 
 def format_zen_han(l):
   import mojimoji
-  l = l.decode('utf-8') if type(l) == str else l
   l = mojimoji.zen_to_han(l, kana=False) #全角数字・アルファベットを半角に
   l = mojimoji.han_to_zen(l, digit=False, ascii=False) #半角カナを全角に
-  return l.encode('utf-8')
+  return l
 
 
 ############################################

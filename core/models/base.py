@@ -6,7 +6,12 @@ import tensorflow as tf
 class ManagerBase(object):
   def __init__(self, sess, config):
     self.sess = sess
-    self.max_gradient_norm = config.max_gradient_norm
+
+    self.optimizer_type = config.optimizer.optimizer_type
+    self.learning_rate = config.optimizer.learning_rate
+    self.decay_rate = config.optimizer.decay_rate
+    self.decay_frequency = config.optimizer.decay_frequency
+    self.max_gradient_norm = config.optimizer.max_gradient_norm
 
     with tf.name_scope('global_variables'):
       self.global_step = tf.get_variable(
@@ -17,9 +22,6 @@ class ManagerBase(object):
         "epoch", trainable=False, shape=[], dtype=tf.int32,
         initializer=tf.constant_initializer(0, dtype=tf.int32)) 
 
-      self.learning_rate = config.learning_rate
-      self.decay_rate = config.decay_rate
-      self.decay_frequency = config.decay_frequency
       # self.learning_rate = tf.train.exponential_decay(
       #   config.learning_rate, self.global_step,
       #   config.decay_frequency, config.decay_rate, staircase=True)
@@ -35,7 +37,7 @@ class ManagerBase(object):
 
       # TODO: root_scopeの下でroot_scopeを含む変数を呼んでるからスコープが重なる
       params = tf.contrib.framework.get_trainable_variables()
-      opt = tf.train.AdamOptimizer(learning_rate)
+      opt = getattr(tf.train, self.optimizer_type)(learning_rate)
       gradients = [grad for grad, _ in opt.compute_gradients(loss)]
       clipped_gradients, _ = tf.clip_by_global_norm(gradients, 
                                                     self.max_gradient_norm)

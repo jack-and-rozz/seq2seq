@@ -24,14 +24,14 @@ def merge_state(state):
 class WordEncoder(ModelBase):
   def __init__(self, config, is_training, vocab,
                activation=tf.nn.relu, shared_scope=None):
-    self.cbase = config.cbase
-    self.wbase = config.wbase
+    self.wbase = True if config.vocab_size.word else False
+    self.cbase = True if config.vocab_size.char else False
     self.vocab = vocab
     self.is_training = is_training
     self.activation = activation
     self.shared_scope = shared_scope # to reuse variables
     self.reuse = None
-    self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
+    self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.lexical_dropout_rate
 
     w_trainable = config.trainable_emb
     sys.stderr.write("Initialize word embeddings with pretrained ones.\n")
@@ -51,7 +51,7 @@ class WordEncoder(ModelBase):
     # inputs: the list of [None, max_sentence_length] or [None, max_sentence_length, max_word_length]
     if not isinstance(wc_inputs, list):
       wc_inputs = [wc_inputs]
-      
+
     outputs = []
     with tf.variable_scope(self.shared_scope or "WordEncoder", reuse=self.reuse):
       for inputs in wc_inputs:
@@ -79,8 +79,8 @@ class WordEncoder(ModelBase):
 class SentenceEncoder(ModelBase):
   def __init__(self, config, is_training, word_encoder, activation=tf.nn.relu, 
                shared_scope=None):
-    self.cbase = config.cbase
-    self.wbase = config.wbase
+    self.wbase = True if config.vocab_size.word else False
+    self.cbase = True if config.vocab_size.char else False
     self.rnn_size = config.rnn_size
     self.is_training = is_training
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
