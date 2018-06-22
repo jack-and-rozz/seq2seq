@@ -3,17 +3,56 @@ import operator
 import math, time, sys, random, re, math
 import numpy as np
 import tensorflow as tf
+import pandas as pd
 from pprint import pprint
 
 from core.utils import tf_utils
-from core.utils.common import RED, BLUE, GREEN, YELLOW, MAGENTA, CYAN, BOLD, BLACK, UNDERLINE, RESET, flatten, dotDict
+from core.utils.common import RED, BLUE, GREEN, YELLOW, MAGENTA, CYAN, WHITE, BOLD, BLACK, UNDERLINE, RESET, flatten, dotDict
 from core.models.base import ModelBase
 from core.models.wikiP2D.coref import coref_ops, conll, metrics, util
 from core.vocabulary.base import _UNK, PAD_ID
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from copy import deepcopy
 
-def print_colored_text(raw_text, aligned, predicted_mentions, speakers):
+def get_statistics(results_by_mention_groups):
+  def is_pronoun(mention, raw_text):
+    begin, end  = mention
+    mention_str = ' '.join(raw_text[begin:end+1])
+    # mention: a string.
+    pronoun_list = set([
+      'he', 'his', 'him', 'she', 'her', 'hers', 
+      'i', 'me', 'my', 'mine', 'you', 'your', 'yours', 
+      'we', 'our', 'us', 'ours', 
+      'it', 'its', 'they', 'their', 'them', 'theirs', 
+      'this', 'that', 'these', 'those', 
+    ])
+    if mention_str.lower() in pronoun_list:
+      return True
+    return False
+
+  def update(statistics, category, mention_group, raw_text):
+    n_pronoun = len([m for m in mention_group if is_pronoun(m, raw_text)])
+    statistics[category]['pronoun'] += n_pronoun
+    statistics[category]['others'] += len(mention_group) - n_pronoun
+    statistics['all']['pronoun'] += n_pronoun
+    statistics['all']['others'] += len(mention_group) - n_pronoun
+
+  statistics = OrderedDict()
+  for i, (mention_groups, raw_text) in enumerate(results_by_mention_groups):
+    if i == 0:
+      # Initialize statistics
+      for key in list(mention_groups.keys()) + ['all']:
+        statistics[key] = OrderedDict([
+          ('pronoun', 0),
+          ('others', 0),
+        ])
+
+    for category, mention_group in mention_groups.items():
+      update(statistics, category, mention_group, raw_text)
+  return statistics
+
+def print_colored_text(raw_text, aligned, extracted_mentions, 
+                       predicted_antecedents, speakers):
   """
   Speakers: A list of speaker-id
   """
@@ -21,38 +60,64 @@ def print_colored_text(raw_text, aligned, predicted_mentions, speakers):
   decorated_text = deepcopy(raw_text)
   all_linked_mentions_in_gold = flatten([gold_cluster for gold_cluster, _ in aligned])
   all_linked_mentions_in_pred = flatten([pred_cluster for _, pred_cluster in aligned])
-  all_extracted_mentions_in_pred = predicted_mentions
 
-  success_linked = []      # 正解 (blue)
-  failure_linked = []      # 別のクラスタにLinkされたgold (red)
-  failure_unlinked = []    # どこにもLinkされなかったgold (green)
-  failure_unextracted = [] # mention抽出の段階で省かれたgold (cyan)
-  failure_extracted = []   # goldに存在しないpredのmention (magenta)
-  failure_extracted_and_linked = []   # goldに存在せず，linkまでされたpredのmention (magenta+underline)
-  """
-  Color               | Gold |   Linking   | Extraction |
-  Blue                |  T   |     T       |    T      |
-  Red/Green           |  T   |     F       |    T      |
-  Cyan                |  T   |    T/F      |    F      |
-  Magenta (underline) |  F   |    T/F      |    T      |
-  """
+  #all_anaphora_in_pred = [source_mention for source_mention, target_mention_idx in zip(extracted_mentions, predicted_antecedents) if target_mention_idx >= 0]
+  all_extracted_mentions_in_pred = extracted_mentions
+
+  all_predicted_links = {source_mention:extracted_mentions[target_mention_idx] for source_mention, target_mention_idx in zip(extracted_mentions, predicted_antecedents) if target_mention_idx >= 0} 
+  mention_to_gold_cluster_id = defaultdict(lambda: -1)
+  for i, (gold_cluster, _) in enumerate(aligned):
+    for gm in gold_cluster:
+      mention_to_gold_cluster_id[gm] = i
+
+  # Goldに存在するメンションについて
+  ## Root のみ
+  success_root = []        # 先行詞を持たず，predictionの対応するクラスタにも自身が存在 (blue)
+  failure_root = []        # 後続のanaphoraが自身へのリンクを失敗した（リンクを張らなかった or 異なるクラスタからのリンクを張った)  (magenta)
+
+  ## Anaphoric mention のみ
+  success_linked = []      # メンションとその先行詞がGoldでも同一クラスタ (blue)
+  failure_unlinked = []    # 先行詞の検出に失敗 (green)
+
+  # Both
+  failure_linked = []      # 誤ったクラスタにリンクされたメンション (red)
+  failure_unextracted = [] # 抽出の段階で省かれたメンション (cyan)
+
+  # Goldに存在しないメンションについて
+  failure_extracted = []   # goldに存在しないpredのmention (ignored)
+  failure_irregular_mention = []   # goldに存在せず，linkまでされたpredのmention (black)
+  others = []
+
   for gold_cluster, pred_cluster in aligned:
     for gm in gold_cluster:
-      if gm in pred_cluster:
-        success_linked.append(gm)
-      elif gm in all_linked_mentions_in_pred:
-        failure_linked.append(gm)
-      elif gm in all_extracted_mentions_in_pred:
-        failure_unlinked.append(gm)
-      else:
+      if gm not in all_extracted_mentions_in_pred: # Extracted as a mention or not
         failure_unextracted.append(gm)
+        continue
+
+      if gm == gold_cluster[0]: # The mention is root in gold
+        if gm not in all_predicted_links: # The root mention has no link
+          if gm in pred_cluster: 
+            success_root.append(gm) # Successfully linked from subsequent anaphora
+          else:
+            failure_root.append(gm) # Wrongly, or never linked from subsequent anaphora
+        else: # Wrong linking from root
+          failure_linked.append(gm)
+      else: # The mention is anaphora in gold
+        if gm in all_predicted_links: # The anaphora has an antecedent or not
+          if mention_to_gold_cluster_id[gm] == mention_to_gold_cluster_id[all_predicted_links[gm]]: # The anaphora has a link to an antecedent in the same cluster
+            success_linked.append(gm)
+          else:
+            failure_linked.append(gm)
+        else: 
+          failure_unlinked.append(gm)
+
   for pm in all_extracted_mentions_in_pred:
     if pm not in all_linked_mentions_in_gold:
-      failure_extracted.append(pm)
+      failure_extracted.append(pm) # Wrongly extracted mentions (not a failure)
       if pm in all_linked_mentions_in_pred:
-        failure_extracted_and_linked.append(pm)
+        failure_irregular_mention.append(pm) # Wrongly extracted and linked mentions
 
-  # Color words and spaces between the colored words as well for natural visualization in order from shorter ones.
+  # Color words and spaces between the colored words as well for natural visualization in order from shorter ones. (the most inside color has a higher priority, e.g. "RED BLUE word RESET" = "BLUE word RESET")
   spaces = [" " for x in range(len(decorated_text))] 
   def _color(decorated_text, spaces, mentions_and_colors):
     for (begin, end), color in mentions_and_colors:
@@ -63,22 +128,25 @@ def print_colored_text(raw_text, aligned, predicted_mentions, speakers):
 
 
   mentions_and_colors = [
+    (success_root, BLUE+UNDERLINE),
+    (failure_root, MAGENTA+UNDERLINE),
     (success_linked, BLUE+UNDERLINE),
     (failure_linked, RED+UNDERLINE),
     (failure_unlinked, GREEN+UNDERLINE),
     (failure_unextracted, CYAN+UNDERLINE),
     #(failure_extracted, MAGENTA),
-    (failure_extracted_and_linked, MAGENTA+UNDERLINE),
+    (failure_irregular_mention, BOLD+UNDERLINE),
+    (others, YELLOW)
   ]
   
   mentions_and_colors = flatten([[(mention, color) for mention in mentions] for mentions, color in mentions_and_colors])
   mentions_and_colors = sorted(mentions_and_colors, key=lambda x: (x[0][1]-x[0][0]))
   _color(decorated_text, spaces, mentions_and_colors)
 
-  # Enclose each mention with brackets in the order from the shortest one. (In order to put shorter mentions inside among overlapping ones)
+  # Enclose each mention with brackets in the order from the shorter ones. (In order to put shorter mentions inside among overlapping ones)
   decorated_punctuated_text = deepcopy(decorated_text)
   gold_cluster_with_id = flatten([[(i, begin, end) for begin, end in gold_cluster] for i, (gold_cluster, _) in enumerate(aligned)])
-  gold_cluster_with_id = sorted(gold_cluster_with_id, key=lambda x: -(x[2]-x[1]))
+  gold_cluster_with_id = sorted(gold_cluster_with_id, key=lambda x: (x[2]-x[1]))
   for cluster_id, begin, end in gold_cluster_with_id:
     decorated_punctuated_text[begin] = '[' + decorated_punctuated_text[begin]
     decorated_punctuated_text[end] = decorated_punctuated_text[end] + BOLD + ']%02d' % cluster_id + RESET
@@ -97,7 +165,16 @@ def print_colored_text(raw_text, aligned, predicted_mentions, speakers):
       decorated_punctuated_text[i] = 'Speaker%d : ' % current_speaker + decorated_punctuated_text[i]
 
   print("".join(decorated_punctuated_text) + '\n')
-  return decorated_text, (success_linked, failure_linked, failure_unlinked, failure_unextracted, failure_extracted_and_linked)
+
+  mention_groups = OrderedDict([
+    ('Success', success_root + success_linked),
+    ('Wrong or No Anaphora (Root)', failure_root),
+    ('Wrong Antecedent', failure_linked), 
+    ('No Antecedent (Anaphora)', failure_unlinked),
+    ('Unextracted', failure_unextracted),
+    ('Irregular_mention', failure_irregular_mention),
+  ])
+  return decorated_text, mention_groups
 
 
 class CoreferenceResolution(ModelBase):
@@ -448,16 +525,13 @@ class CoreferenceResolution(ModelBase):
       candidate_starts, candidate_ends, mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores = self.sess.run(self.predictions, feed_dict=feed_dict)
       self.evaluate_mentions(candidate_starts, candidate_ends, mention_starts, mention_ends, mention_scores, gold_starts, gold_ends, example, mention_evaluators)
       predicted_antecedents = self.get_predicted_antecedents(antecedents, antecedent_scores)
-
       coref_predictions[example["doc_key"]] = self.evaluate_coref(mention_starts, mention_ends, predicted_antecedents, example["clusters"], coref_evaluator)
-      if example_num % 10 == 0:
-        #print "Evaluated {}/{} examples.".format(example_num + 1, len(self.eval_data))
-        #print "Evaluated {} examples.".format(example_num + 1)
-        pass
+
       results[example['doc_key']] = dotDict({
         'raw_text': example['raw_text'],
-        'mentions': [(begin, end) for begin, end in zip(mention_starts, mention_ends)],
         'speakers': example['speakers'],
+        'extracted_mentions': [(begin, end) for begin, end in zip(mention_starts, mention_ends)],
+        'predicted_antecedents': predicted_antecedents
       })
 
     summary_dict = {}
@@ -550,17 +624,16 @@ class CoreferenceResolution(ModelBase):
       if predicted_antecedent in mention_to_predicted:
         predicted_cluster = mention_to_predicted[predicted_antecedent]
       else:
-        predicted_cluster = len(predicted_clusters)
+        # Assign a new cluster-id if 'predicted_antecedent' belongs to none of the existing clusters.
+        predicted_cluster = len(predicted_clusters) 
         predicted_clusters.append([predicted_antecedent])
         mention_to_predicted[predicted_antecedent] = predicted_cluster
 
       mention = (int(mention_starts[i]), int(mention_ends[i]))
       predicted_clusters[predicted_cluster].append(mention)
       mention_to_predicted[mention] = predicted_cluster
-
     predicted_clusters = [tuple(pc) for pc in predicted_clusters]
-    mention_to_predicted = { m:predicted_clusters[i] for m,i in list(mention_to_predicted.items()) }
-
+    mention_to_predicted = { m:predicted_clusters[i] for m,i in list(mention_to_predicted.items())}
     return predicted_clusters, mention_to_predicted
 
   def evaluate_coref(self, mention_starts, mention_ends, predicted_antecedents, gold_clusters, evaluator):
@@ -569,7 +642,6 @@ class CoreferenceResolution(ModelBase):
     for gc in gold_clusters:
       for mention in gc:
         mention_to_gold[mention] = gc
-
     predicted_clusters, mention_to_predicted = self.get_predicted_clusters(mention_starts, mention_ends, predicted_antecedents)
     evaluator.update(predicted_clusters, gold_clusters, mention_to_predicted, mention_to_gold)
     return predicted_clusters
@@ -579,29 +651,20 @@ class CoreferenceResolution(ModelBase):
     Args:
        - results: An Ordereddict keyed by 'doc_key', whose elements are a dictionary that has the keys, 'raw_text' and 'aligned_results'
     '''
-    # mention groups of the results
-    n_success_linked = 0
-    n_failure_linked = 0
-    n_failure_unlinked = 0
-    n_failure_unextracted = 0
-    n_failure_extracted_and_linked = 0
 
+    results_by_mention_groups = []
     for i, (doc_key, result) in enumerate(results.items()):
       print("===%03d===\t%s" % (i, doc_key))
       raw_text = flatten(result['raw_text'])
-      predicted_mentions = result['mentions']
+      extracted_mentions = result['extracted_mentions']
+      predicted_antecedents = result['predicted_antecedents']
       aligned = result['aligned_results']
       speakers = result['speakers']
+      
       print('<text>')
       decorated_text, mention_groups = print_colored_text(
-        raw_text, aligned, predicted_mentions, speakers)
-      success_linked, failure_linked, failure_unlinked, failure_unextracted, failure_extracted_and_linked = mention_groups
-      n_success_linked += len(success_linked)
-      n_failure_linked += len(failure_linked)
-      n_failure_unlinked += len(failure_unlinked)
-      n_failure_unextracted += len(failure_unextracted)
-      n_failure_extracted_and_linked += len(failure_extracted_and_linked)
-
+        raw_text, aligned, extracted_mentions, predicted_antecedents, speakers)
+      results_by_mention_groups.append([mention_groups, raw_text])
       print('<cluster>')
 
       for j, (gold_cluster, predicted_cluster) in enumerate(aligned):
@@ -610,12 +673,12 @@ class CoreferenceResolution(ModelBase):
         print("%03d-G%02d  " % (i, j) , ', '.join(g))
         print("%03d-P%02d  " % (i, j) , ', '.join(p))
       print('')
-    n_mentions = n_success_linked + n_failure_linked + n_failure_unlinked + n_failure_unextracted + n_failure_extracted_and_linked
-    print (
-      '<Mention group statistics>\n',
-      'success: %.2f\n' % (100.0 * n_success_linked / n_mentions),
-      'wrong_link: %.2f\n' % (100.0 * n_failure_linked / n_mentions),  
-      'unlinked: %.2f\n' % (100.0 * n_failure_unlinked / n_mentions),  
-      'unextracted: %.2f\n' % (100.0 * n_failure_unextracted / n_mentions),  
-      'wrong_extraction_and_linking: %.2f\n' % (100.0 * n_failure_extracted_and_linked / n_mentions),
-    )
+
+    statistics = get_statistics(results_by_mention_groups)
+    header = ['Category'] + list(statistics['all'].keys())
+    n_mentions = sum(statistics['all'].values())
+    data = [[category] + ['%.2f' % (100.0 * n / n_mentions) for n in cnt_by_pos.values()] for category, cnt_by_pos in statistics.items() if category != 'all']
+    df = pd.DataFrame(data, columns=header)
+
+    print ('<Mention group statistics>')
+    print(df.ix[:, header])

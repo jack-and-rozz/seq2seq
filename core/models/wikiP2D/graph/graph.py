@@ -3,7 +3,7 @@ from pprint import pprint
 import math, time, sys, copy
 import tensorflow as tf
 #from core.utils import common, evaluation
-from core.utils.common import dotDict, flatten_batch, RED, BLUE, RESET, UNDERLINE, BOLD
+from core.utils.common import dotDict, flatten_batch, RED, BLUE, RESET, UNDERLINE, BOLD, GREEN
 from core.utils.tf_utils import shape, batch_dot, linear, cnn, make_summary
 from core.models.base import ModelBase
 from core.vocabulary.base import UNK_ID, PAD_ID
@@ -84,13 +84,20 @@ def print_batch(batch, prediction=None, vocab=None,
       if w_id == UNK_ID:
         text[i] = UNDERLINE + text[i] + RESET
   text = ' '.join(text[:num_words])
-  triple = '(%s, %s, %s)' % (' '.join(batch.subj.raw), ' '.join(batch.rel.raw), ' '.join(batch.obj.raw))
+
+  label = True if batch.label == 1 else False
+  subj_str = BLUE  + ' '.join(batch.subj.raw) + RESET
+  rel_str = GREEN + ' '.join(batch.rel.raw) + RESET
+  obj_color = BLUE if label else RED
+  obj_str = obj_color  + ' '.join(batch.obj.raw) + RESET
+  triple = '(%s, %s, %s)' % (subj_str, rel_str, obj_str)
 
   print ('<text>:\t', text)
   print ('<triple>:\t', triple)
   if vocab:
     print ("<word-encode>:\t", vocab.word.ids2tokens(batch.text.word))
     print ("<char-encode>:\t", vocab.char.ids2tokens(batch.text.char))
+
   if prediction is not None:
     label = True if batch.label == 1 else False
     prediction = True if prediction == 1 else False

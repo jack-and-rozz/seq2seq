@@ -23,8 +23,9 @@ CYAN = "\033[36m"
 WHITE = "\033[37m"
 BLACK = "\033[30m"
 UNDERLINE = '\033[4m'
-BOLD =  BLACK + "\033[1m" #UNDERLINE
+BOLD = BLACK+"\033[1m" #UNDERLINE
 RESET = "\033[0m"
+
 
 ############################################
 #       Vector
@@ -557,8 +558,8 @@ def colored(str_, color):
   '''
   Args: colors: a str or list of it.
   '''
-  RESET = "\033[0m"
   ctable = {
+    'RESET' : "\033[0m"
     'black': "\033[30m",
     'red': "\033[31m",
     'green': "\033[32m",
@@ -569,10 +570,11 @@ def colored(str_, color):
     'link': "\033[31m" + '\033[4m',
     'bold': '\033[30m' + "\033[1m",
   }
+
   if type(color) == str:
-    res = ctable[color] + str_ + RESET
+    res = ctable[color] + str_ + ctable['RESET']
   elif type(color) == tuple or type(color) == list:
-    res = "".join([ctable[c] for c in color]) + str_ + RESET
+    res = "".join([ctable[c] for c in color]) + str_ + CTABLE['RESET']
   return res 
 
 

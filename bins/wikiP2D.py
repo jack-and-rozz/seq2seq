@@ -21,8 +21,7 @@ class MTLManager(ManagerBase):
     # If embeddings are not pretrained, make trainable True.
     super(MTLManager, self).__init__(args, sess)
     self.config = config = self.load_config(args)
-
-    #self.port = int(args.port) if args.port.isdigit() else None
+    self.port = args.port
     self.vocab = common.dotDict()
     # Load pretrained embeddings.
     self.vocab.word = VocabularyWithEmbedding(
@@ -253,15 +252,15 @@ class MTLManager(ManagerBase):
 
 
   def c_demo(self):
-    pass
-    # max_checkpoint_path = os.path.join(self.checkpoints_path, "model.cmax.ckpt")
-    # ckpt_path = None
-    # if os.path.exists(max_checkpoint_path + '.index'):
-    #   sys.stderr.write('Found a checkpoint {}.\n'.format(max_checkpoint_path))
-    #   ckpt_path = max_checkpoint_path
-    # m = self.create_model(self.config, checkpoint_path=ckpt_path)
-    # eval_data = [d for d in self.get_batch('valid')['coref']]
-    # run_model(m, eval_data, self.port)
+    port = self.port
+    max_checkpoint_path = os.path.join(self.checkpoints_path, "model.cmax.ckpt")
+    ckpt_path = None
+    if os.path.exists(max_checkpoint_path + '.index'):
+      sys.stderr.write('Found a checkpoint {}.\n'.format(max_checkpoint_path))
+      ckpt_path = max_checkpoint_path
+    m = self.create_model(self.config, 'test', checkpoint_path=ckpt_path)
+    eval_data = [d for d in self.get_batch('valid')['coref']]
+    run_model(m, eval_data, port)
 
   def g_test(self, model=None, use_test_data=True, add_summary=False):
     m = model
@@ -361,13 +360,13 @@ def main(args):
     if args.mode == 'g_test':
       manager.g_test(model=manager.model, use_test_data=False)
 
-  if args.mode == 'train':
-    with tf.Graph().as_default(), tf.Session(config=tf_config) as sess:
-      manager = MTLManager(args, sess)
-      if 'coref' in config.tasks:
-        manager.c_test()
-      if 'graph' in config.tasks:
-        manager.g_test()
+  # if args.mode == 'train':
+  #   with tf.Graph().as_default(), tf.Session(config=tf_config) as sess:
+  #     manager = MTLManager(args, sess)
+  #     if 'coref' in config.tasks:
+  #       manager.c_test()
+  #     if 'graph' in config.tasks:
+  #       manager.g_test()
     
 
 if __name__ == "__main__":
@@ -376,6 +375,7 @@ if __name__ == "__main__":
   parser = argparse.ArgumentParser(description=desc)
   parser.add_argument('model_root_path', type=str, help ='')
   parser.add_argument('mode', type=str, help ='')
+  parser.add_argument('--port', default=8080, type=int, help='for demo.')
   parser.add_argument('-ct','--config_type', default='small', 
                       type=str, help ='')
   parser.add_argument('-cp','--config_path', default='configs/experiments.conf',

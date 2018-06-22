@@ -87,16 +87,17 @@ def get_aligned(predicted_clusters, gold_clusters, matching):
   #   return predicted, gold_clusters
 
 def make_predictions(text, model, sample=None):
-  #sampleがあればそちらを優先
+  """
+  sample : A list of dictionary given from _CoNLL2012CorefDataset.get_batch()
+  """
   if not sample:
     example = create_example(text)
   else: 
-    #tensorized_example = example = model.eval_data[sample_id]
     example = sample
-  tensorized_example = model.tensorize_example(example, is_training=False)
+  print(example)
+  input_feed = model.get_input_feed(example)
 
-  feed_dict = {i:t for i,t in zip(model.input_tensors, tensorized_example)}
-  _, _, _, mention_starts, mention_ends, antecedents, antecedent_scores, head_scores = session.run(model.predictions + [model.head_scores], feed_dict=feed_dict)
+  _, _, _, mention_starts, mention_ends, antecedents, antecedent_scores, head_scores = session.run(model.predictions + [model.head_scores], feed_dict=input_feed)
   
   predicted_antecedents = model.get_predicted_antecedents(antecedents, antecedent_scores)
   predicted_clusters, _ = model.get_predicted_clusters(mention_starts, mention_ends, predicted_antecedents)
@@ -123,13 +124,14 @@ def run_model(model, eval_data, port=None):
         print('path', (self.path))
         if idx >= 0:
           args = cgi.parse_qs(self.path[idx+1:])
-          print('args',args)
+          print('args', args)
           sample_id = int(args["sample_id"][0]) if "sample_id" in args else None
-          sample = eval_data[sample_id] if sample_id >= 0 and sample_id < len(eval_data) else None
+          sample = eval_data[sample_id] if sample_id and sample_id >= 0 and sample_id < len(eval_data) else None
           if "text" in args:
             text_arg = args["text"]
             if len(text_arg) == 1 and len(text_arg[0]) <= 10000:
-              text = text_arg[0].decode("utf-8")
+              #text = text_arg[0].decode("utf-8")
+              text = text_arg[0]
               print(("Document text: {}".format(text)))
               print(sample)
               example = make_predictions(text, model, sample)
