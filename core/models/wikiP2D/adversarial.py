@@ -23,24 +23,24 @@ class FlipGradientBuilder(object):
 
 flip_gradient = FlipGradientBuilder()
 
-class AdversarialLearning(ModelBase):
+class TaskAdversarial(ModelBase):
   def __init__(self, sess, config, encoder, tasks):
+    super().__init__(sess, config)
+
     self.sess = sess
     self.encoder = encoder
-    self.loss_weight = config.loss_weight
 
     encoder_outputs = []
     task_ids = []
     for i, t in enumerate(tasks):
-      if not ((hasattr(t, 'w_sentences') or hasattr(t, 'c_sentences')) and hasattr(t, 'sentence_length')):
-        raise Exception("Each task must have placeholders of 'w_sentences' or 'c_sentences', and 'sentence_length'.")
       inputs = []
       if self.encoder.wbase:
-        inputs.append(t.w_sentences)
+        inputs.append(t.text_ph.word)
       if self.encoder.cbase:
-        inputs.append(t.c_sentences)
+        inputs.append(t.text_ph.char)
       _, encoder_output, _  = self.encoder.encode(inputs, t.sentence_length)
-      # TODO:encoder_outputはとりあえず文全体の平均。今後変えるかも
+
+      # TODO:ADVに使うencoder_outputはとりあえず文全体の平均。今後変えるかも
       encoder_output = tf.reduce_mean(encoder_output, axis=1)
       task_id = tf.tile([i], [tf_utils.shape(inputs[0], 0)])
       encoder_outputs.append(encoder_output)

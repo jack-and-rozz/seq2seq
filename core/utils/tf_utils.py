@@ -23,6 +23,7 @@ def batch_dot(t1, t2, n_unk_dims=1):
 def shape(x, dim):
   return x.get_shape()[dim].value or tf.shape(x)[dim]
 
+
 def linear(inputs, output_size=None,
            activation=tf.nn.tanh, scope=None):
   """
@@ -95,5 +96,3 @@ def ffnn(inputs, num_hidden_layers, hidden_size, output_size, dropout, output_we
 
 def projection(inputs, output_size, initializer=None):
   return ffnn(inputs, 0, -1, output_size, dropout=None, output_weights_initializer=initializer)
-
-

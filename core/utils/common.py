@@ -26,6 +26,14 @@ UNDERLINE = '\033[4m'
 BOLD = BLACK+"\033[1m" #UNDERLINE
 RESET = "\033[0m"
 
+############################################
+#       Vector
+############################################
+
+from inspect import currentframe
+def dbgprint(*args):
+  names = {id(v):k for k,v in currentframe().f_back.f_locals.items()}
+  print(', '.join(names.get(id(arg),'???')+' = '+repr(arg) for arg in args))
 
 ############################################
 #       Vector
@@ -559,7 +567,7 @@ def colored(str_, color):
   Args: colors: a str or list of it.
   '''
   ctable = {
-    'RESET' : "\033[0m"
+    'RESET' : "\033[0m",
     'black': "\033[30m",
     'red': "\033[31m",
     'green': "\033[32m",

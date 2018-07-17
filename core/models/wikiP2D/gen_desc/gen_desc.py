@@ -13,7 +13,7 @@ START_TOKEN = PAD_ID
 END_TOKEN = PAD_ID
 
 class DescriptionGeneration(ModelBase):
-  def __init__(self, config, encoder, vocab,
+  def __init__(self, sess, config, encoder,
                activation=tf.nn.relu):
     """
     Args:
@@ -24,7 +24,7 @@ class DescriptionGeneration(ModelBase):
     self.activation = activation
     self.encoder = encoder
     self.w_embeddings = encoder.w_embeddings
-    self.w_vocab = vocab.word
+    self.w_vocab = encoder.vocab.word
 
     # Placeholders
     with tf.name_scope('Placeholder'):

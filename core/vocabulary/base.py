@@ -159,7 +159,11 @@ class WordVocabularyBase(VocabularyBase):
 
   def sent2ids(self, sentence, word_dropout=0.0):
     if type(sentence) == list:
-      assert type(sentence[0]) == str
+      try:
+        assert type(sentence[0]) == str
+      except:
+        print(sentence)
+        exit(1)
       sentence = " ".join(sentence)
     tokens = self.tokenizer(sentence) 
     if word_dropout:

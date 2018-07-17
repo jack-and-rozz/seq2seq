@@ -139,13 +139,11 @@ def evaluate(flat_batches, predictions, vocab=None):
 
 
 class GraphLinkPrediction(ModelBase):
-  def __init__(self, sess, config, encoder, vocab,
+  def __init__(self, sess, config, encoder,
                activation=tf.nn.relu):
     super(GraphLinkPrediction, self).__init__(sess, config)
-    self.dataset = config.dataset.name
     self.sess = sess
     self.encoder = encoder
-    self.vocab = vocab
     self.activation = activation
 
     self.is_training = encoder.is_training
@@ -227,8 +225,8 @@ class GraphLinkPrediction(ModelBase):
       triple = tf.nn.dropout(triple, self.keep_prob)
 
     with tf.variable_scope('ffnn2'):
-      score = linear(triple, output_size=1, activation=tf.nn.sigmoid) # true or false
-    
+      score = linear(triple, output_size=1, activation=tf.nn.tanh) # true or false
+      score = score / 2 + 0.5
     return score
 
   def cross_entropy(self, scores, labels):
@@ -267,7 +265,7 @@ class GraphLinkPrediction(ModelBase):
     results = np.concatenate(results, axis=0)
     epoch_time = time.time() - start_time 
     sys.stdout = open(output_path, 'w') if output_path else sys.stdout
-    acc, prec, recall = evaluate(used_batches, results, vocab=self.vocab)
+    acc, prec, recall = evaluate(used_batches, results, vocab=self.encoder.vocab)
     print ('acc, p, r, f = %.2f %.2f %.2f %.2f' % (
       100.0 * acc,
       100.0 * prec,

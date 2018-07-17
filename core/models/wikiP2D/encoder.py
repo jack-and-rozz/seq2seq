@@ -5,7 +5,8 @@ from tensorflow.python.util import nest
 from tensorflow.python.ops import rnn
 import numpy as np
 
-from core.utils import common, tf_utils
+from core.utils import tf_utils
+from core.utils.common import dbgprint
 from core.utils.tf_utils import shape, cnn, linear
 from core.seq2seq.rnn import setup_cell
 from core.models.base import ModelBase
@@ -20,6 +21,9 @@ def merge_state(state):
   else:
     state = tf.concat(state, 1)
   return state
+
+
+
 
 class WordEncoder(ModelBase):
   def __init__(self, config, is_training, vocab,

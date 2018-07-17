@@ -53,6 +53,7 @@ class ManagerBase(object):
 class ModelBase(object):
   def __init__(self, sess, config):
     self.sess = sess
+    self.loss_weight = config.loss_weight if 'loss_weight' in config else 1.0
     self.debug_ops = []
     self.global_step = tf.get_variable(
       "global_step", trainable=False, shape=[],  dtype=tf.int32,

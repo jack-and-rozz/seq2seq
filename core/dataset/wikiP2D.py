@@ -82,22 +82,36 @@ def read_jsonlines(source_path, max_rows=0):
     data.append(d)
   return data
 
-class _WikiP2DDataset():
-  def __init__(self, config, filename, vocab, properties):
+def qid2position(qid, article):
+  assert qid in article.link
+  begin, end = article.link[qid]
+  entity =  recDotDefaultDict()
+  entity.raw  = article.text[begin:end+1] 
+  entity.position = (begin, end)
+  return entity
+
+def span2unk(raw_text, position):
+  assert type(raw_text) == list
+  raw_text = copy.deepcopy(raw_text)
+  begin, end = position
+  for i in range(begin, end+1):
+    raw_text[i] = _UNK
+  return raw_text
+
+
+class _WikiP2DDataset(object):
+  def __init__(self, config, filename, vocab):
     '''
     Args:
     - config:
     - filename:
     - vocab:
-    - properties: A dictionary.
     '''
     self.source_path = os.path.join(config.source_dir, filename)
     self.config = config
     self.vocab = vocab
-    self.properties = properties
     self.data = [] # Lazy loading.
     self.max_rows = config.max_rows
-    self.mask_link = config.mask_link
 
   def preprocess(self, article):
     def flatten_text_and_link(article):
@@ -114,52 +128,14 @@ class _WikiP2DDataset():
         links[qid] = (flatten_begin, flatten_end)
       article.link = links
       article.text = flatten(raw_text)
+      article.desc = article.desc.split()
       return article
 
-    def qid2position(qid, article):
-      assert qid in article.link
-      begin, end = article.link[qid]
-      entity =  recDotDefaultDict()
-      entity.raw  = article.text[begin:end+1] 
-      entity.position = (begin, end)
-      return entity
-
-    def span2unk(raw_text, position):
-      assert type(raw_text) == list
-      raw_text = copy.deepcopy(raw_text)
-      begin, end = position
-      for i in range(begin, end+1):
-        raw_text[i] = _UNK
-      return raw_text
-
-    def triple2entry(triple, article, label):
-      entry = recDotDefaultDict()
-      entry.qid = article.qid
-
-      subj_qid, rel_pid, obj_qid = triple
-      rel = self.properties[rel_pid].name.split()
-      entry.rel.raw = rel  # 1D tensor of str. 
-      entry.rel.word = self.vocab.word.sent2ids(rel) # 1D tensor of int.
-      entry.rel.char = self.vocab.char.sent2ids(rel) # 2D tensor of int.
-
-      entry.subj = qid2position(subj_qid, article) # (begin, end)
-      entry.obj = qid2position(obj_qid, article)# (begin, end)
-      entry.label = label # 1 or 0.
-
-      entry.text.raw = article.text
-      raw_text = article.text
-      if self.mask_link:
-        raw_text = span2unk(raw_text, entry.subj.position)
-        raw_text = span2unk(raw_text, entry.obj.position)
-      entry.text.word = self.vocab.word.sent2ids(raw_text)
-      entry.text.char = self.vocab.char.sent2ids(raw_text)
-
-      return entry
-
     article = flatten_text_and_link(article)
-    positive = triple2entry(article.positive_triple, article, 1)
-    negative = triple2entry(article.negative_triple, article, 0)
-    return positive, negative
+    return article
+
+  def article2entries(self, article):
+    raise NotImplementedError
 
   @property
   def size(self):
@@ -170,7 +146,8 @@ class _WikiP2DDataset():
   def load_data(self):
     sys.stderr.write("Loading wikiP2D dataset from \'%s\'... \n" % self.source_path)
     data = read_jsonlines(self.source_path, max_rows=self.max_rows)
-    self.data = flatten([self.preprocess(d) for d in data])
+    data = [self.preprocess(d) for d in data]
+    self.data = flatten([self.article2entries(d) for d in data])
 
   def tensorize(self, data):
     batch = recDotDefaultDict()
@@ -216,7 +193,54 @@ class _WikiP2DDataset():
       batch = self.tensorize(sliced_data)
       yield batch
 
-class WikiP2DDataset(DatasetBase):
+
+class _WikiP2DGraphDataset(_WikiP2DDataset):
+  def __init__(self, config, filename, vocab, properties, mask_link):
+    super().__init__(config, filename, vocab)
+    self.properties = properties
+    self.mask_link = mask_link
+
+  def article2entries(self, article):
+    def triple2entry(triple, article, label):
+      entry = recDotDefaultDict()
+      entry.qid = article.qid
+
+      subj_qid, rel_pid, obj_qid = triple
+      rel = self.properties[rel_pid].name.split()
+      entry.rel.raw = rel  # 1D tensor of str. 
+      entry.rel.word = self.vocab.word.sent2ids(rel) # 1D tensor of int.
+      entry.rel.char = self.vocab.char.sent2ids(rel) # 2D tensor of int.
+      entry.subj = qid2position(subj_qid, article) # (begin, end)
+      entry.obj = qid2position(obj_qid, article)# (begin, end)
+      entry.label = label # 1 or 0.
+
+      entry.text.raw = article.text
+      raw_text = article.text
+      if self.mask_link:
+        raw_text = span2unk(raw_text, entry.subj.position)
+        raw_text = span2unk(raw_text, entry.obj.position)
+      entry.text.word = self.vocab.word.sent2ids(raw_text)
+      entry.text.char = self.vocab.char.sent2ids(raw_text)
+
+      return entry
+
+    positive = triple2entry(article.positive_triple, article, 1)
+    negative = triple2entry(article.negative_triple, article, 0)
+    return (positive, negative)
+
+class _WikiP2DDescDataset(_WikiP2DDataset):
+  def article2entries(self, article):
+    entry = recDotDefaultDict()
+    entry.text.raw = article.text
+    raw_text = article.text
+    entry.text.word = self.vocab.word.sent2ids(raw_text)
+    entry.text.word = self.vocab.char.sent2ids(raw_text)
+    entry.desc.raw = article.desc
+    entry.desc.word = self.vocab.word.sent2ids(article.desc)
+    return (entry)
+
+
+class WikiP2DGraphDataset(DatasetBase):
   '''
   A class which contains train, valid, testing datasets.
   '''
@@ -224,7 +248,22 @@ class WikiP2DDataset(DatasetBase):
     self.vocab = vocab
     properties_path = os.path.join(config.source_dir, config.prop_data)
     self.properties = recDotDict({d['qid']:d for d in read_jsonlines(properties_path)})
-    self.train = _WikiP2DDataset(config, config.train_data, vocab, self.properties)
-    self.valid = _WikiP2DDataset(config, config.valid_data, vocab, self.properties)
-    self.test = _WikiP2DDataset(config, config.test_data, vocab, self.properties)
+    data_class =  _WikiP2DGraphDataset
+    self.train = data_class(config, config.train_data, vocab,
+                            self.properties, config.mask_link)
+
+    self.valid = data_class(config, config.valid_data, vocab, 
+                            self.properties, True)
+    self.test = data_class(config, config.test_data, vocab, 
+                           self.properties, True)
+
+
+class WikiP2DDescDataset(DatasetBase):
+  
+  def __init__(self, config, vocab):
+    self.vocab = vocab
+    data_class =  _WikiP2DDescDataset
+    self.train = data_class(config, config.train_data, vocab)
+    self.valid = data_class(config, config.valid_data, vocab)
+    self.test = data_class(config, config.test_data, vocab)
 
