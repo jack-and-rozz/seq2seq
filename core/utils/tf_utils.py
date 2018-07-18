@@ -2,6 +2,7 @@
 import shutil
 import tensorflow as tf
 from tensorflow.python.client import device_lib
+from core.utils.common import dbgprint
 
 def get_available_gpus():
     local_device_protos = device_lib.list_local_devices()
@@ -23,6 +24,26 @@ def batch_dot(t1, t2, n_unk_dims=1):
 def shape(x, dim):
   return x.get_shape()[dim].value or tf.shape(x)[dim]
 
+def batch_gather(emb, indices):
+  '''
+  Based on https://github.com/kentonl/e2e-coref/blob/master/util.py, 
+  but the behavior of this function is different from theirs because of the shape of offset.
+  '''
+  batch_size = shape(emb, 0)
+  seqlen = shape(emb, 1)
+  if len(emb.get_shape()) > 2:
+    emb_size = shape(emb, 2)
+  else:
+    emb_size = 1
+  flattened_emb = tf.reshape(emb, [batch_size * seqlen, emb_size])  # [batch_size * seqlen, emb]
+
+  #offset = tf.expand_dims(tf.range(batch_size) * seqlen, 1)  # [batch_size, 1]
+  offset = tf.range(batch_size) * seqlen  # [batch_size, 1]
+
+  gathered = tf.gather(flattened_emb, indices + offset) # [batch_size, num_indices, emb]
+  if len(emb.get_shape()) == 2:
+    gathered = tf.squeeze(gathered, 2) # [batch_size, num_indices]
+  return gathered
 
 def linear(inputs, output_size=None,
            activation=tf.nn.tanh, scope=None):
@@ -36,6 +57,8 @@ def linear(inputs, output_size=None,
   with tf.variable_scope(scope or "linear"):
     inputs_rank = len(inputs.get_shape().as_list())
     hidden_size = shape(inputs, -1)
+    dbgprint(hidden_size)
+    dbgprint(output_size)
     w = tf.get_variable('weights', [hidden_size, output_size])
     b = tf.get_variable('biases', [output_size])
     if inputs_rank == 3:
@@ -96,3 +119,31 @@ def ffnn(inputs, num_hidden_layers, hidden_size, output_size, dropout, output_we
 
 def projection(inputs, output_size, initializer=None):
   return ffnn(inputs, 0, -1, output_size, dropout=None, output_weights_initializer=initializer)
+
+
+
+
+def batch_loop(loop_func, *args, n_parallel=10):
+  '''
+  Args:
+  '''
+  with tf.name_scope('batch_loop'):
+    batch_size = shape(args[0], 0)
+    idx = tf.zeros((), dtype=tf.int32)
+    res_shape = loop_func(idx, *args).get_shape()
+    res = tf.zeros((0, *res_shape)) # A fake value
+    cond = lambda idx, res: idx < batch_size
+    body = lambda idx, res: (
+      idx + 1, 
+      tf.concat([res, tf.expand_dims(loop_func(idx, *args), 0)], axis=0),
+    )
+    loop_vars = [idx, res]
+    _, res = tf.while_loop(
+      cond, body, loop_vars,
+      shape_invariants=[idx.get_shape(),
+                        tf.TensorShape([None, *res_shape])],
+      parallel_iterations=n_parallel,
+    )
+    return res
+
+

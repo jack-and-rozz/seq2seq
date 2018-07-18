@@ -26,16 +26,17 @@ class CoreferenceResolution(ModelBase):
     self.is_training = encoder.is_training
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
     self.feature_size = config.f_embedding_size
-    self.max_mention_width = config.max_mention_width
     self.max_training_sentences = config.max_training_sentences
     self.mention_ratio = config.mention_ratio
     self.max_antecedents = config.max_antecedents
-    self.use_features = config.use_features
     self.use_metadata = config.use_metadata
-    self.use_boundary = config.use_boundary
-    self.model_heads = config.model_heads
     self.ffnn_depth = config.ffnn_depth
     self.ffnn_size = config.ffnn_size
+
+    self.max_mention_width = config.max_mention_width
+    self.use_width_feature = config.use_width_feature
+    self.use_distance_feature = config.use_distance_feature
+    self.max_mention_width = config.max_mention_width
 
     # Placeholders
     with tf.name_scope('Placeholder'):
@@ -137,48 +138,23 @@ class CoreferenceResolution(ModelBase):
     text_outputs: [num_words, dim(encoder_outputs)]
     mention_starts, mention_ends: [num_mentions]
     '''
+    mention_emb, head_scores = self.encoder.get_mention_emb(text_emb, text_outputs, mention_starts, mention_ends)
+    mention_width = 1 + mention_ends - mention_starts # [num_mentions]
+    self.head_scores = head_scores
 
-    with tf.variable_scope('get_mention_emb'):
-      mention_emb_list = []
-      mention_width = 1 + mention_ends - mention_starts # [num_mentions]
-      max_mention_width = tf.reduce_max(mention_width)
-      # max_mention_width = self.max_mention_width
-
-      # Pick up the embeddings of the first and last words.
-      if self.use_boundary:
-        mention_start_emb = tf.gather(text_outputs, mention_starts) #[num_mentions, emb]
-        mention_emb_list.append(mention_start_emb)
-        mention_end_emb = tf.gather(text_outputs, mention_ends) #[num_mentions, emb]
-        mention_emb_list.append(mention_end_emb)
-
-      if self.use_features:
+    if self.use_width_feature:
+      with tf.name_scope('mention_width'):
         mention_width_index = mention_width - 1  #[num_mentions]
         mention_width_emb = tf.gather(self.mention_width_emb, mention_width_index) # [num_mentions, emb]
         mention_width_emb = tf.nn.dropout(mention_width_emb, self.keep_prob)
-        mention_emb_list.append(mention_width_emb)
+      mention_emb = tf.concat([mention_emb, mention_width_emb], axis=-1)
 
-      if self.model_heads:
-        mention_indices = tf.expand_dims(tf.range(max_mention_width), 0) + tf.expand_dims(mention_starts, 1) # [num_mentions, max_mention_width]
-        mention_indices = tf.minimum(tf_util.shape(text_outputs, 0) - 1, mention_indices) # [num_mentions, max_mention_width]
-
-        mention_text_emb = tf.gather(text_emb, mention_indices) # [num_mentions, max_mention_width, emb]
-
-        self.head_scores = tf_util.projection(text_outputs, 1) # [num_words, 1]
-        mention_head_scores = tf.gather(self.head_scores, mention_indices) # [num_mentions, max_mention_width, 1]
-        dbgprint(mention_head_scores)
-
-        mention_mask = tf.expand_dims(tf.sequence_mask(mention_width, max_mention_width, dtype=tf.float32), 2) # [num_mentions, max_mention_width, 1]
-
-        mention_attention = tf.nn.softmax(mention_head_scores + tf.log(mention_mask), dim=1) # [num_mentions, max_mention_width, 1]
-        mention_head_emb = tf.reduce_sum(mention_attention * mention_text_emb, 1) # [num_mentions, emb]
-        mention_emb_list.append(mention_head_emb)
-
-      mention_emb = tf.concat(mention_emb_list, 1) # [num_mentions, emb]
     return mention_emb
+
 
   def get_mention_scores(self, mention_emb):
     with tf.variable_scope("mention_scores"):
-      return tf_util.ffnn(mention_emb, self.ffnn_depth, self.ffnn_size, 1, self.keep_prob) # [num_mentions, 1]
+      return tf_utils.ffnn(mention_emb, self.ffnn_depth, self.ffnn_size, 1, self.keep_prob) # [num_mentions, 1]
 
   def softmax_loss(self, antecedent_scores, antecedent_labels):
     gold_scores = antecedent_scores + tf.log(tf.to_float(antecedent_labels)) # [num_mentions, max_ant + 1]
@@ -187,8 +163,8 @@ class CoreferenceResolution(ModelBase):
     return log_norm - marginalized_gold_scores # [num_mentions]
 
   def get_antecedent_scores(self, mention_emb, mention_scores, antecedents, antecedents_len, mention_starts, mention_ends, mention_speaker_ids, genre_emb):
-    num_mentions = tf_util.shape(mention_emb, 0)
-    max_antecedents = tf_util.shape(antecedents, 1)
+    num_mentions = tf_utils.shape(mention_emb, 0)
+    max_antecedents = tf_utils.shape(antecedents, 1)
 
     feature_emb_list = []
 
@@ -201,7 +177,7 @@ class CoreferenceResolution(ModelBase):
       tiled_genre_emb = tf.tile(tf.expand_dims(tf.expand_dims(genre_emb, 0), 0), [num_mentions, max_antecedents, 1]) # [num_mentions, max_ant, emb]
       feature_emb_list.append(tiled_genre_emb)
 
-    if self.use_features:
+    if self.use_distance_feature:
       target_indices = tf.range(num_mentions) # [num_mentions]
       mention_distance = tf.expand_dims(target_indices, 1) - antecedents # [num_mentions, max_ant]
       mention_distance_bins = coref_ops.distance_bins(mention_distance) # [num_mentions, max_ant]
@@ -220,7 +196,7 @@ class CoreferenceResolution(ModelBase):
 
     with tf.variable_scope("iteration"):
       with tf.variable_scope("antecedent_scoring"):
-        antecedent_scores = tf_util.ffnn(pair_emb, self.ffnn_depth, self.ffnn_size, 1, self.keep_prob) # [num_mentions, max_ant, 1]
+        antecedent_scores = tf_utils.ffnn(pair_emb, self.ffnn_depth, self.ffnn_size, 1, self.keep_prob) # [num_mentions, max_ant, 1]
     antecedent_scores = tf.squeeze(antecedent_scores, 2) # [num_mentions, max_ant]
 
     antecedent_mask = tf.log(tf.sequence_mask(
@@ -230,7 +206,7 @@ class CoreferenceResolution(ModelBase):
 
     antecedent_scores += tf.expand_dims(mention_scores, 1) + tf.gather(mention_scores, antecedents) # [num_mentions, max_ant]
 
-    no_antecedent = tf.zeros([tf_util.shape(mention_scores, 0), 1]) # [num_mentions, 1]
+    no_antecedent = tf.zeros([tf_utils.shape(mention_scores, 0), 1]) # [num_mentions, 1]
     antecedent_scores = tf.concat([no_antecedent, antecedent_scores], 1) # [num_mentions, max_ant + 1]
     return antecedent_scores  # [num_mentions, max_ant + 1]
 
@@ -240,13 +216,14 @@ class CoreferenceResolution(ModelBase):
     max_sentence_length = tf.shape(emb)[1]
 
     emb_rank = len(emb.get_shape())
-    if emb_rank  == 2:
+    if emb_rank == 2:
       flattened_emb = tf.reshape(emb, [num_sentences * max_sentence_length])
     elif emb_rank == 3:
-      flattened_emb = tf.reshape(emb, [num_sentences * max_sentence_length, tf_util.shape(emb, 2)])
+      flattened_emb = tf.reshape(emb, [num_sentences * max_sentence_length, tf_utils.shape(emb, 2)])
     else:
       raise ValueError("Unsupported rank: {}".format(emb_rank))
-    return tf.boolean_mask(flattened_emb, text_len_mask)
+    #return tf.boolean_mask(flattened_emb, text_len_mask, axis=0) # Set axis for the latest tf
+    return tf.boolean_mask(flattened_emb, text_len_mask) # remove masked elements 
 
   def tensorize_mentions(self, mentions):
     if len(mentions) > 0:
@@ -428,7 +405,7 @@ class CoreferenceResolution(ModelBase):
     for doc_key, aligned in zip(results, aligned_results):
       results[doc_key]['aligned_results'] = aligned
 
-    return tf_util.make_summary(summary_dict), [values['f'] for metric, values in conll_results.items()], results
+    return tf_utils.make_summary(summary_dict), [values['f'] for metric, values in conll_results.items()], results
     #return util.make_summary(summary_dict), average_f1, results
 
   def evaluate_mentions(self, candidate_starts, candidate_ends, mention_starts, mention_ends, mention_scores, gold_starts, gold_ends, example, evaluators):

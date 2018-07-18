@@ -46,10 +46,10 @@ class MTLManager(ManagerBase):
 
     # with tf >= 1.2, the scope where a RNNCell is called first is cached and the variables are automatically reused.
     with tf.variable_scope("WordEncoder") as scope:
-      self.word_encoder = WordEncoder(config, self.is_training, vocab,
+      self.word_encoder = WordEncoder(config.encoder, self.is_training, vocab,
                                       shared_scope=scope)
     with tf.variable_scope("GlobalEncoder") as scope:
-      self.shared_sent_encoder = SentenceEncoder(config, self.is_training,
+      self.shared_sent_encoder = SentenceEncoder(config.encoder, self.is_training,
                                                  self.word_encoder,
                                                  shared_scope=scope)
     ## Define each task
@@ -66,7 +66,7 @@ class MTLManager(ManagerBase):
       with tf.variable_scope(task_name) as encoder_scope:
         #with tf.variable_scope('SentenceEncoder') as encoder_scope:
         encoder = self.get_sent_encoder(
-          config, task_config.use_local_rnn, encoder_scope)
+          config.encoder, task_config.use_local_rnn, encoder_scope)
         task = self.define_task(sess, task_config, encoder, device)
       self.tasks[task_name] = task
 
@@ -153,7 +153,8 @@ class BatchIterative(MTLManager):
           if task_model.debug_ops:
             for ops, res in zip(task_model.debug_ops, 
                                 self.sess.run(task_model.debug_ops, input_feed)):
-              print(ops, res)
+              print(ops, res.shape)
+              print(res)
             exit(1)
           output_feed = [task_model.loss]
           if is_training:

@@ -3,7 +3,7 @@ from pprint import pprint
 import math, time, sys, copy
 import tensorflow as tf
 #from core.utils import common, evaluation
-from core.utils.common import dotDict, flatten_batch, RED, BLUE, RESET, UNDERLINE, BOLD, GREEN
+from core.utils.common import dotDict, flatten_batch, dbgprint, RED, BLUE, RESET, UNDERLINE, BOLD, GREEN
 from core.utils.tf_utils import shape, batch_dot, linear, cnn, make_summary
 from core.models.base import ModelBase
 from core.vocabulary.base import UNK_ID, PAD_ID
@@ -185,9 +185,18 @@ class GraphLinkPrediction(ModelBase):
     with tf.name_scope('Encoder'):
       text_emb, encoder_outputs, encoder_state = self.encoder.encode([self.text_ph.word, self.text_ph.char], self.sentence_length)
 
-
     with tf.variable_scope('Subject') as scope:
-      subj_outputs = extract_span(encoder_outputs, self.subj_ph)
+      #subj_outputs = extract_span(encoder_outputs, self.subj_ph)
+      mention_starts, mention_ends = tf.unstack(self.subj_ph, axis=1)
+      subj_outputs, _  = self.encoder.get_mention_emb(text_emb, encoder_outputs,
+                                                      mention_starts, mention_ends)
+      self.debug_ops = [subj_outputs]
+
+    with tf.variable_scope('Object') as scope:
+      #obj_outputs = extract_span(encoder_outputs, self.obj_ph)
+      mention_starts, mention_ends = tf.unstack(self.obj_ph, axis=1)
+      obj_outputs, _ = self.encoder.get_mention_emb(text_emb, encoder_outputs,
+                                                    mention_starts, mention_ends)
 
     with tf.variable_scope('Relation') as scope:
       # Stop gradient to prevent biased learning to the words used as relation labels.
@@ -197,8 +206,10 @@ class GraphLinkPrediction(ModelBase):
                           self.cnn_filter_widths, 
                           self.cnn_filter_size)
 
-    with tf.variable_scope('Object') as scope:
-      obj_outputs = extract_span(encoder_outputs, self.obj_ph)
+
+    dbgprint(subj_outputs)
+    dbgprint(obj_outputs)
+    dbgprint(rel_outputs)
 
     with tf.variable_scope('Inference'):
       score_outputs = self.inference(subj_outputs, rel_outputs, obj_outputs) # [batch_size, 1]
@@ -206,13 +217,13 @@ class GraphLinkPrediction(ModelBase):
     with tf.name_scope("Loss"):
       self.losses = self.cross_entropy(score_outputs, self.target_ph)
       self.loss = tf.reduce_mean(self.losses)
-    self.debug_ops = [
-      self.sentence_length, 
-      tf.is_nan(encoder_outputs),
-      tf.is_nan(subj_outputs),
-      tf.is_nan(rel_outputs),
-      tf.is_nan(obj_outputs),
-      tf.is_nan(score_outputs),
+    self.debug_ops += [
+      # self.sentence_length, 
+      # tf.is_nan(encoder_outputs),
+      # tf.is_nan(subj_outputs),
+      # tf.is_nan(rel_outputs),
+      # tf.is_nan(obj_outputs),
+      # tf.is_nan(score_outputs),
     ]
 
   def inference(self, subj, rel, obj):
