@@ -151,6 +151,8 @@ class BatchIterative(MTLManager):
           batch = {task_name:raw_batch}
           input_feed = self.get_input_feed(batch, is_training)
           if task_model.debug_ops:
+            print(task_model)
+            print(task_model.debug_ops)
             for ops, res in zip(task_model.debug_ops, 
                                 self.sess.run(task_model.debug_ops, input_feed)):
               print(ops, res.shape)

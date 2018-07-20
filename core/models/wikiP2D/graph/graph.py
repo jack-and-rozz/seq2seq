@@ -190,7 +190,7 @@ class GraphLinkPrediction(ModelBase):
       mention_starts, mention_ends = tf.unstack(self.subj_ph, axis=1)
       subj_outputs, _  = self.encoder.get_mention_emb(text_emb, encoder_outputs,
                                                       mention_starts, mention_ends)
-      self.debug_ops = [subj_outputs]
+      #self.debug_ops = encoder.debug_ops
 
     with tf.variable_scope('Object') as scope:
       #obj_outputs = extract_span(encoder_outputs, self.obj_ph)

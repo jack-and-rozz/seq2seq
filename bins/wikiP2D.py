@@ -112,14 +112,14 @@ class ExperimentManager(ManagerBase):
     task_name = 'desc'
     batches = self.dataset[task_name].valid.get_batch(
       self.config.tasks[task_name].batch_size, do_shuffle=False)
+    rels = []
     for i, batch in enumerate(batches):
-      #pprint(batch)
       print ('#####################################')
+      pprint(batch)
+      exit(1)
       for j, b in enumerate(common.flatten_batch(batch)):
-        print(i, j)
         pprint(b)
         exit(1)
-    exit(1)
     for i, batch in enumerate(batches):
       print ('----------')
       for j ,k in enumerate(batch):

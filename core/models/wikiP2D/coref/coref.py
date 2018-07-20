@@ -138,7 +138,9 @@ class CoreferenceResolution(ModelBase):
     text_outputs: [num_words, dim(encoder_outputs)]
     mention_starts, mention_ends: [num_mentions]
     '''
+    
     mention_emb, head_scores = self.encoder.get_mention_emb(text_emb, text_outputs, mention_starts, mention_ends)
+
     mention_width = 1 + mention_ends - mention_starts # [num_mentions]
     self.head_scores = head_scores
 

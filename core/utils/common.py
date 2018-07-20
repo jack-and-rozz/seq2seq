@@ -142,8 +142,12 @@ def batching_dicts(batch, d):
   Recursively add to batch an entry whose type is recDotDict.
   e.g. [{'a': 1, 'b':2}, {'a':10, 'b':20}] -> {'a': [1, 10], 'b': [2, 20]}
   '''
-  assert type(d) == recDotDefaultDict
-  assert type(batch) == recDotDefaultDict
+  try:
+    assert type(d) == recDotDefaultDict
+    assert type(batch) == recDotDefaultDict
+  except:
+    sys.stderr.write('The two arguments must be instances of recDotDefaultDict, but (%s, %s).\n' % (type(d), type(batch)))
+    exit(1)
   for k in d:
     if isinstance(d[k], dict):
       batching_dicts(batch[k], d[k])

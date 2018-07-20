@@ -141,42 +141,48 @@ class SentenceEncoder(ModelBase):
     if input_rank == 2:
       return self._get_mention_emb(text_emb, text_outputs, mention_starts, mention_ends)
     elif input_rank == 3:
-      mention_starts = tf.expand_dims(mention_starts, 1)
-      mention_ends = tf.expand_dims(mention_ends, 1)
-      # def loop_func(idx, *args):
-      #   args = [v[idx] for v in args]
-      #   res, _ = self._get_mention_emb(*args) # [1, emb_size]
-      #   return res
-      # res = batch_loop(loop_func, text_emb, text_outputs, mention_starts, mention_ends)
-      with tf.name_scope('batch_loop'):
-        def loop_func(idx, *args):
-          args = [v[idx] for v in args]
-          res, _ = self._get_mention_emb(*args) # [1, emb_size]
-        return res
+      return self._get_batched_mention_emb(text_emb, text_outputs, mention_starts, mention_ends)
 
-        batch_size = shape(text_emb, 0)
-        idx = tf.zeros((), dtype=tf.int32) # Index for loop counter
-        res_shape = loop_func(idx, text_emb, text_outputs, mention_starts, mention_ends).get_shape()
-        res = tf.zeros((0, *res_shape)) # A fake tensor with the same shape as output
-        cond = lambda idx, res: idx < batch_size
-        body = lambda idx, res: (
-          idx + 1, 
-          tf.concat([res, tf.expand_dims(loop_func(idx, text_emb, text_outputs, mention_starts, mention_ends), 0)], axis=0),
-        )
+    #   mention_starts = tf.expand_dims(mention_starts, 1)
+    #   mention_ends = tf.expand_dims(mention_ends, 1)
 
-        loop_vars = [idx, res]
-        _, res = tf.while_loop(
-          cond, body, loop_vars,
-          shape_invariants=[idx.get_shape(),
-                            tf.TensorShape([None, *res_shape])]
-        ) # res: [batch_size, 1, emb_size]
-      dbgprint(res)
-      exit(1)
-      hidden_size = shape(res, -1)
-      mention_emb = tf.reshape(res, [batch_size, hidden_size])
-      return mention_emb, None
-    else:
-      raise ValueError('Tensor with rank > 3 is not supported')
+    #   with tf.name_scope('batch_loop'):
+    #     def loop_func(idx, *args):
+    #       args = [v[idx] for v in args]
+    #       res = self._get_mention_emb(*args) # [1, emb_size]
+    #       dbgprint(res)
+    #       return res
+
+    #     batch_size = shape(text_emb, 0)
+    #     idx = tf.zeros((), dtype=tf.int32) # Index for loop counter
+    #     res_shapes = [r.get_shape() for r in loop_func(idx, text_emb, text_outputs, mention_starts, mention_ends)]
+    #     dbgprint(res_shapes)
+    #     exit(1)
+    #     res = [tf.zeros((0, *res_shape)) for res_shape in res_shapes]# A fake tensor with the same shape as output
+
+    #     cond = lambda idx, res: idx < batch_size
+    #     body = lambda idx, res: (
+    #       idx + 1, 
+    #       #tf.concat([res, tf.expand_dims(loop_func(idx, text_emb, text_outputs, mention_starts, mention_ends), 0)], axis=0),
+    #       [tf.concat([r, tf.expand_dims(rr, 0)], axis=0) for r, rr in zip(
+    #         res,
+    #         loop_func(idx, text_emb, text_outputs, mention_starts, mention_ends),
+    #       )]
+    #     )
+
+    #     loop_vars = [idx, res]
+    #     shape_invariants = [idx.get_shape()] + [tf.TensorShape([None, *res_shape]) for res_shape in res_shapes]
+    #     _, res = tf.while_loop(
+    #       cond, body, loop_vars,
+    #       shape_invariants=shape_invariants
+    #     ) # res: [batch_size, 1, emb_size]
+    #   dbgprint(res)
+    #   exit(1)
+    #   hidden_size = shape(res, -1)
+    #   mention_emb = tf.reshape(res, [batch_size, hidden_size])
+    #   return mention_emb, None
+    # else:
+    #   raise ValueError('Tensor with rank > 3 is not supported')
 
   def _get_mention_emb(self, text_emb, text_outputs, mention_starts, mention_ends):
     '''
@@ -241,6 +247,10 @@ class SentenceEncoder(ModelBase):
     - text_outputs: [batch_size, num_words, dim(encoder_outputs)]
     - mention_starts, mention_ends: [batch_size] 
     '''
+    dbgprint(text_emb)
+    dbgprint(text_outputs)
+    dbgprint(mention_starts)
+    dbgprint(mention_ends)
     with tf.variable_scope(self.shared_scope or "SentenceEncoder", 
                            reuse=self.reuse_mention) as scope:
       with tf.variable_scope('get_mention_emb'):
@@ -250,9 +260,16 @@ class SentenceEncoder(ModelBase):
 
         if self.use_boundary:
           with tf.name_scope('mention_boundary'):
-            dbgprint(text_outputs, mention_starts, mention_ends)
             mention_start_emb = batch_gather(text_outputs, mention_starts) #[batch_size, emb]
             mention_end_emb = batch_gather(text_outputs, mention_ends) #[batch_size, emb]
+            dbgprint(mention_start_emb, mention_end_emb)
+            batch_size = shape(mention_start_emb, 0)
+            hidden_size = shape(mention_start_emb, -1)
+
+            mention_start_emb = tf.reshape(mention_start_emb, 
+                                           [batch_size, hidden_size])
+            mention_end_emb = tf.reshape(mention_end_emb, 
+                                         [batch_size, hidden_size])
             mention_emb_list.append(mention_start_emb)
             mention_emb_list.append(mention_end_emb)
             dbgprint(mention_start_emb, mention_end_emb)
@@ -262,21 +279,28 @@ class SentenceEncoder(ModelBase):
             mention_indices = tf.expand_dims(tf.range(max_mention_width), 0) + tf.expand_dims(mention_starts, 1) # [num_mentions, max_mention_width]
             mention_indices = tf.minimum(shape(text_outputs, 1) - 1, mention_indices) # [num_mentions, max_mention_width]
 
-            dbgprint(text_emb)
             dbgprint(mention_indices)
-            exit(1)
+
             mention_text_emb = batch_gather(text_emb, mention_indices) # [num_mentions, max_mention_width, emb]
 
-            head_scores = projection(text_outputs, 1) # [num_words, 1]
+            dbgprint(mention_text_emb)
+            head_scores = projection(text_outputs, 1) # [batch_size, num_words, 1]
             mention_head_scores = batch_gather(head_scores, mention_indices) # [num_mentions, max_mention_width, 1]
+            dbgprint(head_scores)
+            dbgprint(mention_head_scores)
             mention_mask = tf.expand_dims(tf.sequence_mask(mention_width, max_mention_width, dtype=tf.float32), 2) # [num_mentions, max_mention_width, 1]
+            dbgprint(mention_mask)
 
             mention_attention = tf.nn.softmax(mention_head_scores + tf.log(mention_mask), dim=1) # [num_mentions, max_mention_width, 1]
+            dbgprint(mention_attention)
+
             mention_head_emb = tf.reduce_sum(mention_attention * mention_text_emb, 1) # [num_mentions, emb]
+            dbgprint(mention_head_emb)
             mention_emb_list.append(mention_head_emb)
         dbgprint(mention_emb_list)
         mention_emb = tf.concat(mention_emb_list, 1) # [num_mentions, emb]
-
+        dbgprint(mention_emb)
+      self.debug_ops = [mention_starts, mention_ends, mention_indices, mention_attention, mention_mask]
       if self.shared_scope:
         self.reuse_mention = True 
 
@@ -306,11 +330,23 @@ class MultiEncoderWrapper(SentenceEncoder):
       word_repls, o, s = e.encode(wc_sentences, sequence_length)
       outputs.append(o)
       state.append(s)
-    #outputs = merge_func(outputs, axis=2)
     outputs = merge_func(outputs, axis=-1)
     state = merge_state(state, merge_func=merge_func)
     return word_repls, outputs, state
 
   def get_mention_emb(self, *args, merge_func=tf.reduce_mean):
-    mention_embs = [e.get_mention_emb(*args) for e in self.encoders]
-    return merge_func(mention_embs, axis=-1)
+    mention_embs = []
+    head_scores = []
+    for encoder in self.encoders:
+      m, h = encoder.get_mention_emb(*args)
+      mention_embs.append(m)
+      head_scores.append(h)
+    dbgprint(mention_embs)
+    dbgprint(head_scores)
+    if merge_func == tf.reduce_mean:
+      axis = 0 
+    elif merge_func == tf.concat:
+      axis = -1
+    else:
+      raise ValueError('merge_func must be tf.reduce_mean or tf.concat')
+    return merge_func(mention_embs, axis=axis), merge_func(head_scores, axis=axis)

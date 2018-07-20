@@ -52,10 +52,6 @@ def padding_2d(batch, minlen=None, maxlen=None, pad=PAD_ID, pad_type='post'):
   length_of_this_dim = define_length(batch, minlen, maxlen)
   return np.array([fill_zero(l[:length_of_this_dim], length_of_this_dim) for l in batch])
 
-  # return pad_sequences(
-  #   batch, maxlen=maxlen, value=pad,
-  #   padding=pad_type, truncating=pad_type)
-
 def padding_3d(batch, minlen=[None, None], maxlen=[None, None]):
   '''
   Args:
@@ -72,6 +68,16 @@ def padding_3d(batch, minlen=[None, None], maxlen=[None, None]):
     l = padding_2d(l, minlen=minlen[1:], maxlen=maxlen[1:])
     padded_batch.append(l)
   return np.array(padded_batch)
+
+def padding_4d(batch, minlen=[None, None, None], maxlen=[None, None, None]):
+  length_of_this_dim = define_length(batch, minlen[0], maxlen[0])
+  padded_batch = []
+  for l in batch:
+    l = fill_empty_brackets(l[:length_of_this_dim], length_of_this_dim)
+    l = padding_3d(l, minlen=minlen[1:], maxlen=maxlen[1:])
+    padded_batch.append(l)
+  return np.array(padded_batch)
+
 
 def read_jsonlines(source_path, max_rows=0):
   data = []
@@ -114,27 +120,12 @@ class _WikiP2DDataset(object):
     self.max_rows = config.max_rows
 
   def preprocess(self, article):
-    def flatten_text_and_link(article):
-      raw_text = [s.split() for s in article.text]
-      num_words = [len(s) for s in raw_text]
-      links = {}
-
-      # Convert a list of sentneces to a flattened sequence of words.
-      for qid, link in article.link.items():
-        (sent_id, (begin, end)) = link
-        flatten_begin = begin + sum(num_words[:sent_id])
-        flatten_end = end + sum(num_words[:sent_id])
-        assert flatten_begin >= 0 and flatten_end >= 0
-        links[qid] = (flatten_begin, flatten_end)
-      article.link = links
-      article.text = flatten(raw_text)
-      article.desc = article.desc.split()
-      return article
-
-    article = flatten_text_and_link(article)
-    return article
+    raise NotImplementedError
 
   def article2entries(self, article):
+    raise NotImplementedError
+
+  def padding(self, batch):
     raise NotImplementedError
 
   @property
@@ -156,30 +147,6 @@ class _WikiP2DDataset(object):
     batch = self.padding(batch)
     return batch
 
-  def padding(self, batch):
-
-    '''
-    TODO: paddingどうする？paddingfifoqueueをちゃんと使ったほうが良いかも. 
-    '''
-    batch.text.word = padding_2d(
-       batch.text.word, 
-       minlen=self.config.minlen.word,
-       maxlen=self.config.maxlen.word)
-
-    batch.text.char = padding_3d(
-      batch.text.char, 
-      minlen=[self.config.minlen.word, self.config.minlen.char],
-      maxlen=[self.config.maxlen.word, self.config.maxlen.char])
-
-    cnn_max_filter_width = 3
-    batch.rel.word = padding_2d(batch.rel.word, 
-                                minlen=cnn_max_filter_width, 
-                                maxlen=None)
-    batch.rel.char = padding_3d(batch.rel.char, 
-                                minlen=[3, self.config.minlen.char], 
-                                maxlen=[None, self.config.maxlen.char])
-    return batch
-
   def get_batch(self, batch_size, do_shuffle=False):
     if not self.data:
       self.load_data()
@@ -199,6 +166,23 @@ class _WikiP2DGraphDataset(_WikiP2DDataset):
     super().__init__(config, filename, vocab)
     self.properties = properties
     self.mask_link = mask_link
+
+  def preprocess(self, article):
+    raw_text = [s.split() for s in article.text]
+    num_words = [len(s) for s in raw_text]
+    links = {}
+
+    # Convert a list of sentneces to a flattened sequence of words.
+    for qid, link in article.link.items():
+      (sent_id, (begin, end)) = link
+      flatten_begin = begin + sum(num_words[:sent_id])
+      flatten_end = end + sum(num_words[:sent_id])
+      assert flatten_begin >= 0 and flatten_end >= 0
+      links[qid] = (flatten_begin, flatten_end)
+    article.link = links
+    article.text = flatten(raw_text)
+    article.desc = article.desc.split()
+    return article
 
   def article2entries(self, article):
     def triple2entry(triple, article, label):
@@ -226,19 +210,72 @@ class _WikiP2DGraphDataset(_WikiP2DDataset):
 
     positive = triple2entry(article.positive_triple, article, 1)
     negative = triple2entry(article.negative_triple, article, 0)
-    return (positive, negative)
+    return [positive, negative]
+
+  def padding(self, batch):
+    '''
+    TODO: paddingどうする？paddingfifoqueueをちゃんと使ったほうが良いかも. 
+    '''
+    batch.text.word = padding_2d(
+       batch.text.word, 
+       minlen=self.config.minlen.word,
+       maxlen=self.config.maxlen.word)
+
+    batch.text.char = padding_3d(
+      batch.text.char, 
+      minlen=[self.config.minlen.word, self.config.minlen.char],
+      maxlen=[self.config.maxlen.word, self.config.maxlen.char])
+
+    cnn_max_filter_width = 3
+    batch.rel.word = padding_2d(batch.rel.word, 
+                                minlen=cnn_max_filter_width, 
+                                maxlen=None)
+    batch.rel.char = padding_3d(batch.rel.char, 
+                                minlen=[3, self.config.minlen.char], 
+                                maxlen=[None, self.config.maxlen.char])
+    return batch
 
 class _WikiP2DDescDataset(_WikiP2DDataset):
+  def __init__(self, config, filename, vocab, properties, mask_link):
+    super().__init__(config, filename, vocab)
+    self.max_contexts = config.max_contexts
+
+  def preprocess(self, article):
+    return article
+
   def article2entries(self, article):
     entry = recDotDefaultDict()
-    entry.text.raw = article.text
-    raw_text = article.text
-    entry.text.word = self.vocab.word.sent2ids(raw_text)
-    entry.text.word = self.vocab.char.sent2ids(raw_text)
-    entry.desc.raw = article.desc
-    entry.desc.word = self.vocab.word.sent2ids(article.desc)
-    return (entry)
+    desc = article.desc.split()
+    entry.desc.raw = desc
+    entry.desc.word = self.vocab.word.sent2ids(desc)
+    entry.link = []
+    entry.context.raw = []
+    entry.context.word = []
+    entry.context.char = []
+    for context, link in article.context[:self.max_contexts]:
+      entry.link.append(link)
+      context = context.split()
+      entry.context.raw.append(context)
+      entry.context.word.append(self.vocab.word.sent2ids(context))
+      entry.context.char.append(self.vocab.char.sent2ids(context))
+    return [entry]
 
+  def padding(self, batch):
+    '''
+    batch.text.word: [batch_size, max_contexts, max_words]
+    batch.text.word: [batch_size, max_contexts, max_words, max_chars]
+    '''
+    batch.text.word = padding_3d(
+       batch.text.word, 
+       minlen=[None, self.config.minlen.word],
+       maxlen=[None, self.config.maxlen.word])
+
+    batch.text.char = padding_4d(
+      batch.text.char, 
+      minlen=[None, self.config.minlen.word, self.config.minlen.char],
+      maxlen=[None, self.config.maxlen.word, self.config.maxlen.char])
+
+    return batch
 
 class WikiP2DGraphDataset(DatasetBase):
   '''

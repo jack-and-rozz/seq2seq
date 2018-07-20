@@ -25,10 +25,10 @@ def shape(x, dim):
   return x.get_shape()[dim].value or tf.shape(x)[dim]
 
 def batch_gather(emb, indices):
-  '''
-  Based on https://github.com/kentonl/e2e-coref/blob/master/util.py, 
-  but the behavior of this function is different from theirs because of the shape of offset.
-  '''
+  # Indices of rank-1 tensor is regarded as batch respective specifications.
+  if len(indices.get_shape()) == 1:
+    indices = tf.expand_dims(indices, 1)
+ 
   batch_size = shape(emb, 0)
   seqlen = shape(emb, 1)
   if len(emb.get_shape()) > 2:
@@ -37,12 +37,11 @@ def batch_gather(emb, indices):
     emb_size = 1
   flattened_emb = tf.reshape(emb, [batch_size * seqlen, emb_size])  # [batch_size * seqlen, emb]
 
-  #offset = tf.expand_dims(tf.range(batch_size) * seqlen, 1)  # [batch_size, 1]
-  offset = tf.range(batch_size) * seqlen  # [batch_size, 1]
+  offset = tf.expand_dims(tf.range(batch_size) * seqlen, 1)  # [batch_size, 1]
 
   gathered = tf.gather(flattened_emb, indices + offset) # [batch_size, num_indices, emb]
-  if len(emb.get_shape()) == 2:
-    gathered = tf.squeeze(gathered, 2) # [batch_size, num_indices]
+  #if len(emb.get_shape()) == 2:
+  #  gathered = tf.squeeze(gathered, 2) # [batch_size, num_indices]
   return gathered
 
 def linear(inputs, output_size=None,
