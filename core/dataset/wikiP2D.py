@@ -78,6 +78,23 @@ def padding_4d(batch, minlen=[None, None, None], maxlen=[None, None, None]):
     padded_batch.append(l)
   return np.array(padded_batch)
 
+def padding(batch, rank, minlen, maxlen):
+  assert rank == len(minlen) + 1
+  assert rank == len(maxlen) + 1
+  length_of_this_dim = define_length(batch, minlen[0], maxlen[0])
+  padded_batch = []
+  for l in batch:
+    l = fill_empty_brackets(l[:length_of_this_dim], length_of_this_dim)
+    if rank == 3:
+      l = padding_2d(l, minlen=minlen[1:], maxlen=maxlen[1:])
+    else:
+      l = padding(l, rank-1, minlen=minlen[1:], maxlen=maxlen[1:])
+    padded_batch.append(l)
+  print ([p.shape for p in padded_batch])
+  exit(1)
+  return np.array(padded_batch)
+  
+
 
 def read_jsonlines(source_path, max_rows=0):
   data = []
@@ -236,7 +253,7 @@ class _WikiP2DGraphDataset(_WikiP2DDataset):
     return batch
 
 class _WikiP2DDescDataset(_WikiP2DDataset):
-  def __init__(self, config, filename, vocab, properties, mask_link):
+  def __init__(self, config, filename, vocab):
     super().__init__(config, filename, vocab)
     self.max_contexts = config.max_contexts
 
@@ -265,15 +282,16 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
     batch.text.word: [batch_size, max_contexts, max_words]
     batch.text.word: [batch_size, max_contexts, max_words, max_chars]
     '''
-    batch.text.word = padding_3d(
-       batch.text.word, 
-       minlen=[None, self.config.minlen.word],
-       maxlen=[None, self.config.maxlen.word])
+    batch.text.word = padding(
+      batch.text.word, 
+      3,
+      minlen=[None, self.config.minlen.word],
+      maxlen=[None, self.config.maxlen.word])
 
-    batch.text.char = padding_4d(
-      batch.text.char, 
-      minlen=[None, self.config.minlen.word, self.config.minlen.char],
-      maxlen=[None, self.config.maxlen.word, self.config.maxlen.char])
+    #batch.text.char = padding_4d(
+    #  batch.text.char, 
+    #  minlen=[None, self.config.minlen.word, self.config.minlen.char],
+    #  maxlen=[None, self.config.maxlen.word, self.config.maxlen.char])
 
     return batch
 
