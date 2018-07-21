@@ -115,11 +115,15 @@ class ExperimentManager(ManagerBase):
     rels = []
     for i, batch in enumerate(batches):
       print ('#####################################')
-      pprint(batch)
-      exit(1)
-      for j, b in enumerate(common.flatten_batch(batch)):
-        pprint(b)
-        exit(1)
+      pprint(batch.desc.word.shape)
+      pprint(batch.context.word.shape)
+      pprint(batch.context.char.shape)
+      pprint(batch.context.word)
+      # exit(1)
+      # for j, b in enumerate(common.flatten_batch(batch)):
+      #   pprint(b)
+      #   exit(1)
+    exit(1)
     for i, batch in enumerate(batches):
       print ('----------')
       for j ,k in enumerate(batch):

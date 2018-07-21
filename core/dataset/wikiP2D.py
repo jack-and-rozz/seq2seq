@@ -14,24 +14,12 @@ from core.vocabulary.wikiP2D import WikiP2DVocabulary, WikiP2DSubjVocabulary, Wi
 
 random.seed(0)
 
-# これやると下の階層でそれぞれ最長が異なるのでうまくいかない。todo.
-# def define_length(batch, minlen=None, maxlen=None):
-#   # バッチ内で最長のものの長さとconfigの最長のうち小さい方を
-#   length = max([len(b) for b in batch]) 
-#   if maxlen:
-#     length = min(length, maxlen)
-
-#   # バッチ内最長が最短より短かった場合補完
-#   if minlen and minlen > length:
-#     length = minlen
-#   return length
-
 def define_length(batch, minlen=None, maxlen=None):
   if minlen is None:
     minlen = 0
 
   if maxlen:
-    return max(maxlen, minlen)
+    return max(maxlen, minlen) 
   else:
     return max([len(b) for b in batch] + [minlen])
 
@@ -52,46 +40,29 @@ def padding_2d(batch, minlen=None, maxlen=None, pad=PAD_ID, pad_type='post'):
   length_of_this_dim = define_length(batch, minlen, maxlen)
   return np.array([fill_zero(l[:length_of_this_dim], length_of_this_dim) for l in batch])
 
-def padding_3d(batch, minlen=[None, None], maxlen=[None, None]):
-  '''
-  Args:
-  array: a 3D list. 
-  maxlen: an list of integer. [max_num_word, max_num_char]
-  Return:
-  A 3D tensor of which shape is [batch_size, max_num_word, max_num_char].
-  '''
-  length_of_this_dim = define_length(batch, minlen[0], maxlen[0])
-  padded_batch = []
-  for l in batch:
-    l = fill_empty_brackets(l[:length_of_this_dim], length_of_this_dim)
-    # 別々にpadding_2dしたらそれぞれmaxlenが異なってしまうけどどうしよう
-    l = padding_2d(l, minlen=minlen[1:], maxlen=maxlen[1:])
-    padded_batch.append(l)
-  return np.array(padded_batch)
-
-def padding_4d(batch, minlen=[None, None, None], maxlen=[None, None, None]):
-  length_of_this_dim = define_length(batch, minlen[0], maxlen[0])
-  padded_batch = []
-  for l in batch:
-    l = fill_empty_brackets(l[:length_of_this_dim], length_of_this_dim)
-    l = padding_3d(l, minlen=minlen[1:], maxlen=maxlen[1:])
-    padded_batch.append(l)
-  return np.array(padded_batch)
-
 def padding(batch, rank, minlen, maxlen):
   assert rank == len(minlen) + 1
   assert rank == len(maxlen) + 1
   length_of_this_dim = define_length(batch, minlen[0], maxlen[0])
   padded_batch = []
+  if rank == 2:
+    return padding_2d(batch, minlen=minlen[0], maxlen=maxlen[0])
+
   for l in batch:
     l = fill_empty_brackets(l[:length_of_this_dim], length_of_this_dim)
     if rank == 3:
       l = padding_2d(l, minlen=minlen[1:], maxlen=maxlen[1:])
     else:
       l = padding(l, rank-1, minlen=minlen[1:], maxlen=maxlen[1:])
+
     padded_batch.append(l)
-  print ([p.shape for p in padded_batch])
-  exit(1)
+  largest_shapes = [max(n_dims) for n_dims in zip(*[tensor.shape for tensor in padded_batch])]
+  target_tensor = np.zeros([len(batch)] + largest_shapes)
+
+  for i, tensor in enumerate(padded_batch):
+    pad_lengths = [x - y for x, y in zip(largest_shapes, tensor.shape)]
+    pad_shape = [(0, l) for l in pad_lengths] 
+    padded_batch[i] = np.pad(tensor, pad_shape, 'constant')
   return np.array(padded_batch)
   
 
@@ -279,19 +250,30 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
 
   def padding(self, batch):
     '''
+    batch.desc.word: [batch_size, max_words]
     batch.text.word: [batch_size, max_contexts, max_words]
-    batch.text.word: [batch_size, max_contexts, max_words, max_chars]
+    batch.text.char: [batch_size, max_contexts, max_words, max_chars]
     '''
-    batch.text.word = padding(
-      batch.text.word, 
-      3,
+    batch.context.char = padding(
+      batch.context.char,
+      rank=4,
+      #minlen=[None, self.config.minlen.word, None],
+      #maxlen=[None, self.config.maxlen.word, None])
+      minlen=[None, self.config.minlen.word, self.config.minlen.char],
+      maxlen=[None, self.config.maxlen.word, self.config.maxlen.char])
+
+    batch.context.word = padding(
+      batch.context.word, 
+      rank=3,
       minlen=[None, self.config.minlen.word],
       maxlen=[None, self.config.maxlen.word])
 
-    #batch.text.char = padding_4d(
-    #  batch.text.char, 
-    #  minlen=[None, self.config.minlen.word, self.config.minlen.char],
-    #  maxlen=[None, self.config.maxlen.word, self.config.maxlen.char])
+
+    batch.desc.word = padding(
+      batch.desc.word, 
+      rank=2,
+      minlen=[self.config.minlen.word],
+      maxlen=[self.config.maxlen.word])
 
     return batch
 
