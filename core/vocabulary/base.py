@@ -154,8 +154,11 @@ class WordVocabularyBase(VocabularyBase):
       return " ".join(sent_tokens)
     return _ids2tokens(ids, link_span)
 
+  def get(self, token):
+    return self.token2id(token)
+  
   def token2id(self, token):
-    return self.vocab.get(token, UNK_ID)
+    return self.vocab.get(token, self.vocab.get(_UNK,  None))
 
   def sent2ids(self, sentence, word_dropout=0.0):
     if type(sentence) == list:
@@ -197,7 +200,7 @@ class CharVocabularyBase(VocabularyBase):
       return self.rev_vocab[_id]
 
   def token2id(self, token):
-    return self.vocab.get(token, UNK_ID)
+    return self.vocab.get(token, self.vocab.get(_UNK, None))
 
   def sent2ids(self, sentence):
     if type(sentence) == list:
@@ -215,28 +218,32 @@ class CharVocabularyBase(VocabularyBase):
       sent_tokens = [w for w in sent_tokens if w]
     return " ".join(sent_tokens)
 
+
+
 class VocabularyWithEmbedding(WordVocabularyBase):
-  def __init__(self, emb_configs, vocab_size,
+  def __init__(self, emb_configs, vocab_size, 
+               start_vocab=None, 
                lowercase=False, normalize_digits=False, 
                normalize_embedding=True):
     '''
     All pretrained embeddings must be under the source_dir.'
     This class can merge two or more pretrained embeddings by concatenating both.
     For OOV word, this returns zero vector.
+
     '''
     super(VocabularyWithEmbedding, self).__init__()
-    self.start_vocab = START_VOCAB
+    self.start_vocab = start_vocab if start_vocab else START_VOCAB
+    
     self.name = "_".join([c['path'].split('.')[0] for c in emb_configs])
     self.tokenizer = word_tokenizer(lowercase=lowercase,
                                     normalize_digits=normalize_digits)
     self.normalize_embedding = normalize_embedding
     self.vocab, self.rev_vocab, self.embeddings = self.init_vocab(
       emb_configs, vocab_size)
-
+  @common.timewatch()
   def init_vocab(self, emb_configs, vocab_size):
     # Load several pretrained embeddings and concatenate them.
-    pretrained = [self.load(c['path'], vocab_size, c['size'], c['skip_first'])
-                  for c in emb_configs]
+    pretrained = [self.load(c['path'], vocab_size, c['size'], c['skip_first']) for c in emb_configs]
     rev_vocab = common.flatten([list(e.keys()) for e in pretrained])
     rev_vocab = self.start_vocab + rev_vocab[:vocab_size]
     vocab = collections.OrderedDict()
@@ -267,10 +274,10 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     - embedding_path: a string.
     - vocab_size: an integer.
     - embedding_size: an integer.
+    - skip_first: a boolean.
+    - token_list: list of tokens (word, char, label, etc.).
     """
     sys.stderr.write("Loading word embeddings from {}...\n".format(embedding_path))
-    # TODO: embeddingも訓練するならランダム初期化で良いけど、くっつけるならゼロ初期化のほうがいいんじゃないか？
-    #embedding_dict = collections.defaultdict(random_embedding_generator(embedding_size))
     embedding_dict = collections.defaultdict(zero_embedding_generator(embedding_size))
 
     with open(embedding_path) as f:
@@ -287,14 +294,13 @@ class VocabularyWithEmbedding(WordVocabularyBase):
         word = word[0]
         vector = [float(s) for s in word_and_emb[1:]]
 
-        # If a capitalized (or digit-normalized) word is changed to its lowercased, it is used as an alternative only when the exact one is not still registered. 
+        # If a capitalized (or digit-normalized) word is changed to its lowercased form, which is used as an alternative only when the exact one is not registered. 
         # e.g. Texas -> texas, 1999->0000, etc.
-        if word == word_and_emb:
+        if word == word_and_emb[0]:
           embedding_dict[word] = vector
         elif word not in embedding_dict: 
           embedding_dict[word] = vector
     return embedding_dict
-
 
 class PredefinedCharVocab(CharVocabularyBase):
   def __init__(self, vocab_path, vocab_size, 

@@ -330,6 +330,8 @@ class MultiEncoderWrapper(SentenceEncoder):
       word_repls, o, s = e.encode(wc_sentences, sequence_length)
       outputs.append(o)
       state.append(s)
+    self.output_shapes = [o.get_shape() for o in outputs]
+    self.state_shapes = [s.get_shape() for s in state]
     outputs = merge_func(outputs, axis=-1)
     state = merge_state(state, merge_func=merge_func)
     return word_repls, outputs, state

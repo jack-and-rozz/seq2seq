@@ -9,7 +9,7 @@ from collections import OrderedDict, defaultdict, Counter
 from core.utils.common import recDotDefaultDict, recDotDict, flatten, batching_dicts, pad_sequences
 #from core.utils import visualize
 from core.dataset.base import DatasetBase
-from core.vocabulary.base import _UNK, UNK_ID, PAD_ID, fill_empty_brackets, fill_zero
+from core.vocabulary.base import _UNK, UNK_ID, PAD_ID, fill_empty_brackets, fill_zero, VocabularyWithEmbedding
 from core.vocabulary.wikiP2D import WikiP2DVocabulary, WikiP2DSubjVocabulary, WikiP2DRelVocabulary, WikiP2DObjVocabulary
 
 random.seed(0)
@@ -22,7 +22,6 @@ def define_length(batch, minlen=None, maxlen=None):
     return max(maxlen, minlen) 
   else:
     return max([len(b) for b in batch] + [minlen])
-
 
 def padding_2d(batch, minlen=None, maxlen=None, pad=PAD_ID, pad_type='post'):
   '''
@@ -64,8 +63,6 @@ def padding(batch, rank, minlen, maxlen):
     pad_shape = [(0, l) for l in pad_lengths] 
     padded_batch[i] = np.pad(tensor, pad_shape, 'constant')
   return np.array(padded_batch)
-  
-
 
 def read_jsonlines(source_path, max_rows=0):
   data = []
@@ -111,6 +108,12 @@ class _WikiP2DDataset(object):
     raise NotImplementedError
 
   def article2entries(self, article):
+    '''
+    Args:
+    - article: An instance of recDotDict.
+    Return:
+    A list of entry which is an instance of recDotDict.
+    '''
     raise NotImplementedError
 
   def padding(self, batch):
@@ -173,6 +176,9 @@ class _WikiP2DGraphDataset(_WikiP2DDataset):
     return article
 
   def article2entries(self, article):
+    if not (article.text and article.positive_triple and article.negative_triple):
+      return []
+
     def triple2entry(triple, article, label):
       entry = recDotDefaultDict()
       entry.qid = article.qid
@@ -232,6 +238,9 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
     return article
 
   def article2entries(self, article):
+    if not (article.desc and article.contexts):
+      return []
+
     entry = recDotDefaultDict()
     desc = article.desc.split()
     entry.desc.raw = desc
@@ -240,7 +249,7 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
     entry.context.raw = []
     entry.context.word = []
     entry.context.char = []
-    for context, link in article.context[:self.max_contexts]:
+    for context, link in article.contexts[:self.max_contexts]:
       entry.link.append(link)
       context = context.split()
       entry.context.raw.append(context)
@@ -251,14 +260,12 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
   def padding(self, batch):
     '''
     batch.desc.word: [batch_size, max_words]
-    batch.text.word: [batch_size, max_contexts, max_words]
-    batch.text.char: [batch_size, max_contexts, max_words, max_chars]
+    batch.context.word: [batch_size, max_contexts, max_words]
+    batch.context.char: [batch_size, max_contexts, max_words, max_chars]
     '''
     batch.context.char = padding(
       batch.context.char,
       rank=4,
-      #minlen=[None, self.config.minlen.word, None],
-      #maxlen=[None, self.config.maxlen.word, None])
       minlen=[None, self.config.minlen.word, self.config.minlen.char],
       maxlen=[None, self.config.maxlen.word, self.config.maxlen.char])
 
@@ -268,7 +275,6 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
       minlen=[None, self.config.minlen.word],
       maxlen=[None, self.config.maxlen.word])
 
-
     batch.desc.word = padding(
       batch.desc.word, 
       rank=2,
@@ -276,6 +282,61 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
       maxlen=[self.config.maxlen.word])
 
     return batch
+
+class _WikiP2DCategoryDataset(_WikiP2DDataset):
+  def __init__(self, config, filename, vocab):
+    super().__init__(config, filename, vocab)
+    self.max_contexts = config.max_contexts
+
+  def preprocess(self, article):
+    return article
+
+  def article2entries(self, article):
+    if not (article.category and article.contexts):
+      return []
+
+    entry = recDotDefaultDict()
+    entry.category.raw = article.category
+    entry.category.label = self.vocab.category.token2id(article.category)
+    if entry.category.label == self.vocab.category.token2id(_UNK):
+      return []
+    entry.link = []
+    entry.context.raw = []
+    entry.context.word = []
+    entry.context.char = []
+    for context, link in article.contexts[:self.max_contexts]:
+      entry.link.append(link)
+      context = context.split()
+      entry.context.raw.append(context)
+      entry.context.word.append(self.vocab.word.sent2ids(context))
+      entry.context.char.append(self.vocab.char.sent2ids(context))
+      entry.link.append(link)
+    return [entry]
+
+  def padding(self, batch):
+    '''
+    batch.context.word: [batch_size, max_contexts, max_words]
+    batch.context.char: [batch_size, max_contexts, max_words, max_chars]
+    batch.link: [batch_size, max_contexts, 2]
+    '''
+    batch.context.char = padding(
+      batch.context.char,
+      rank=4,
+      minlen=[None, self.config.minlen.word, self.config.minlen.char],
+      maxlen=[None, self.config.maxlen.word, self.config.maxlen.char])
+    batch.context.word = padding(
+      batch.context.word, 
+      rank=3,
+      minlen=[None, self.config.minlen.word],
+      maxlen=[None, self.config.maxlen.word])
+    batch.link = padding(
+      batch.context.link,
+      rank=3,
+      minlen=[None, 2],
+      maxlen=[None, 2])
+
+    return batch
+
 
 class WikiP2DGraphDataset(DatasetBase):
   '''
@@ -304,3 +365,17 @@ class WikiP2DDescDataset(DatasetBase):
     self.valid = data_class(config, config.valid_data, vocab)
     self.test = data_class(config, config.test_data, vocab)
 
+class WikiP2DCategoryDataset(DatasetBase):
+  def __init__(self, config, vocab):
+    self.vocab = vocab
+    
+    #categories = [l.split()[0] for l in open(os.path.join(config.source_dir, config.category_vocab))][:config.category_size]
+    self.vocab.category = VocabularyWithEmbedding(
+      config.embeddings_conf, config.category_size, 
+      start_vocab=[_UNK],
+      #token_list=categories,
+    )
+    data_class =  _WikiP2DCategoryDataset
+    self.train = data_class(config, config.train_data, vocab)
+    self.valid = data_class(config, config.valid_data, vocab)
+    self.test = data_class(config, config.test_data, vocab)

@@ -109,13 +109,13 @@ class ExperimentManager(ManagerBase):
     # coref = self.dataset.coref
     # for batch in self.dataset.coref.valid.get_batch(self.config.tasks.coref.batch_size, do_shuffle=False):
     #   pprint(batch)
-    task_name = 'desc'
+    task_name = 'category'
     batches = self.dataset[task_name].valid.get_batch(
       self.config.tasks[task_name].batch_size, do_shuffle=False)
     rels = []
     for i, batch in enumerate(batches):
       print ('#####################################')
-      pprint(batch.desc.word.shape)
+      print(batch.category.raw, batch.category.label)
       pprint(batch.context.word.shape)
       pprint(batch.context.char.shape)
       pprint(batch.context.word)
@@ -123,6 +123,7 @@ class ExperimentManager(ManagerBase):
       # for j, b in enumerate(common.flatten_batch(batch)):
       #   pprint(b)
       #   exit(1)
+    print(self.dataset[task_name].valid.size)
     exit(1)
     for i, batch in enumerate(batches):
       print ('----------')

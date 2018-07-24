@@ -1,6 +1,6 @@
 # coding: utf-8 
 import math, time, sys
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 from orderedset import OrderedSet
 from pprint import pprint
 import numpy as np
@@ -13,15 +13,17 @@ from core.models.base import ModelBase, ManagerBase
 #import core.models.wikiP2D.encoder as encoder
 from core.models.wikiP2D.encoder import SentenceEncoder, WordEncoder, MultiEncoderWrapper
 from core.models.wikiP2D.gen_desc.gen_desc import DescriptionGeneration
+from core.models.wikiP2D.category.category import CategoryClassification
 from core.models.wikiP2D.graph.graph import GraphLinkPrediction
 from core.models.wikiP2D.coref.coref import CoreferenceResolution
 from core.models.wikiP2D.adversarial import TaskAdversarial
 
 available_models = [
+  CategoryClassification,
   DescriptionGeneration,
   GraphLinkPrediction,
   CoreferenceResolution,
-  TaskAdversarial
+  TaskAdversarial,
 ]
 available_models = dotDict({c.__name__:c for c in available_models})
 
@@ -53,7 +55,7 @@ class MTLManager(ManagerBase):
                                                  self.word_encoder,
                                                  shared_scope=scope)
     ## Define each task
-    self.tasks = dotDict()
+    self.tasks = dotDict()#OrderedDict()
     for i, (task_name, task_config) in enumerate(config.tasks.items()):
       num_gpus = len(tf_utils.get_available_gpus())
       if num_gpus:

@@ -184,6 +184,7 @@ class GraphLinkPrediction(ModelBase):
 
     with tf.name_scope('Encoder'):
       text_emb, encoder_outputs, encoder_state = self.encoder.encode([self.text_ph.word, self.text_ph.char], self.sentence_length)
+      self.encoder_outputs = encoder_outputs
 
     with tf.variable_scope('Subject') as scope:
       #subj_outputs = extract_span(encoder_outputs, self.subj_ph)

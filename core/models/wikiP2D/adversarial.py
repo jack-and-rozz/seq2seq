@@ -3,7 +3,7 @@ import math, time, sys
 import tensorflow as tf
 from tensorflow.python.framework import ops
 from core.models.base import ModelBase
-from core.utils import tf_utils
+from core.utils.tf_utils import linear, shape
 
 class FlipGradientBuilder(object):
   def __init__(self):
@@ -38,17 +38,22 @@ class TaskAdversarial(ModelBase):
         inputs.append(t.text_ph.word)
       if self.encoder.cbase:
         inputs.append(t.text_ph.char)
-      _, encoder_output, _  = self.encoder.encode(inputs, t.sentence_length)
+      #_, encoder_output, _  = self.encoder.encode(inputs, t.sentence_length)
 
-      # TODO:ADVに使うencoder_outputはとりあえず文全体の平均。今後変えるかも
-      encoder_output = tf.reduce_mean(encoder_output, axis=1)
-      task_id = tf.tile([i], [tf_utils.shape(inputs[0], 0)])
-      encoder_outputs.append(encoder_output)
+      # t.encoder_outputs: [batch_size, max_sequence_length, hidden_size of shared + private encoder]
+      #output_dim = shape(t.encoder_outputs, -1) / 2 
+      shared_repls, private_repls = tf.split(t.encoder_outputs, [shape(s, -1) for s in t.encoder.output_shapes], axis=-1)
+
+      # TODO: Is there any other better representations?
+      shared_repls = tf.reduce_mean(shared_repls, axis=1)
+      task_id = tf.tile([i], [shape(inputs[0], 0)])
+      encoder_outputs.append(shared_repls)
       task_ids.append(task_id)
     encoder_outputs = flip_gradient(tf.concat(encoder_outputs, axis=0))
     task_ids = tf.concat(task_ids, axis=0)
     task_ids = tf.one_hot(task_ids, len(tasks))
-    self.outputs = tf.nn.softmax(tf_utils.linear(encoder_outputs, len(tasks)))
-    self.loss = tf.nn.softmax_cross_entropy_with_logits(logits=self.outputs,
+    self.outputs = tf.nn.softmax(linear(encoder_outputs, len(tasks)))
+    l_task = tf.nn.softmax_cross_entropy_with_logits(logits=self.outputs,
                                                         labels=task_ids)
+    self.loss = l_task
     self.loss = tf.reduce_mean(self.loss)
