@@ -25,6 +25,15 @@ def shape(x, dim):
   return x.get_shape()[dim].value or tf.shape(x)[dim]
 
 def batch_gather(emb, indices):
+  '''
+  e.g. arr = [[[0, 1], [2, 3]], [[4, 5], [6, 7]]]  # arr.shape = [2,2,2]
+       indices = [[0], [1]]
+       res = [[[0, 1], [6, 7]]]
+
+       indices = [[0, 0], [0, 1]]
+       res = [[[0, 1], [0, 1]], [[4, 5], [6, 7]]]
+  '''
+
   # Indices of rank-1 tensor is regarded as batch respective specifications.
   if len(indices.get_shape()) == 1:
     indices = tf.expand_dims(indices, 1)

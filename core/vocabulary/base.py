@@ -133,9 +133,9 @@ class VocabularyBase(object):
 class WordVocabularyBase(VocabularyBase):
   def id2token(self, _id):
     if type(_id) not in [int, np.int32, np.int64] or _id < 0 or _id > len(self.rev_vocab):
-      sys.stderr.write(type(_id))
+      sys.stderr.write(str(type(_id)))
       raise ValueError('Token ID must be an integer between 0 and %d (ID=%d)' % (len(self.rev_vocab), _id))
-    elif _id in set([PAD_ID, BOS_ID]):
+    elif _id in set([self.token2id(x) for x in [_PAD, _BOS] if self.token2id(x) != self.token2id(_UNK)]):
       return None
     else:
       return self.rev_vocab[_id]
@@ -170,8 +170,7 @@ class WordVocabularyBase(VocabularyBase):
       sentence = " ".join(sentence)
     tokens = self.tokenizer(sentence) 
     if word_dropout:
-      res = [self.token2id(word) if np.random.rand() <= word_dropout else UNK_ID
-             for word in tokens]
+      res = [self.token2id(word) if np.random.rand() <= word_dropout else self.vocab.get(_UNK) for word in tokens]
     else:
       res = [self.token2id(word) for word in tokens]
 

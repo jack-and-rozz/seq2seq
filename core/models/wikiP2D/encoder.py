@@ -1,16 +1,19 @@
 # coding: utf-8 
 import sys
 import tensorflow as tf
+from functools import reduce
+import numpy as np
+
 from tensorflow.python.util import nest
 from tensorflow.python.ops import rnn
-import numpy as np
+from tensorflow.contrib.rnn import LSTMStateTuple
 
 from core.utils.common import dbgprint
 from core.utils.tf_utils import shape, cnn, linear, projection, batch_gather, batch_loop 
 from core.seq2seq.rnn import setup_cell
 from core.models.base import ModelBase
 from core.vocabulary.base import VocabularyWithEmbedding
-from tensorflow.contrib.rnn import LSTMStateTuple
+
 
 def merge_state(state, merge_func=tf.concat):
   if isinstance(state[0], LSTMStateTuple):
@@ -51,30 +54,68 @@ class WordEncoder(ModelBase):
         self.c_embeddings = self.initialize_embeddings(
           'char_emb', c_emb_shape, trainable=True)
 
-  def encode(self, wc_inputs):
-    # inputs: the list of [None, max_sentence_length] or [None, max_sentence_length, max_word_length]
-    if not isinstance(wc_inputs, list):
-      wc_inputs = [wc_inputs]
-
-    outputs = []
+  def word_encode(self, inputs):
+    if inputs is None:
+      return inputs
     with tf.variable_scope(self.shared_scope or "WordEncoder", reuse=self.reuse):
-      for inputs in wc_inputs:
-        if inputs is None:
-          continue
-        if len(inputs.get_shape()) == 3: # char-based
-          char_repls = tf.nn.embedding_lookup(self.c_embeddings, inputs)
-          batch_size = shape(char_repls, 0)
-          max_sentence_length = shape(char_repls, 1)
-          flattened_char_repls = tf.reshape(char_repls, [batch_size * max_sentence_length, shape(char_repls, 2), shape(char_repls, 3)])
-          flattened_aggregated_char_repls = cnn(flattened_char_repls)
-          word_repls = tf.reshape(flattened_aggregated_char_repls, [batch_size, max_sentence_length, shape(flattened_aggregated_char_repls, 1)]) # [num_sentences, max_sentence_length, emb_size]
-        else: # word-based
-          word_repls = tf.nn.embedding_lookup(self.w_embeddings, inputs)
-        outputs.append(word_repls)
-      outputs = tf.concat(outputs, axis=-1)
-      if self.shared_scope:
-        self.reuse = True
-    return tf.nn.dropout(outputs, self.keep_prob) # [None, max_sentence_length, emb_size]
+      outputs = tf.nn.embedding_lookup(self.w_embeddings, inputs)
+      outputs = tf.nn.dropout(outputs, self.keep_prob)
+    return outputs
+
+  def char_encode(self, inputs):
+    '''
+    Args:
+    - inputs: [*, max_sequence_length, max_word_length]
+    Return:
+    - outputs: [*, max_sequence_length, cnn_output_size]
+    '''
+    if inputs is None:
+      return inputs
+
+
+    with tf.variable_scope(self.shared_scope or "WordEncoder", reuse=self.reuse):
+      # Flatten the input tensor to each word (rank-3 tensor).
+      with tf.name_scope('flatten'):
+        char_repls = tf.nn.embedding_lookup(self.c_embeddings, inputs) # [*, max_word_len, char_emb_size]
+        other_shapes = [shape(char_repls, i) for i in range(len(char_repls.get_shape()[:-2]))]
+
+        flattened_batch_size = reduce(lambda x,y: x*y, other_shapes)
+        max_sequence_len = shape(char_repls, -2)
+        char_emb_size = shape(char_repls, -1)
+
+        flattened_char_repls = tf.reshape(
+          char_repls, 
+          [flattened_batch_size, max_sequence_len, char_emb_size])
+
+      cnn_outputs = cnn(flattened_char_repls) # [flattened_batch_size, cnn_output_size]
+      outputs = tf.reshape(cnn_outputs, other_shapes + [shape(cnn_outputs, -1)]) # [*, cnn_output_size]
+      outputs = tf.nn.dropout(outputs, self.keep_prob)
+    return outputs
+
+  # def encode(self, wc_inputs):
+  #   # inputs: the list of [None, max_sentence_length] or [None, max_sentence_length, max_word_length]
+  #   if not isinstance(wc_inputs, list):
+  #     wc_inputs = [wc_inputs]
+
+  #   outputs = []
+  #   with tf.variable_scope(self.shared_scope or "WordEncoder", reuse=self.reuse):
+  #     for inputs in wc_inputs:
+  #       if inputs is None:
+  #         continue
+  #       if len(inputs.get_shape()) == 3: # char-based
+  #         char_repls = tf.nn.embedding_lookup(self.c_embeddings, inputs)
+  #         batch_size = shape(char_repls, 0)
+  #         max_sentence_length = shape(char_repls, 1)
+  #         flattened_char_repls = tf.reshape(char_repls, [batch_size * max_sentence_length, shape(char_repls, 2), shape(char_repls, 3)])
+  #         flattened_aggregated_char_repls = cnn(flattened_char_repls)
+  #         word_repls = tf.reshape(flattened_aggregated_char_repls, [batch_size, max_sentence_length, shape(flattened_aggregated_char_repls, 1)]) # [num_sentences, max_sentence_length, emb_size]
+  #       else: # word-based
+  #         word_repls = tf.nn.embedding_lookup(self.w_embeddings, inputs)
+  #       outputs.append(word_repls)
+  #     outputs = tf.concat(outputs, axis=-1)
+  #     if self.shared_scope:
+  #       self.reuse = True
+  #   return tf.nn.dropout(outputs, self.keep_prob) # [None, max_sentence_length, emb_size]
 
   def get_input_feed(self, batch):
     input_feed = {}
@@ -112,79 +153,53 @@ class SentenceEncoder(ModelBase):
                                 num_layers=config.num_layers, 
                                 keep_prob=self.keep_prob)
 
-  def encode(self, wc_sentences, sequence_length):
+  def encode(self, inputs, sequence_length):
     with tf.variable_scope(self.shared_scope or "SentenceEncoder", 
                            reuse=self.reuse_encode) as scope:
-      word_repls = self.word_encoder.encode(wc_sentences)
+      if isinstance(inputs, list):
+        inputs = [x for x in inputs if x is not None]
+        sent_repls = tf.concat(inputs, axis=-1) # [*, max_sequence_len, hidden_size]
+      # Flatten the input tensor to a rank-3 tensor.
+      input_hidden_size = shape(sent_repls, -1)
+      max_sequence_len = shape(sent_repls, -2)
+      other_shapes = [shape(sent_repls, i) for i in range(len(sent_repls.get_shape()[:-2]))]
+      flattened_batch_size = reduce(lambda x,y: x*y, other_shapes)
 
-      batch_size = shape(word_repls, 0)
-      initial_state_fw = self.cell_fw.initial_state(batch_size) if hasattr(self.cell_fw, 'initial_state') else None
-      initial_state_bw = self.cell_fw.initial_state(batch_size) if hasattr(self.cell_bw, 'initial_state') else None
+      flattened_sent_repls = tf.reshape(
+        sent_repls, 
+        [flattened_batch_size, max_sequence_len, input_hidden_size]) 
+      flattened_sequence_length = tf.reshape(sequence_length, [flattened_batch_size])
+
+      initial_state_fw = self.cell_fw.initial_state(flattened_batch_size) if hasattr(self.cell_fw, 'initial_state') else None
+      initial_state_bw = self.cell_fw.initial_state(flattened_batch_size) if hasattr(self.cell_bw, 'initial_state') else None
 
       outputs, state = rnn.bidirectional_dynamic_rnn(
-        self.cell_fw, self.cell_bw, word_repls,
+        self.cell_fw, self.cell_bw, flattened_sent_repls,
         initial_state_fw=initial_state_fw,
         initial_state_bw=initial_state_bw,
-        sequence_length=sequence_length, dtype=tf.float32, scope=scope)
+        sequence_length=flattened_sequence_length, dtype=tf.float32, scope=scope)
+
 
       with tf.variable_scope("outputs"):
-        outputs = tf.concat(outputs, 2)
+        outputs = tf.concat(outputs, -1)
         outputs = tf.nn.dropout(outputs, self.keep_prob)
       with tf.variable_scope("state"):
         state = merge_state(state)
+
       if self.shared_scope:
         self.reuse_encode = True 
-    return word_repls, outputs, state
+
+      # Reshape the flattened output to that of the original tensor.
+      outputs = tf.reshape(outputs, other_shapes + [max_sequence_len, shape(outputs, -1)])
+      if isinstance(state, LSTMStateTuple):
+        new_c = tf.reshape(state.c, other_shapes + [shape(state.c, -1)])
+        new_h = tf.reshape(state.h, other_shapes + [shape(state.h, -1)])
+        state = LSTMStateTuple(c=new_c, h=new_h)
+      else:
+        state = tf.reshape(state, other_shapes + [shape(state, -1)])
+    return sent_repls, outputs, state
 
   def get_mention_emb(self, text_emb, text_outputs, mention_starts, mention_ends):
-    input_rank = len(text_emb.get_shape())
-    if input_rank == 2:
-      return self._get_mention_emb(text_emb, text_outputs, mention_starts, mention_ends)
-    elif input_rank == 3:
-      return self._get_batched_mention_emb(text_emb, text_outputs, mention_starts, mention_ends)
-
-    #   mention_starts = tf.expand_dims(mention_starts, 1)
-    #   mention_ends = tf.expand_dims(mention_ends, 1)
-
-    #   with tf.name_scope('batch_loop'):
-    #     def loop_func(idx, *args):
-    #       args = [v[idx] for v in args]
-    #       res = self._get_mention_emb(*args) # [1, emb_size]
-    #       dbgprint(res)
-    #       return res
-
-    #     batch_size = shape(text_emb, 0)
-    #     idx = tf.zeros((), dtype=tf.int32) # Index for loop counter
-    #     res_shapes = [r.get_shape() for r in loop_func(idx, text_emb, text_outputs, mention_starts, mention_ends)]
-    #     dbgprint(res_shapes)
-    #     exit(1)
-    #     res = [tf.zeros((0, *res_shape)) for res_shape in res_shapes]# A fake tensor with the same shape as output
-
-    #     cond = lambda idx, res: idx < batch_size
-    #     body = lambda idx, res: (
-    #       idx + 1, 
-    #       #tf.concat([res, tf.expand_dims(loop_func(idx, text_emb, text_outputs, mention_starts, mention_ends), 0)], axis=0),
-    #       [tf.concat([r, tf.expand_dims(rr, 0)], axis=0) for r, rr in zip(
-    #         res,
-    #         loop_func(idx, text_emb, text_outputs, mention_starts, mention_ends),
-    #       )]
-    #     )
-
-    #     loop_vars = [idx, res]
-    #     shape_invariants = [idx.get_shape()] + [tf.TensorShape([None, *res_shape]) for res_shape in res_shapes]
-    #     _, res = tf.while_loop(
-    #       cond, body, loop_vars,
-    #       shape_invariants=shape_invariants
-    #     ) # res: [batch_size, 1, emb_size]
-    #   dbgprint(res)
-    #   exit(1)
-    #   hidden_size = shape(res, -1)
-    #   mention_emb = tf.reshape(res, [batch_size, hidden_size])
-    #   return mention_emb, None
-    # else:
-    #   raise ValueError('Tensor with rank > 3 is not supported')
-
-  def _get_mention_emb(self, text_emb, text_outputs, mention_starts, mention_ends):
     '''
     Extract multiple mention representations from a text.
 
@@ -196,12 +211,6 @@ class SentenceEncoder(ModelBase):
     - mention_emb: [num_mentions, emb]
     - head_scores: [num_words, 1]
     '''
-
-    # dbgprint(text_emb)
-    # dbgprint(text_outputs)
-    # dbgprint(mention_starts)
-    # dbgprint(mention_ends)
-    # exit(1)
 
     with tf.variable_scope(self.shared_scope or "SentenceEncoder", 
                            reuse=self.reuse_mention) as scope:
@@ -238,15 +247,37 @@ class SentenceEncoder(ModelBase):
 
       return mention_emb, head_scores
 
-  def _get_batched_mention_emb(self, text_emb, text_outputs, mention_starts, mention_ends):
+  def get_batched_mention_emb(self, text_emb, text_outputs, mention_starts, mention_ends):
     '''
-    Extract each mention representation from batched texts. Each text has only one mention.
+    Extract one mention representation from batched texts. 
+    Each text has only one mention corresponding to the span in mention_starts/ends.
 
     Args:
-    - text_emb: [batch_size, num_words, dim(word_emb + char_emb)]
-    - text_outputs: [batch_size, num_words, dim(encoder_outputs)]
-    - mention_starts, mention_ends: [batch_size] 
+    - text_emb: [*, num_words, dim(word_emb + char_emb)]
+    - text_outputs: [*, num_words, dim(encoder_outputs)]
+    - mention_starts, mention_ends: [*] 
+    Return:
+    - mention_emb: [batch_size, emb]
+    - head_scores: [batch_size, num_words, 1]
     '''
+    with tf.name_scope('flatten'):
+      # Keep the original shapes of the input tensors and flatten them.
+      text_emb_size = shape(text_emb, -1)
+      text_outputs_size = shape(text_outputs, -1)
+      num_words = shape(text_outputs, -2)
+      other_shapes = [shape(text_outputs, i) for i in range(len(text_outputs.get_shape()[:-2]))]
+
+      flattened_batch_size = reduce(lambda x,y: x*y, other_shapes)
+      text_emb = tf.reshape(
+        text_emb, [flattened_batch_size, num_words, text_emb_size])
+      text_outputs = tf.reshape(
+        text_outputs, 
+        [flattened_batch_size, num_words, text_outputs_size])
+      mention_starts = tf.reshape(mention_starts, 
+                                  [flattened_batch_size])
+      mention_ends = tf.reshape(mention_ends, 
+                                [flattened_batch_size])
+      
     dbgprint(text_emb)
     dbgprint(text_outputs)
     dbgprint(mention_starts)
@@ -304,13 +335,20 @@ class SentenceEncoder(ModelBase):
       if self.shared_scope:
         self.reuse_mention = True 
 
+      # Reshape the flattened outputs to the expected shape for the original input.
+      mention_emb = tf.reshape(mention_emb, 
+                               other_shapes + [shape(mention_emb, -1)])
+      head_scores = tf.reshape(head_scores, 
+                               other_shapes + [shape(head_scores, -2), 
+                                               shape(head_scores, -1)])
+
       return mention_emb, head_scores
 
 class MultiEncoderWrapper(SentenceEncoder):
   def __init__(self, encoders):
     """
     Args 
-      encoders: a list of SentenceEncoder. 
+      encoders: A list of SentenceEncoders. The first encoder is regarded as the shared encoder.
     """
     self.encoders = encoders
     self.is_training = encoders[0].is_training
@@ -320,6 +358,7 @@ class MultiEncoderWrapper(SentenceEncoder):
     self.c_embeddings = encoders[0].c_embeddings
     self.cbase = encoders[0].cbase
     self.wbase = encoders[0].wbase
+    self.shared_scope = encoders[0].shared_scope
 
   def encode(self, wc_sentences, sequence_length, merge_func=tf.concat):
     if not nest.is_sequence(self.encoders):

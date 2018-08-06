@@ -117,9 +117,11 @@ class recDotDefaultDict(collections.defaultdict):
   def __init__(self, _=None):
     super(recDotDefaultDict, self).__init__(recDotDefaultDict)
 
-# TODO : batchを再帰的にたどってdictの配列に戻せないかな
+
 def flatten_batch(batch):
   '''
+  Args:
+  - batch: A dictionary.
   e.g.
   {'a': [1, 10], 'b': [2, 20]} -> [{'a': 1, 'b':2}, {'a':10, 'b':20}]
   '''
@@ -135,10 +137,13 @@ def flatten_batch(batch):
     else:
       for i, subtree in enumerate(subtrees):
         entries[i][k] = subtree
-  return entries # Lists of a tree.
+  return entries # A list of trees.
 
 def batching_dicts(batch, d):
   '''
+  Args:
+  - batch: 
+
   Recursively add to batch an entry whose type is recDotDict.
   e.g. [{'a': 1, 'b':2}, {'a':10, 'b':20}] -> {'a': [1, 10], 'b': [2, 20]}
   '''
@@ -502,17 +507,17 @@ def benchmark(func=None, prec=3, unit='auto', name_width=0, time_width=8):
 
 # 時間を測るデコレータ
 def timewatch(logger=None):
-    if logger is None:
-        logger = logManager(logger_name='utils')
-    def _timewatch(func):
-        def wrapper(*args, **kwargs):
-            start = time.time()
-            result = func(*args, **kwargs)
-            end = time.time()
-            logger.info("%s: %f sec" % (func.__name__ , end - start))
-            return result
-        return wrapper
-    return _timewatch
+  if logger is None:
+    logger = logManager(logger_name='utils')
+  def _timewatch(func):
+    def wrapper(*args, **kwargs):
+      start = time.time()
+      result = func(*args, **kwargs)
+      end = time.time()
+      logger.info("%s: %f sec" % (func.__name__ , end - start))
+      return result
+    return wrapper
+  return _timewatch
 
 
 ############################################

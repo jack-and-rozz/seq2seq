@@ -1,13 +1,13 @@
 # coding: utf-8 
 import operator
-import math, time, sys, random, re, math
+import math, time, sys, random, re, math, os
 import numpy as np
 import tensorflow as tf
 import pandas as pd
 from pprint import pprint
 
 from core.utils import tf_utils
-from core.utils.common import RED, BLUE, GREEN, YELLOW, MAGENTA, CYAN, WHITE, BOLD, BLACK, UNDERLINE, RESET, flatten, dotDict, dbgprint
+from core.utils.common import RED, BLUE, GREEN, YELLOW, MAGENTA, CYAN, WHITE, BOLD, BLACK, UNDERLINE, RESET, flatten, dotDict, dbgprint, timewatch
 from core.models.base import ModelBase
 from core.models.wikiP2D.coref import coref_ops, conll, metrics
 from core.models.wikiP2D.coref import util as coref_util
@@ -65,7 +65,10 @@ class CoreferenceResolution(ModelBase):
       self.genre_emb = self.initialize_embeddings('genre', [self.encoder.vocab.genre.size, self.feature_size])
       self.mention_width_emb = self.initialize_embeddings("mention_width", [self.max_mention_width, self.feature_size])
       self.mention_distance_emb = self.initialize_embeddings("mention_distance", [10, self.feature_size])
-    text_emb, text_outputs, state = encoder.encode([self.text_ph.word, self.text_ph.char], self.sentence_length) 
+    word_repls = encoder.word_encoder.word_encode(self.text_ph.word)
+    char_repls = encoder.word_encoder.char_encode(self.text_ph.char)
+    text_emb, text_outputs, state = encoder.encode([word_repls, char_repls], 
+                                                   self.sentence_length) 
     self.encoder_outputs = text_outputs # for adversarial MTL
 
     with tf.name_scope('predictions_and_loss'):
@@ -131,6 +134,7 @@ class CoreferenceResolution(ModelBase):
       loss = tf.reduce_sum(loss) # []
 
     return [candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores], loss
+
 
   def get_mention_emb(self, text_emb, text_outputs, mention_starts, mention_ends):
     '''
@@ -336,7 +340,26 @@ class CoreferenceResolution(ModelBase):
   ##           Evaluation
   ##############################################
 
-  def test(self, batches, gold_path, mode, official_stdout=False):
+  def test(self, batches, mode, logger, output_path):
+    conll_eval_path = os.path.join(
+      self.config.dataset.source_dir, self.config.dataset['%s_gold' % mode])
+
+    with open(output_path + '.stat', 'w') as f:
+      sys.stdout = f
+      eval_summary, f1, results = self.evaluate(
+        batches, conll_eval_path, mode)
+      sys.stdout = sys.__stdout__
+    
+    #logger.info("Epoch %d (%s): MUC, B^3, Ceaf, ave_f1 = (%.3f, %.3f, %.3f, %.3f): " % (m.epoch.eval(), mode, muc_f1, bcub_f1, ceaf_f1, sum(f1)/len(f1)))
+    with open(output_path + '.detail', 'w') as f:
+      sys.stdout = f
+      self.print_results(results)
+      sys.stdout = sys.__stdout__
+    sys.stderr.write("Output the predicted and gold clusters to \'{}\' .\n".format(output_path))
+    return f1, eval_summary
+ 
+
+  def evaluate(self, batches, gold_path, mode, official_stdout=False):
     def _k_to_tag(k):
       if k == -3:
         return "oracle" # use only gold spans.
@@ -407,7 +430,8 @@ class CoreferenceResolution(ModelBase):
     for doc_key, aligned in zip(results, aligned_results):
       results[doc_key]['aligned_results'] = aligned
 
-    return tf_utils.make_summary(summary_dict), [values['f'] for metric, values in conll_results.items()], results
+    average_f1 = sum([values['f'] for metric, values in conll_results.items()]) / len(conll_results)
+    return tf_utils.make_summary(summary_dict), average_f1, results
     #return util.make_summary(summary_dict), average_f1, results
 
   def evaluate_mentions(self, candidate_starts, candidate_ends, mention_starts, mention_ends, mention_scores, gold_starts, gold_ends, example, evaluators):

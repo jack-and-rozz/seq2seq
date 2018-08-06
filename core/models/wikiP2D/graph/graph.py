@@ -105,7 +105,7 @@ def print_batch(batch, prediction=None, vocab=None,
   print ('')
   return
 
-def evaluate(flat_batches, predictions, vocab=None):
+def evaluate_and_print(flat_batches, predictions, vocab=None):
   def _calc_acc_prec_recall(labels, predictions):
     TP, FP, FN, TN = 0, 0, 0, 0
     for l, p in zip(labels, predictions):
@@ -189,15 +189,17 @@ class GraphLinkPrediction(ModelBase):
     with tf.variable_scope('Subject') as scope:
       #subj_outputs = extract_span(encoder_outputs, self.subj_ph)
       mention_starts, mention_ends = tf.unstack(self.subj_ph, axis=1)
-      subj_outputs, _  = self.encoder.get_mention_emb(text_emb, encoder_outputs,
-                                                      mention_starts, mention_ends)
+      subj_outputs, _  = self.encoder.get_batched_mention_emb(
+        text_emb, encoder_outputs,
+        mention_starts, mention_ends)
       #self.debug_ops = encoder.debug_ops
 
     with tf.variable_scope('Object') as scope:
       #obj_outputs = extract_span(encoder_outputs, self.obj_ph)
       mention_starts, mention_ends = tf.unstack(self.obj_ph, axis=1)
-      obj_outputs, _ = self.encoder.get_mention_emb(text_emb, encoder_outputs,
-                                                    mention_starts, mention_ends)
+      obj_outputs, _ = self.encoder.get__batched_mention_emb(
+        text_emb, encoder_outputs,
+        mention_starts, mention_ends)
 
     with tf.variable_scope('Relation') as scope:
       # Stop gradient to prevent biased learning to the words used as relation labels.
@@ -264,7 +266,13 @@ class GraphLinkPrediction(ModelBase):
     input_feed[self.target_ph] = batch.label
     return input_feed
 
-  def test(self, batches, mode, output_path=None):
+  def test(self, batches, mode, logger, output_path):
+    (acc, precision, recall), summary = self.evaluate(
+      batches, mode, output_path=output_path)
+    score = (precision + recall) / 2
+    return score, summary
+
+  def evaluate(self, batches, mode, output_path=None):
     start_time = time.time()
     results = []
     used_batches = []
@@ -277,7 +285,8 @@ class GraphLinkPrediction(ModelBase):
     results = np.concatenate(results, axis=0)
     epoch_time = time.time() - start_time 
     sys.stdout = open(output_path, 'w') if output_path else sys.stdout
-    acc, prec, recall = evaluate(used_batches, results, vocab=self.encoder.vocab)
+    acc, prec, recall = evaluate_and_print(used_batches, results, 
+                                           vocab=self.encoder.vocab)
     print ('acc, p, r, f = %.2f %.2f %.2f %.2f' % (
       100.0 * acc,
       100.0 * prec,

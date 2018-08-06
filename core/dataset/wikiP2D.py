@@ -5,6 +5,7 @@ import os, re, sys, random, copy, time, json
 import subprocess, itertools
 import numpy as np
 from collections import OrderedDict, defaultdict, Counter
+from core.models.wikiP2D.category.evaluation import decorate_text
 
 from core.utils.common import recDotDefaultDict, recDotDict, flatten, batching_dicts, pad_sequences
 #from core.utils import visualize
@@ -39,9 +40,19 @@ def padding_2d(batch, minlen=None, maxlen=None, pad=PAD_ID, pad_type='post'):
   length_of_this_dim = define_length(batch, minlen, maxlen)
   return np.array([fill_zero(l[:length_of_this_dim], length_of_this_dim) for l in batch])
 
-def padding(batch, rank, minlen, maxlen):
-  assert rank == len(minlen) + 1
-  assert rank == len(maxlen) + 1
+def padding(batch, minlen, maxlen):
+  '''
+  Args:
+  - batch: A list of tensors with different shapes.
+  - minlen, maxlen: A list of integers or None. Each i-th element specifies the minimum (or maximum) size of the tensor in the rank i+1.
+    minlen[i] is considered as 0 if it is None, and maxlen[i] is automatically set to be equal to the maximum size of 'batch', the input tensor.
+  
+  e.g. 
+  [[1], [2, 3], [4, 5, 6]] with minlen=[None], maxlen=[None] should be
+  [[1, 0, 0], [2, 3, 0], [4, 5, 6]]
+  '''
+  assert len(minlen) == len(maxlen)
+  rank = len(minlen) + 1
   length_of_this_dim = define_length(batch, minlen[0], maxlen[0])
   padded_batch = []
   if rank == 2:
@@ -52,7 +63,7 @@ def padding(batch, rank, minlen, maxlen):
     if rank == 3:
       l = padding_2d(l, minlen=minlen[1:], maxlen=maxlen[1:])
     else:
-      l = padding(l, rank-1, minlen=minlen[1:], maxlen=maxlen[1:])
+      l = padding(l, minlen=minlen[1:], maxlen=maxlen[1:])
 
     padded_batch.append(l)
   largest_shapes = [max(n_dims) for n_dims in zip(*[tensor.shape for tensor in padded_batch])]
@@ -81,12 +92,12 @@ def qid2position(qid, article):
   entity.position = (begin, end)
   return entity
 
-def span2unk(raw_text, position):
+def mask_span(raw_text, position, token=_UNK):
   assert type(raw_text) == list
   raw_text = copy.deepcopy(raw_text)
   begin, end = position
   for i in range(begin, end+1):
-    raw_text[i] = _UNK
+    raw_text[i] = token
   return raw_text
 
 
@@ -130,6 +141,7 @@ class _WikiP2DDataset(object):
     data = read_jsonlines(self.source_path, max_rows=self.max_rows)
     data = [self.preprocess(d) for d in data]
     self.data = flatten([self.article2entries(d) for d in data])
+    self.data = sorted(self.data, key=lambda d: len(d.contexts.raw))
 
   def tensorize(self, data):
     batch = recDotDefaultDict()
@@ -195,8 +207,8 @@ class _WikiP2DGraphDataset(_WikiP2DDataset):
       entry.text.raw = article.text
       raw_text = article.text
       if self.mask_link:
-        raw_text = span2unk(raw_text, entry.subj.position)
-        raw_text = span2unk(raw_text, entry.obj.position)
+        raw_text = mask_span(raw_text, entry.subj.position)
+        raw_text = mask_span(raw_text, entry.obj.position)
       entry.text.word = self.vocab.word.sent2ids(raw_text)
       entry.text.char = self.vocab.char.sent2ids(raw_text)
 
@@ -215,7 +227,7 @@ class _WikiP2DGraphDataset(_WikiP2DDataset):
        minlen=self.config.minlen.word,
        maxlen=self.config.maxlen.word)
 
-    batch.text.char = padding_3d(
+    batch.text.char = padding(
       batch.text.char, 
       minlen=[self.config.minlen.word, self.config.minlen.char],
       maxlen=[self.config.maxlen.word, self.config.maxlen.char])
@@ -224,9 +236,9 @@ class _WikiP2DGraphDataset(_WikiP2DDataset):
     batch.rel.word = padding_2d(batch.rel.word, 
                                 minlen=cnn_max_filter_width, 
                                 maxlen=None)
-    batch.rel.char = padding_3d(batch.rel.char, 
-                                minlen=[3, self.config.minlen.char], 
-                                maxlen=[None, self.config.maxlen.char])
+    batch.rel.char = padding(batch.rel.char, 
+                             minlen=[3, self.config.minlen.char], 
+                             maxlen=[None, self.config.maxlen.char])
     return batch
 
 class _WikiP2DDescDataset(_WikiP2DDataset):
@@ -243,50 +255,51 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
 
     entry = recDotDefaultDict()
     desc = article.desc.split()
+    entry.title.raw = article.title
     entry.desc.raw = desc
     entry.desc.word = self.vocab.word.sent2ids(desc)
-    entry.link = []
-    entry.context.raw = []
-    entry.context.word = []
-    entry.context.char = []
+    entry.contexts.link = []
+    entry.contexts.raw = []
+    entry.contexts.word = []
+    entry.contexts.char = []
     for context, link in article.contexts[:self.max_contexts]:
       entry.link.append(link)
       context = context.split()
-      entry.context.raw.append(context)
-      entry.context.word.append(self.vocab.word.sent2ids(context))
-      entry.context.char.append(self.vocab.char.sent2ids(context))
+      entry.contexts.raw.append(context)
+      if self.mask_link:
+        context = mask_span(context, link)
+      entry.contexts.word.append(self.vocab.word.sent2ids(context))
+      entry.contexts.char.append(self.vocab.char.sent2ids(context))
     return [entry]
 
   def padding(self, batch):
     '''
     batch.desc.word: [batch_size, max_words]
-    batch.context.word: [batch_size, max_contexts, max_words]
-    batch.context.char: [batch_size, max_contexts, max_words, max_chars]
+    batch.contexts.word: [batch_size, max_contexts, max_words]
+    batch.contexts.char: [batch_size, max_contexts, max_words, max_chars]
     '''
-    batch.context.char = padding(
-      batch.context.char,
-      rank=4,
+    batch.contexts.char = padding(
+      batch.contexts.char,
       minlen=[None, self.config.minlen.word, self.config.minlen.char],
       maxlen=[None, self.config.maxlen.word, self.config.maxlen.char])
 
-    batch.context.word = padding(
-      batch.context.word, 
-      rank=3,
+    batch.contexts.word = padding(
+      batch.contexts.word, 
       minlen=[None, self.config.minlen.word],
       maxlen=[None, self.config.maxlen.word])
 
     batch.desc.word = padding(
       batch.desc.word, 
-      rank=2,
       minlen=[self.config.minlen.word],
       maxlen=[self.config.maxlen.word])
 
     return batch
 
 class _WikiP2DCategoryDataset(_WikiP2DDataset):
-  def __init__(self, config, filename, vocab):
+  def __init__(self, config, filename, vocab, mask_link):
     super().__init__(config, filename, vocab)
     self.max_contexts = config.max_contexts
+    self.mask_link = mask_link
 
   def preprocess(self, article):
     return article
@@ -296,45 +309,52 @@ class _WikiP2DCategoryDataset(_WikiP2DDataset):
       return []
 
     entry = recDotDefaultDict()
+    entry.title.raw = article.title
+    desc = article.desc.split()
+    entry.desc.raw = desc
+    entry.desc.word = self.vocab.word.sent2ids(desc)
+
     entry.category.raw = article.category
     entry.category.label = self.vocab.category.token2id(article.category)
     if entry.category.label == self.vocab.category.token2id(_UNK):
       return []
-    entry.link = []
-    entry.context.raw = []
-    entry.context.word = []
-    entry.context.char = []
+    entry.contexts.raw = []
+    entry.contexts.word = []
+    entry.contexts.char = []
+    entry.contexts.link = []
     for context, link in article.contexts[:self.max_contexts]:
-      entry.link.append(link)
       context = context.split()
-      entry.context.raw.append(context)
-      entry.context.word.append(self.vocab.word.sent2ids(context))
-      entry.context.char.append(self.vocab.char.sent2ids(context))
-      entry.link.append(link)
+      entry.contexts.raw.append(context)
+
+      if self.mask_link:
+        context = mask_span(context, link)
+      entry.contexts.word.append(self.vocab.word.sent2ids(context))
+      entry.contexts.char.append(self.vocab.char.sent2ids(context))
+      entry.contexts.link.append(link)
     return [entry]
 
   def padding(self, batch):
     '''
-    batch.context.word: [batch_size, max_contexts, max_words]
-    batch.context.char: [batch_size, max_contexts, max_words, max_chars]
+    batch.contexts.word: [batch_size, max_contexts, max_words]
+    batch.contexts.char: [batch_size, max_contexts, max_words, max_chars]
     batch.link: [batch_size, max_contexts, 2]
     '''
-    batch.context.char = padding(
-      batch.context.char,
-      rank=4,
+    batch.contexts.char = padding(
+      batch.contexts.char,
       minlen=[None, self.config.minlen.word, self.config.minlen.char],
       maxlen=[None, self.config.maxlen.word, self.config.maxlen.char])
-    batch.context.word = padding(
-      batch.context.word, 
-      rank=3,
+    batch.contexts.word = padding(
+      batch.contexts.word, 
       minlen=[None, self.config.minlen.word],
       maxlen=[None, self.config.maxlen.word])
-    batch.link = padding(
-      batch.context.link,
-      rank=3,
+    batch.contexts.link = padding(
+      batch.contexts.link,
       minlen=[None, 2],
       maxlen=[None, 2])
-
+    batch.desc.word = padding_2d(
+      batch.desc.word,
+      minlen=[self.config.minlen.word],
+      maxlen=[self.config.maxlen.word])
     return batch
 
 
@@ -355,7 +375,6 @@ class WikiP2DGraphDataset(DatasetBase):
     self.test = data_class(config, config.test_data, vocab, 
                            self.properties, True)
 
-
 class WikiP2DDescDataset(DatasetBase):
   
   def __init__(self, config, vocab):
@@ -368,14 +387,33 @@ class WikiP2DDescDataset(DatasetBase):
 class WikiP2DCategoryDataset(DatasetBase):
   def __init__(self, config, vocab):
     self.vocab = vocab
-    
+
     #categories = [l.split()[0] for l in open(os.path.join(config.source_dir, config.category_vocab))][:config.category_size]
     self.vocab.category = VocabularyWithEmbedding(
       config.embeddings_conf, config.category_size, 
       start_vocab=[_UNK],
-      #token_list=categories,
     )
     data_class =  _WikiP2DCategoryDataset
-    self.train = data_class(config, config.train_data, vocab)
-    self.valid = data_class(config, config.valid_data, vocab)
-    self.test = data_class(config, config.test_data, vocab)
+    self.train = data_class(config, config.train_data, vocab, config.mask_link)
+    self.valid = data_class(config, config.valid_data, vocab, True)
+    self.test = data_class(config, config.test_data, vocab, True)
+
+    # def print_entry(self, entry):
+  #   '''
+  #   Args:
+  #   - entry: An entry in a batch obtained from 'flatten_batch(batch)'.
+  #   '''
+  #   print('<Title>', entry.title.raw)
+  #   print('<Contexts>')
+  #   for i in range(len(entry.contexts.raw)):
+  #     text = decorate_text(entry.contexts.raw[i], 
+  #                          self.vocab,
+  #                          link=entry.contexts.link[i],
+  #                          word_ids=entry.contexts.word[i])
+  #     print(text)
+  #   print ('<Category>', self.vocab.category.id2token(entry.category.label))
+  #   if entry.desc:
+  #     desc = decorate_text(entry.desc.raw,
+  #                          self.vocab,
+  #                          word_ids=entry.desc.word)
+  #    print ('<Desc>', desc)

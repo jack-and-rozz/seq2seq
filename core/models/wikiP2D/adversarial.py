@@ -54,6 +54,6 @@ class TaskAdversarial(ModelBase):
     task_ids = tf.one_hot(task_ids, len(tasks))
     self.outputs = tf.nn.softmax(linear(encoder_outputs, len(tasks)))
     l_task = tf.nn.softmax_cross_entropy_with_logits(logits=self.outputs,
-                                                        labels=task_ids)
+                                                     labels=task_ids)
     self.loss = l_task
     self.loss = tf.reduce_mean(self.loss)
