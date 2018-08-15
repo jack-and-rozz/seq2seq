@@ -14,7 +14,8 @@ from core.models.base import ModelBase, ManagerBase
 from core.models.wikiP2D.encoder import SentenceEncoder, WordEncoder, MultiEncoderWrapper
 from core.models.wikiP2D.gen_desc.gen_desc import DescriptionGeneration
 from core.models.wikiP2D.category.category import CategoryClassification
-from core.models.wikiP2D.graph.graph import GraphLinkPrediction, GraphLinkPredictionNoObj
+from core.models.wikiP2D.graph.graph import GraphLinkPrediction
+from core.models.wikiP2D.graph.graph_noobj import GraphLinkPredictionNoObj
 from core.models.wikiP2D.coref.coref import CoreferenceResolution
 from core.models.wikiP2D.adversarial import TaskAdversarial
 

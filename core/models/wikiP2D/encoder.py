@@ -50,6 +50,8 @@ class WordEncoder(ModelBase):
     self.shared_scope = shared_scope # to reuse variables
     self.reuse = None
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.lexical_dropout_rate
+    self.cnn_filter_widths = config.cnn.filter_widths
+    self.cnn_filter_size = config.cnn.filter_size
 
     w_trainable = config.trainable_emb
     sys.stderr.write("Initialize word embeddings with pretrained ones.\n")
@@ -98,7 +100,11 @@ class WordEncoder(ModelBase):
           char_repls, 
           [flattened_batch_size, max_sequence_len, char_emb_size])
 
-      cnn_outputs = cnn(flattened_char_repls) # [flattened_batch_size, cnn_output_size]
+      cnn_outputs = cnn(
+        flattened_char_repls,
+        filter_sizes=self.cnn_filter_widths,
+        num_filters=self.cnn_filter_size,
+      ) # [flattened_batch_size, cnn_output_size]
       outputs = tf.reshape(cnn_outputs, other_shapes + [shape(cnn_outputs, -1)]) # [*, cnn_output_size]
       outputs = tf.nn.dropout(outputs, self.keep_prob)
       if self.shared_scope:
@@ -175,7 +181,7 @@ class SentenceEncoder(ModelBase):
          the shape of sequence_length must be [seq_len].
     '''
     for x in inputs:
-      assert len(x) == len(sequence_length.get_shape()) + 2
+      assert len(x.get_shape()) == len(sequence_length.get_shape()) + 2
 
     with tf.variable_scope(self.shared_scope or "SentenceEncoder", 
                            reuse=self.reuse_encode) as scope:
@@ -270,8 +276,6 @@ class SentenceEncoder(ModelBase):
             mention_head_emb = tf.reduce_sum(mention_attention * mention_text_emb, 1) # [num_mentions, emb]
             mention_emb_list.append(mention_head_emb)
         mention_emb = tf.concat(mention_emb_list, 1) # [num_mentions, emb]
-        dbgprint(text_outputs)
-        dbgprint(mention_emb_list)
 
       if self.shared_scope:
         self.reuse_mention = True 
@@ -308,10 +312,7 @@ class SentenceEncoder(ModelBase):
                                   [flattened_batch_size])
       mention_ends = tf.reshape(mention_ends, 
                                 [flattened_batch_size])
-    # dbgprint(text_emb)
-    # dbgprint(text_outputs)
-    # dbgprint(mention_starts)
-    # dbgprint(mention_ends)
+
     with tf.variable_scope(self.shared_scope or "SentenceEncoder", 
                            reuse=self.reuse_mention) as scope:
       with tf.variable_scope('get_mention_emb'):
@@ -323,7 +324,6 @@ class SentenceEncoder(ModelBase):
           with tf.name_scope('mention_boundary'):
             mention_start_emb = batch_gather(text_outputs, mention_starts) #[batch_size, emb]
             mention_end_emb = batch_gather(text_outputs, mention_ends) #[batch_size, emb]
-            dbgprint(mention_start_emb, mention_end_emb)
             batch_size = shape(mention_start_emb, 0)
             hidden_size = shape(mention_start_emb, -1)
 
@@ -333,34 +333,23 @@ class SentenceEncoder(ModelBase):
                                          [batch_size, hidden_size])
             mention_emb_list.append(mention_start_emb)
             mention_emb_list.append(mention_end_emb)
-            # dbgprint(mention_start_emb, mention_end_emb)
 
         if self.model_heads:
           with tf.name_scope('mention_attention'):
             mention_indices = tf.expand_dims(tf.range(max_mention_width), 0) + tf.expand_dims(mention_starts, 1) # [num_mentions, max_mention_width]
             mention_indices = tf.minimum(shape(text_outputs, 1) - 1, mention_indices) # [num_mentions, max_mention_width]
 
-            # dbgprint(mention_indices) # 
-
             mention_text_emb = batch_gather(text_emb, mention_indices) # [num_mentions, max_mention_width, emb]
 
-            # dbgprint(mention_text_emb)
             head_scores = projection(text_outputs, 1) # [batch_size, num_words, 1]
             mention_head_scores = batch_gather(head_scores, mention_indices) # [num_mentions, max_mention_width, 1]
-            dbgprint(head_scores)
-            dbgprint(mention_head_scores)
             mention_mask = tf.expand_dims(tf.sequence_mask(mention_width, max_mention_width, dtype=tf.float32), 2) # [num_mentions, max_mention_width, 1]
-            # dbgprint(mention_mask)
 
             mention_attention = tf.nn.softmax(mention_head_scores + tf.log(mention_mask), dim=1) # [num_mentions, max_mention_width, 1]
-            # dbgprint(mention_attention)
 
             mention_head_emb = tf.reduce_sum(mention_attention * mention_text_emb, 1) # [num_mentions, emb]
-            # dbgprint(mention_head_emb)
             mention_emb_list.append(mention_head_emb)
-        # dbgprint(mention_emb_list)
         mention_emb = tf.concat(mention_emb_list, 1) # [num_mentions, emb]
-        # dbgprint(mention_emb)
       self.debug_ops = [mention_starts, mention_ends, mention_indices, mention_attention, mention_mask]
       if self.shared_scope:
         self.reuse_mention = True 

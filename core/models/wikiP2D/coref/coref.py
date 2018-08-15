@@ -7,7 +7,7 @@ import pandas as pd
 from pprint import pprint
 
 from core.utils import tf_utils
-from core.utils.common import RED, BLUE, GREEN, YELLOW, MAGENTA, CYAN, WHITE, BOLD, BLACK, UNDERLINE, RESET, flatten, dotDict, dbgprint, timewatch, recDotDict
+from core.utils.common import RED, BLUE, GREEN, YELLOW, MAGENTA, CYAN, WHITE, BOLD, BLACK, UNDERLINE, RESET, flatten, dotDict, dbgprint, timewatch, recDotDefaultDict
 from core.models.base import ModelBase
 from core.models.wikiP2D.coref import coref_ops, conll, metrics
 from core.models.wikiP2D.coref import util as coref_util
@@ -17,12 +17,12 @@ from collections import OrderedDict, defaultdict
 from copy import deepcopy
 
 class CoreferenceResolution(ModelBase):
-  def __init__(self, sess, config, encoder, activation=tf.nn.tanh):
+  def __init__(self, sess, config, encoder, activation=tf.nn.relu):
     super().__init__(sess, config)
     self.sess = sess
     self.config = config
     self.encoder = encoder
-    self.activation = activation
+
     self.is_training = encoder.is_training
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
     self.feature_size = config.f_embedding_size
@@ -39,23 +39,27 @@ class CoreferenceResolution(ModelBase):
 
     # Placeholders
     with tf.name_scope('Placeholder'):
-      self.ph = recDotDict()
+      self.ph = recDotDefaultDict()
+      # Input document
       self.ph.text.word = tf.placeholder(
         tf.int32, name='text.word',
         shape=[None, None]) if self.encoder.wbase else None
       self.ph.text.char = tf.placeholder(
         tf.int32, name='text.char',
         shape=[None, None, None]) if self.encoder.cbase else None
-      # TODO: truncate_exampleしたものをw_sentencesにfeedした時、何故かtruncate前の単語数を数えてしまう。とりあえずsentence_lengthを直接feedすれば問題なし？
-      #self.sentence_length = tf.count_nonzero(self.ph.text.word,
-      #                                        axis=1, dtype=tf.int32)
+
+      # TODO: truncate_exampleしたものをw_sentencesにfeedした時、何故かtruncate前の単語数を数えてしまう。とりあえずsentence_lengthを直接feed.
+      #self.sentence_length = tf.count_nonzero(self.ph.text.word, axis=1, dtype=tf.int32)
       self.ph.sentence_length = tf.placeholder(tf.int32, shape=[None])
-      self.ph.speaker_ids = tf.placeholder(tf.int32, shape=[None], 
-                                        name="speaker_ids")
-      self.ph.genre = tf.placeholder(tf.int32, shape=[], name="genre")
+
+      # Clusters 
       self.ph.gold_starts = tf.placeholder(tf.int32, name='gold_starts', shape=[None])
       self.ph.gold_ends = tf.placeholder(tf.int32, name='gold_ends', shape=[None])
       self.ph.cluster_ids = tf.placeholder(tf.int32, name='cluster_ids', shape=[None])
+      # Metadata
+      self.ph.speaker_ids = tf.placeholder(tf.int32, shape=[None], 
+                                        name="speaker_ids")
+      self.ph.genre = tf.placeholder(tf.int32, shape=[], name="genre")
 
     # Embeddings
     with tf.variable_scope('Embeddings'):
@@ -64,22 +68,33 @@ class CoreferenceResolution(ModelBase):
       self.genre_emb = self.initialize_embeddings('genre', [self.encoder.vocab.genre.size, self.feature_size])
       self.mention_width_emb = self.initialize_embeddings("mention_width", [self.max_mention_width, self.feature_size])
       self.mention_distance_emb = self.initialize_embeddings("mention_distance", [10, self.feature_size])
+
     word_repls = encoder.word_encoder.word_encode(self.ph.text.word)
     char_repls = encoder.word_encoder.char_encode(self.ph.text.char)
     text_emb, text_outputs, state = encoder.encode([word_repls, char_repls], 
                                                    self.ph.sentence_length) 
     self.adv_outputs = text_outputs # for adversarial MTL, it must have the shape [batch_size]
 
-    with tf.name_scope('predictions_and_loss'):
-      self.predictions, self.loss = self.get_predictions_and_loss(text_emb, text_outputs, self.ph.sentence_length, self.ph.speaker_ids, self.ph.genre, self.ph.gold_starts, self.ph.gold_ends, self.ph.cluster_ids)
+    with tf.name_scope('candidates_and_mentions'):
+      candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, mention_scores, mention_emb = self.get_mentions(text_emb, text_outputs, self.ph.sentence_length)
 
-    self.outputs = [self.predictions]
+    with tf.name_scope('antecedents'):
+      antecedents, antecedent_scores, antecedent_labels = self.get_antecedents(
+        mention_scores, mention_starts, mention_ends, mention_emb,
+        self.ph.speaker_ids, self.ph.genre, 
+        self.ph.gold_starts, self.ph.gold_ends, self.ph.cluster_ids)
+
+    self.outputs = [candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores]
+
+    with tf.name_scope('loss'):
+      loss = self.softmax_loss(antecedent_scores, antecedent_labels) # [num_mentions]
+      self.loss = tf.reduce_sum(loss) # []
 
     with tf.name_scope("Summary"):
       self.summary_loss = tf.placeholder(tf.float32, shape=[],
                                          name='coref_loss')
 
-  def get_predictions_and_loss(self, text_emb, text_outputs, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids):
+  def get_mentions(self, text_emb, text_outputs, text_len):
     '''
     '''
     with tf.name_scope('ReshapeEncoderOutputs'):
@@ -87,12 +102,11 @@ class CoreferenceResolution(ModelBase):
       max_sentence_length = tf.shape(text_emb)[1]
       text_len_mask = tf.sequence_mask(text_len, maxlen=max_sentence_length)
       text_len_mask = tf.reshape(text_len_mask, [num_sentences * max_sentence_length])
-      genre_emb = tf.nn.embedding_lookup(self.genre_emb, genre)
       sentence_indices = tf.tile(tf.expand_dims(tf.range(num_sentences), 1), [1, max_sentence_length]) # [num_sentences, max_sentence_length]
 
       flattened_sentence_indices = self.flatten_emb_by_sentence(sentence_indices, text_len_mask) # [num_words]
       flattened_text_emb = self.flatten_emb_by_sentence(text_emb, text_len_mask) # [num_words, dim(word_emb + encoded_char_emb)]
-      text_outputs = self.flatten_emb_by_sentence(text_outputs, text_len_mask) # [num_words, dim(encoder_output) ]
+      flattened_text_outputs = self.flatten_emb_by_sentence(text_outputs, text_len_mask) # [num_words, dim(encoder_output) ]
 
     with tf.name_scope('SpanCandidates'):
       candidate_starts, candidate_ends = coref_ops.spans(
@@ -102,13 +116,12 @@ class CoreferenceResolution(ModelBase):
       candidate_ends.set_shape([None])
 
     with tf.name_scope('Mentions'):
-      candidate_mention_emb = self.get_mention_emb(flattened_text_emb, text_outputs, candidate_starts, candidate_ends) # [num_candidates, emb]
-      dbgprint(candidate_mention_emb)
+      candidate_mention_emb = self.get_mention_emb(flattened_text_emb, flattened_text_outputs, candidate_starts, candidate_ends) # [num_candidates, emb]
 
       candidate_mention_scores =  self.get_mention_scores(candidate_mention_emb) # [num_mentions, 1]
       candidate_mention_scores = tf.squeeze(candidate_mention_scores, 1) # [num_mentions]
 
-      k = tf.to_int32(tf.floor(tf.to_float(tf.shape(text_outputs)[0]) * self.mention_ratio))
+      k = tf.to_int32(tf.floor(tf.to_float(tf.shape(flattened_text_outputs)[0]) * self.mention_ratio))
       predicted_mention_indices = coref_ops.extract_mentions(candidate_mention_scores, candidate_starts, candidate_ends, k) # ([k], [k])
       predicted_mention_indices.set_shape([None])
 
@@ -117,23 +130,7 @@ class CoreferenceResolution(ModelBase):
       mention_emb = tf.gather(candidate_mention_emb, predicted_mention_indices) # [num_mentions, emb]
       mention_scores = tf.gather(candidate_mention_scores, predicted_mention_indices) # [num_mentions]
 
-      mention_speaker_ids = tf.gather(speaker_ids, mention_starts) # [num_mentions]
-
-    with tf.name_scope('Antecedents'):
-      max_antecedents = self.max_antecedents
-      antecedents, antecedent_labels, antecedents_len = coref_ops.antecedents(mention_starts, mention_ends, gold_starts, gold_ends, cluster_ids, max_antecedents) # ([num_mentions, max_ant], [num_mentions, max_ant + 1], [num_mentions]
-      antecedents.set_shape([None, None])
-      antecedent_labels.set_shape([None, None])
-      antecedents_len.set_shape([None])
-      """
-      antecedent_labels : i番目のスパンから見た前max_ant個のスパンが自身の先行詞かどうか(goldのcluster_idとの完全マッチでのみ判断しているのでtest時は全てfalse)
-      """
-      antecedent_scores = self.get_antecedent_scores(mention_emb, mention_scores, antecedents, antecedents_len, mention_starts, mention_ends, mention_speaker_ids, genre_emb) # [num_mentions, max_ant + 1]
-      loss = self.softmax_loss(antecedent_scores, antecedent_labels) # [num_mentions]
-      loss = tf.reduce_sum(loss) # []
-
-    return [candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores], loss
-
+    return candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, mention_scores, mention_emb
 
   def get_mention_emb(self, text_emb, text_outputs, mention_starts, mention_ends):
     '''
@@ -144,12 +141,10 @@ class CoreferenceResolution(ModelBase):
 
     mention_emb, head_scores = self.encoder.get_mention_emb(text_emb, text_outputs, mention_starts, mention_ends)
 
-    mention_width = 1 + mention_ends - mention_starts # [num_mentions]
-    self.head_scores = head_scores
-
     # Concatenate mention_width_feature (not shared).
     if self.use_width_feature:
       with tf.name_scope('mention_width'):
+        mention_width = 1 + mention_ends - mention_starts # [num_mentions]
         mention_width_index = mention_width - 1  #[num_mentions]
         mention_width_emb = tf.gather(self.mention_width_emb, mention_width_index) # [num_mentions, emb]
         mention_width_emb = tf.nn.dropout(mention_width_emb, self.keep_prob)
@@ -162,11 +157,23 @@ class CoreferenceResolution(ModelBase):
     with tf.variable_scope("mention_scores"):
       return tf_utils.ffnn(mention_emb, self.ffnn_depth, self.ffnn_size, 1, self.keep_prob) # [num_mentions, 1]
 
-  def softmax_loss(self, antecedent_scores, antecedent_labels):
-    gold_scores = antecedent_scores + tf.log(tf.to_float(antecedent_labels)) # [num_mentions, max_ant + 1]
-    marginalized_gold_scores = tf.reduce_logsumexp(gold_scores, [1]) # [num_mentions]
-    log_norm = tf.reduce_logsumexp(antecedent_scores, [1]) # [num_mentions]
-    return log_norm - marginalized_gold_scores # [num_mentions]
+  def get_antecedents(self, mention_scores, mention_starts, mention_ends, 
+                      mention_emb, speaker_ids, genre, 
+                      gold_starts, gold_ends, cluster_ids):
+    genre_emb = tf.nn.embedding_lookup(self.genre_emb, genre)
+    mention_speaker_ids = tf.gather(speaker_ids, mention_starts) # [num_mentions]
+
+    with tf.name_scope('Antecedents'):
+      antecedents, antecedent_labels, antecedents_len = coref_ops.antecedents(mention_starts, mention_ends, gold_starts, gold_ends, cluster_ids, self.max_antecedents) # ([num_mentions, max_ant], [num_mentions, max_ant + 1], [num_mentions]
+      antecedents.set_shape([None, None])
+      antecedent_labels.set_shape([None, None])
+      antecedents_len.set_shape([None])
+
+      antecedent_scores = self.get_antecedent_scores(
+        mention_emb, mention_scores, antecedents, antecedents_len, 
+        mention_starts, mention_ends, mention_speaker_ids, genre_emb) # [num_mentions, max_ant + 1]
+
+    return antecedents, antecedent_scores, antecedent_labels
 
   def get_antecedent_scores(self, mention_emb, mention_scores, antecedents, antecedents_len, mention_starts, mention_ends, mention_speaker_ids, genre_emb):
     num_mentions = tf_utils.shape(mention_emb, 0)
@@ -199,9 +206,6 @@ class CoreferenceResolution(ModelBase):
     similarity_emb = antecedent_emb * target_emb_tiled # [num_mentions, max_ant, emb]
 
     pair_emb = tf.concat([target_emb_tiled, antecedent_emb, similarity_emb, feature_emb], 2) # [num_mentions, max_ant, emb]
-    dbgprint(mention_emb)
-    dbgprint(pair_emb)
-    #exit(1)
 
     with tf.variable_scope("iteration"):
       with tf.variable_scope("antecedent_scoring"):
@@ -219,6 +223,11 @@ class CoreferenceResolution(ModelBase):
     antecedent_scores = tf.concat([no_antecedent, antecedent_scores], 1) # [num_mentions, max_ant + 1]
     return antecedent_scores  # [num_mentions, max_ant + 1]
 
+  def softmax_loss(self, antecedent_scores, antecedent_labels):
+    gold_scores = antecedent_scores + tf.log(tf.to_float(antecedent_labels)) # [num_mentions, max_ant + 1]
+    marginalized_gold_scores = tf.reduce_logsumexp(gold_scores, [1]) # [num_mentions]
+    log_norm = tf.reduce_logsumexp(antecedent_scores, [1]) # [num_mentions]
+    return log_norm - marginalized_gold_scores # [num_mentions]
 
   def flatten_emb_by_sentence(self, emb, text_len_mask):
     num_sentences = tf.shape(emb)[0]
@@ -386,8 +395,8 @@ class CoreferenceResolution(ModelBase):
       feed_dict = self.get_input_feed(example, False)
       gold_starts = feed_dict[self.ph.gold_starts]
       gold_ends = feed_dict[self.ph.gold_ends]
-      candidate_starts, candidate_ends, mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores = self.sess.run(self.predictions, feed_dict=feed_dict)
-      self.evaluate_mentions(candidate_starts, candidate_ends, mention_starts, mention_ends, mention_scores, gold_starts, gold_ends, example, mention_evaluators)
+      candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores = self.sess.run(self.outputs, feed_dict=feed_dict)
+      self.evaluate_mentions(candidate_starts, candidate_ends, mention_starts, mention_ends, candidate_mention_scores, gold_starts, gold_ends, example, mention_evaluators)
       predicted_antecedents = self.get_predicted_antecedents(antecedents, antecedent_scores)
       coref_predictions[example["doc_key"]] = self.evaluate_coref(mention_starts, mention_ends, predicted_antecedents, example["clusters"], coref_evaluator)
 

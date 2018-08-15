@@ -265,48 +265,6 @@ def read_vector(file_path, type_f=float):
     return vector_dict
 
 
-def read_file_with_id(file_path, delim=None):
-  _ids = []
-  _texts = []
-  with open(file_path, "r") as f:
-    # 同じツイートをひとまとめにされると面倒なのでlistで
-    for l in f:
-      line = l.replace("\n", "").split(delim)
-      _ids.append(line[0])
-      _texts.append(line[1:])
-    return _ids, _texts
-
-
-def read_stc_file(file_path, tokenize_text=True):
-    _ids = []
-    _texts = []
-    with open(file_path, "r") as f:
-        # 同じツイートをひとまとめにされると面倒なのでlistで
-        for l in f:
-            if tokenize_text:
-                line = l.replace("\n", "").split()
-                _ids.append(line[0])
-                _texts.append(line[1:])
-            else:
-                line = l.replace("\n", "").split('\t')
-                _ids.append(line[0])
-                _texts.append(line[1])
-    return _ids, _texts
-
-def read_id(file_path): 
-    with open(file_path, "r") as f:
-        lines = [line.replace("\n", "").split()[0] for line in f]
-    return lines
-
-
-def read_mconfig(model_path, config_file = "config"):
-    res = dotDict({})
-    with open(model_path + '/' + config_file) as f:
-        for l in f:
-            m = re.search("(.+)=(.+)", l)
-            if m :
-                res[m.group(1)] = m.group(2)
-    return res
 
 ############################################
 #        String

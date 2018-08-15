@@ -102,7 +102,7 @@ def mask_span(raw_text, position, token=_UNK):
 
 
 class _WikiP2DDataset(object):
-  def __init__(self, config, filename, vocab):
+  def __init__(self, config, filename, vocab, max_rows):
     '''
     Args:
     - config:
@@ -113,7 +113,7 @@ class _WikiP2DDataset(object):
     self.config = config
     self.vocab = vocab
     self.data = [] # Lazy loading.
-    self.max_rows = config.max_rows
+    self.max_rows = max_rows
 
   def preprocess(self, article):
     raise NotImplementedError
@@ -164,8 +164,8 @@ class _WikiP2DDataset(object):
 
 
 class _WikiP2DGraphDataset(_WikiP2DDataset):
-  def __init__(self, config, filename, vocab, properties, mask_link):
-    super().__init__(config, filename, vocab)
+  def __init__(self, config, filename, vocab, max_rows, properties, mask_link):
+    super().__init__(config, filename, vocab, max_rows)
     self.properties = properties
     self.mask_link = mask_link
 
@@ -240,9 +240,84 @@ class _WikiP2DGraphDataset(_WikiP2DDataset):
                              maxlen=[None, self.config.maxlen.char])
     return batch
 
+class _WikiP2DKnowledgeDataset(_WikiP2DDataset):
+  def __init__(self, config, filename, vocab, max_rows, properties, mask_link):
+    super().__init__(config, filename, vocab, max_rows)
+    self.properties = properties
+    self.mask_link = mask_link
+
+  def preprocess(self, article):
+    raw_text = [s.split() for s in article.text]
+    num_words = [len(s) for s in raw_text]
+    links = {}
+
+    # Convert a list of sentneces to a flattened sequence of words.
+    for qid, link in article.link.items():
+      (sent_id, (begin, end)) = link
+      flatten_begin = begin + sum(num_words[:sent_id])
+      flatten_end = end + sum(num_words[:sent_id])
+      assert flatten_begin >= 0 and flatten_end >= 0
+      links[qid] = (flatten_begin, flatten_end)
+    article.link = links
+    article.text = flatten(raw_text)
+    article.desc = article.desc.split()
+    return article
+
+  def article2entries(self, article):
+    def triple2entry(triple, article, label):
+      entry = recDotDefaultDict()
+      entry.qid = article.qid
+
+      subj_qid, rel_pid, obj_qid = triple
+      rel = self.properties[rel_pid].name.split()
+      entry.rel.raw = rel  # 1D tensor of str. 
+      entry.rel.word = self.vocab.word.sent2ids(rel) # 1D tensor of int.
+      entry.rel.char = self.vocab.char.sent2ids(rel) # 2D tensor of int.
+      entry.subj = qid2position(subj_qid, article) # (begin, end)
+      entry.obj = qid2position(obj_qid, article)# (begin, end)
+      entry.label = label # 1 or 0.
+
+      entry.text.raw = article.text
+      raw_text = article.text
+      if self.mask_link:
+        raw_text = mask_span(raw_text, entry.subj.position)
+        raw_text = mask_span(raw_text, entry.obj.position)
+      entry.text.word = self.vocab.word.sent2ids(raw_text)
+      entry.text.char = self.vocab.char.sent2ids(raw_text)
+
+      return entry
+
+    positive = triple2entry(article.positive_triple, article, 1)
+    negative = triple2entry(article.negative_triple, article, 0)
+    return [positive, negative]
+
+  def padding(self, batch):
+    '''
+    TODO: paddingどうする？paddingfifoqueueをちゃんと使ったほうが良いかも. 
+    '''
+    batch.text.word = padding_2d(
+       batch.text.word, 
+       minlen=self.config.minlen.word,
+       maxlen=self.config.maxlen.word)
+
+    batch.text.char = padding(
+      batch.text.char, 
+      minlen=[self.config.minlen.word, self.config.minlen.char],
+      maxlen=[self.config.maxlen.word, self.config.maxlen.char])
+
+    cnn_max_filter_width = 3
+    batch.rel.word = padding_2d(batch.rel.word, 
+                                minlen=cnn_max_filter_width, 
+                                maxlen=None)
+    batch.rel.char = padding(batch.rel.char, 
+                             minlen=[3, self.config.minlen.char], 
+                             maxlen=[None, self.config.maxlen.char])
+    return batch
+
+
 class _WikiP2DDescDataset(_WikiP2DDataset):
-  def __init__(self, config, filename, vocab):
-    super().__init__(config, filename, vocab)
+  def __init__(self, config, filename, vocab, max_rows):
+    super().__init__(config, filename, vocab, max_rows)
     self.max_contexts = config.max_contexts
 
   def preprocess(self, article):
@@ -295,8 +370,8 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
     return batch
 
 class _WikiP2DCategoryDataset(_WikiP2DDataset):
-  def __init__(self, config, filename, vocab, mask_link):
-    super().__init__(config, filename, vocab)
+  def __init__(self, config, filename, vocab, max_rows, mask_link):
+    super().__init__(config, filename, vocab, max_rows)
     self.max_contexts = config.max_contexts
     self.mask_link = mask_link
     self.iterations_per_epoch = int(config.iterations_per_epoch)
@@ -384,29 +459,42 @@ class WikiP2DGraphDataset(DatasetBase):
   '''
   A class which contains train, valid, testing datasets.
   '''
-  def __init__(self, config, vocab):
+  dataset_class =  _WikiP2DGraphDataset
+  def __init__(self, config, vocab, mask_link_in_test=True):
     self.vocab = vocab
     properties_path = os.path.join(config.source_dir, config.prop_data)
-    self.properties = recDotDict({d['qid']:d for d in read_jsonlines(properties_path)})
-    data_class =  _WikiP2DGraphDataset
-    self.train = data_class(config, config.train_data, vocab,
-                            self.properties, config.mask_link)
+    self.properties = OrderedDict([(d['qid'], d) for d in read_jsonlines(properties_path)])
+    self.train = self.dataset_class(config, config.filename.train, vocab,
+                                    config.max_rows.train,
+                                    self.properties, config.mask_link)
 
-    self.valid = data_class(config, config.valid_data, vocab, 
-                            self.properties, True)
-    self.test = data_class(config, config.test_data, vocab, 
-                           self.properties, True)
+    self.valid = self.dataset_class(config, config.filename.valid, vocab, 
+                                    config.max_rows.valid,
+                                    self.properties, mask_link_in_test)
+    self.test = self.dataset_class(config, config.filename.test, vocab, 
+                                    config.max_rows.test,
+                                   self.properties, mask_link_in_test)
+
+class WikiP2DKnowledgeDataset(WikiP2DGraphDataset):
+  dataset_class =  _WikiP2DKnowledgeDataset
+
+  def __init__(self, config, vocab, mask_link_in_test=False):
+    super().__init__(self, config, vocab, mask_link_in_test)
 
 class WikiP2DDescDataset(DatasetBase):
   
   def __init__(self, config, vocab):
     self.vocab = vocab
-    data_class =  _WikiP2DDescDataset
-    self.train = data_class(config, config.train_data, vocab)
-    self.valid = data_class(config, config.valid_data, vocab)
-    self.test = data_class(config, config.test_data, vocab)
+    dataset_class =  _WikiP2DDescDataset
+    self.train = self.dataset_class(config, config.filename.train, vocab, 
+                                    config.max_rows.train)
+    self.valid = self.dataset_class(config, config.filename.valid, vocab,
+                                    config.max_rows.valid)
+    self.test = self.dataset_class(config, config.filename.test, vocab,
+                                   config.max_rows.test)
 
 class WikiP2DCategoryDataset(DatasetBase):
+  dataset_class =  _WikiP2DCategoryDataset
   def __init__(self, config, vocab):
     self.vocab = vocab
 
@@ -415,31 +503,15 @@ class WikiP2DCategoryDataset(DatasetBase):
       config.embeddings_conf, config.category_size, 
       start_vocab=[_UNK],
     )
-    data_class =  _WikiP2DCategoryDataset
-    self.train = data_class(config, config.train_data, vocab, config.mask_link)
-    self.valid = data_class(config, config.valid_data, vocab, True)
-    self.test = data_class(config, config.test_data, vocab, True)
+    self.train = self.dataset_class(config, config.filename.train, vocab, 
+                                    config.max_rows.train,
+                                    config.mask_link)
+    self.valid = self.dataset_class(config, config.filename.valid, vocab, 
+                                    config.max_rows.valid, True)
+    self.test = self.dataset_class(config, config.filename.test, vocab, 
+                                   config.max_rows.test, True)
   
   @property
   def size(self):
     return self.train.size, self.valid.size, self.test.size
 
-    # def print_entry(self, entry):
-  #   '''
-  #   Args:
-  #   - entry: An entry in a batch obtained from 'flatten_batch(batch)'.
-  #   '''
-  #   print('<Title>', entry.title.raw)
-  #   print('<Contexts>')
-  #   for i in range(len(entry.contexts.raw)):
-  #     text = decorate_text(entry.contexts.raw[i], 
-  #                          self.vocab,
-  #                          link=entry.contexts.link[i],
-  #                          word_ids=entry.contexts.word[i])
-  #     print(text)
-  #   print ('<Category>', self.vocab.category.id2token(entry.category.label))
-  #   if entry.desc:
-  #     desc = decorate_text(entry.desc.raw,
-  #                          self.vocab,
-  #                          word_ids=entry.desc.word)
-  #    print ('<Desc>', desc)

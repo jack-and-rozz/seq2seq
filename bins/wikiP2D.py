@@ -52,11 +52,6 @@ class ExperimentManager(ManagerBase):
       else:
         self.dataset[k] = dataset_type(v.dataset, self.vocab)
 
-    self.use_coref = 'coref' in self.config.tasks
-    self.use_graph = 'graph' in self.config.tasks
-    print(time.time()-t)
-    t = time.time()
-
   def get_batch(self, batch_type):
     batches = common.recDotDict({'is_training': False})
     do_shuffle = False
@@ -66,7 +61,6 @@ class ExperimentManager(ManagerBase):
       do_shuffle = True
 
     for task_name in self.config.tasks:
-      #batches[task_name] = self.dataset[task_name][batch_type].get_batch(
       if not task_name in self.dataset:
         continue
       batches[task_name] = getattr(self.dataset[task_name], batch_type).get_batch(
@@ -112,7 +106,7 @@ class ExperimentManager(ManagerBase):
     # coref = self.dataset.coref
     # for batch in self.dataset.coref.valid.get_batch(self.config.tasks.coref.batch_size, do_shuffle=False):
     #   pprint(batch)
-    task_name = 'category'
+    task_name = [k for k in self.config.tasks][0]
     batches = self.dataset[task_name].train.get_batch(
       self.config.tasks[task_name].batch_size, do_shuffle=False)
     rels = []
