@@ -15,16 +15,27 @@ from core.models.base import ModelBase
 from core.vocabulary.base import VocabularyWithEmbedding
 
 
+def get_axis(merge_func):
+  if merge_func == tf.reduce_mean:
+    axis = 0 
+  elif merge_func == tf.concat:
+    axis = -1
+  else:
+    raise ValueError('merge_func must be tf.reduce_mean or tf.concat')
+  return axis
+
+
 def merge_state(state, merge_func=tf.concat):
+  axis = get_axis(merge_func)
   if isinstance(state[0], LSTMStateTuple):
     #new_c = merge_func([s.c for s in state], axis=1)
     #new_h = merge_func([s.h for s in state], axis=1)
-    new_c = merge_func([s.c for s in state], axis=-1)
-    new_h = merge_func([s.h for s in state], axis=-1)
+    new_c = merge_func([s.c for s in state], axis=axis)
+    new_h = merge_func([s.h for s in state], axis=axis)
     state = LSTMStateTuple(c=new_c, h=new_h)
   else:
     #state = merge_func(state, 1)
-    state = merge_func(state, -1)
+    state = merge_func(state, axis)
   return state
 
 
@@ -90,6 +101,8 @@ class WordEncoder(ModelBase):
       cnn_outputs = cnn(flattened_char_repls) # [flattened_batch_size, cnn_output_size]
       outputs = tf.reshape(cnn_outputs, other_shapes + [shape(cnn_outputs, -1)]) # [*, cnn_output_size]
       outputs = tf.nn.dropout(outputs, self.keep_prob)
+      if self.shared_scope:
+        self.reuse = True
     return outputs
 
   # def encode(self, wc_inputs):
@@ -128,7 +141,10 @@ class SentenceEncoder(ModelBase):
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
     self.use_boundary = config.use_boundary
     self.model_heads = config.model_heads
-
+    self.merge_func = config.merge_func
+    for k, func_name in config.merge_func.items():
+      self.merge_func[k] = getattr(tf, func_name)
+    
     self.word_encoder = word_encoder
     self.vocab = word_encoder.vocab
     self.wbase = word_encoder.wbase
@@ -139,7 +155,7 @@ class SentenceEncoder(ModelBase):
     self.shared_scope = shared_scope
 
     self.reuse_encode = None # to reuse variables defined in encode()
-    self.reuse_mention = None # to reuse variables defined in encode()
+    self.reuse_mention = None # to reuse variables defined in get_mention_emb()
 
     # For 'initial_state' of CustomLSTMCell, different scopes are required in these initializations.
 
@@ -154,11 +170,21 @@ class SentenceEncoder(ModelBase):
                                 keep_prob=self.keep_prob)
 
   def encode(self, inputs, sequence_length):
+    '''
+    e.g. When the shape of sent_repls is [batch_size, max_seq_len, hidden_size], 
+         the shape of sequence_length must be [seq_len].
+    '''
+    for x in inputs:
+      assert len(x) == len(sequence_length.get_shape()) + 2
+
     with tf.variable_scope(self.shared_scope or "SentenceEncoder", 
                            reuse=self.reuse_encode) as scope:
       if isinstance(inputs, list):
         inputs = [x for x in inputs if x is not None]
         sent_repls = tf.concat(inputs, axis=-1) # [*, max_sequence_len, hidden_size]
+      else:
+        sent_repls = inputs 
+
       # Flatten the input tensor to a rank-3 tensor.
       input_hidden_size = shape(sent_repls, -1)
       max_sequence_len = shape(sent_repls, -2)
@@ -179,12 +205,15 @@ class SentenceEncoder(ModelBase):
         initial_state_bw=initial_state_bw,
         sequence_length=flattened_sequence_length, dtype=tf.float32, scope=scope)
 
-
+      merge_func = self.merge_func.birnn
       with tf.variable_scope("outputs"):
-        outputs = tf.concat(outputs, -1)
+        axis = get_axis(merge_func)
+
+        outputs = merge_func(outputs, axis=axis)
         outputs = tf.nn.dropout(outputs, self.keep_prob)
+
       with tf.variable_scope("state"):
-        state = merge_state(state)
+        state = merge_state(state, merge_func=merge_func)
 
       if self.shared_scope:
         self.reuse_encode = True 
@@ -241,6 +270,8 @@ class SentenceEncoder(ModelBase):
             mention_head_emb = tf.reduce_sum(mention_attention * mention_text_emb, 1) # [num_mentions, emb]
             mention_emb_list.append(mention_head_emb)
         mention_emb = tf.concat(mention_emb_list, 1) # [num_mentions, emb]
+        dbgprint(text_outputs)
+        dbgprint(mention_emb_list)
 
       if self.shared_scope:
         self.reuse_mention = True 
@@ -277,11 +308,10 @@ class SentenceEncoder(ModelBase):
                                   [flattened_batch_size])
       mention_ends = tf.reshape(mention_ends, 
                                 [flattened_batch_size])
-      
-    dbgprint(text_emb)
-    dbgprint(text_outputs)
-    dbgprint(mention_starts)
-    dbgprint(mention_ends)
+    # dbgprint(text_emb)
+    # dbgprint(text_outputs)
+    # dbgprint(mention_starts)
+    # dbgprint(mention_ends)
     with tf.variable_scope(self.shared_scope or "SentenceEncoder", 
                            reuse=self.reuse_mention) as scope:
       with tf.variable_scope('get_mention_emb'):
@@ -303,34 +333,34 @@ class SentenceEncoder(ModelBase):
                                          [batch_size, hidden_size])
             mention_emb_list.append(mention_start_emb)
             mention_emb_list.append(mention_end_emb)
-            dbgprint(mention_start_emb, mention_end_emb)
+            # dbgprint(mention_start_emb, mention_end_emb)
 
         if self.model_heads:
           with tf.name_scope('mention_attention'):
             mention_indices = tf.expand_dims(tf.range(max_mention_width), 0) + tf.expand_dims(mention_starts, 1) # [num_mentions, max_mention_width]
             mention_indices = tf.minimum(shape(text_outputs, 1) - 1, mention_indices) # [num_mentions, max_mention_width]
 
-            dbgprint(mention_indices)
+            # dbgprint(mention_indices) # 
 
             mention_text_emb = batch_gather(text_emb, mention_indices) # [num_mentions, max_mention_width, emb]
 
-            dbgprint(mention_text_emb)
+            # dbgprint(mention_text_emb)
             head_scores = projection(text_outputs, 1) # [batch_size, num_words, 1]
             mention_head_scores = batch_gather(head_scores, mention_indices) # [num_mentions, max_mention_width, 1]
             dbgprint(head_scores)
             dbgprint(mention_head_scores)
             mention_mask = tf.expand_dims(tf.sequence_mask(mention_width, max_mention_width, dtype=tf.float32), 2) # [num_mentions, max_mention_width, 1]
-            dbgprint(mention_mask)
+            # dbgprint(mention_mask)
 
             mention_attention = tf.nn.softmax(mention_head_scores + tf.log(mention_mask), dim=1) # [num_mentions, max_mention_width, 1]
-            dbgprint(mention_attention)
+            # dbgprint(mention_attention)
 
             mention_head_emb = tf.reduce_sum(mention_attention * mention_text_emb, 1) # [num_mentions, emb]
-            dbgprint(mention_head_emb)
+            # dbgprint(mention_head_emb)
             mention_emb_list.append(mention_head_emb)
-        dbgprint(mention_emb_list)
+        # dbgprint(mention_emb_list)
         mention_emb = tf.concat(mention_emb_list, 1) # [num_mentions, emb]
-        dbgprint(mention_emb)
+        # dbgprint(mention_emb)
       self.debug_ops = [mention_starts, mention_ends, mention_indices, mention_attention, mention_mask]
       if self.shared_scope:
         self.reuse_mention = True 
@@ -350,6 +380,9 @@ class MultiEncoderWrapper(SentenceEncoder):
     Args 
       encoders: A list of SentenceEncoders. The first encoder is regarded as the shared encoder.
     """
+    if len(encoders) > 2:
+      raise Exception('Current MultiEncoderWrapper can handle up to two encoders.')
+
     self.encoders = encoders
     self.is_training = encoders[0].is_training
     self.vocab = encoders[0].vocab
@@ -359,35 +392,46 @@ class MultiEncoderWrapper(SentenceEncoder):
     self.cbase = encoders[0].cbase
     self.wbase = encoders[0].wbase
     self.shared_scope = encoders[0].shared_scope
+    self.merge_func = encoders[0].merge_func
 
-  def encode(self, wc_sentences, sequence_length, merge_func=tf.concat):
+  def encode(self, wc_sentences, sequence_length):
     if not nest.is_sequence(self.encoders):
       return self.encoders.encode(wc_sentences, sequence_length)
     outputs = []
     state = []
     for e in self.encoders:
-      word_repls, o, s = e.encode(wc_sentences, sequence_length)
+      word_repls, o, s = e.encode(wc_sentences, sequence_length,
+                                  merge_func=self.merge_func.birnn)
       outputs.append(o)
       state.append(s)
-    self.output_shapes = [o.get_shape() for o in outputs]
-    self.state_shapes = [s.get_shape() for s in state]
-    outputs = merge_func(outputs, axis=-1)
+    self.shared_outputs = outputs[0]
+    self.private_outputs = outputs[1]
+
+    merge_func = self.merge_func.shared_private
+    axis = get_axis(merge_func)
+    outputs = merge_func(outputs, axis=axis)
     state = merge_state(state, merge_func=merge_func)
     return word_repls, outputs, state
 
-  def get_mention_emb(self, *args, merge_func=tf.reduce_mean):
+  def get_mention_emb(self, *args):
     mention_embs = []
     head_scores = []
     for encoder in self.encoders:
       m, h = encoder.get_mention_emb(*args)
       mention_embs.append(m)
       head_scores.append(h)
-    dbgprint(mention_embs)
-    dbgprint(head_scores)
-    if merge_func == tf.reduce_mean:
-      axis = 0 
-    elif merge_func == tf.concat:
-      axis = -1
-    else:
-      raise ValueError('merge_func must be tf.reduce_mean or tf.concat')
+    merge_func = self.merge_func.mentions
+    axis = get_axis(merge_func)
+    return merge_func(mention_embs, axis=axis), merge_func(head_scores, axis=axis)
+
+  def get_batched_mention_emb(self, *args):
+    mention_embs = []
+    head_scores = []
+    for encoder in self.encoders:
+      m, h = encoder.get_batched_mention_emb(*args)
+      mention_embs.append(m)
+      head_scores.append(h)
+
+    merge_func = self.merge_func.mentions
+    axis = get_axis(merge_func)
     return merge_func(mention_embs, axis=axis), merge_func(head_scores, axis=axis)

@@ -153,7 +153,6 @@ class _WikiP2DDataset(object):
   def get_batch(self, batch_size, do_shuffle=False):
     if not self.data:
       self.load_data()
-
     if do_shuffle:
       random.shuffle(self.data)
 
@@ -300,6 +299,8 @@ class _WikiP2DCategoryDataset(_WikiP2DDataset):
     super().__init__(config, filename, vocab)
     self.max_contexts = config.max_contexts
     self.mask_link = mask_link
+    self.iterations_per_epoch = int(config.iterations_per_epoch)
+    self.data_by_category = None
 
   def preprocess(self, article):
     return article
@@ -357,6 +358,27 @@ class _WikiP2DCategoryDataset(_WikiP2DDataset):
       maxlen=[self.config.maxlen.word])
     return batch
 
+  def get_batch(self, batch_size, do_shuffle=False):
+    if not self.data:
+      self.load_data()
+
+    if do_shuffle:
+      random.shuffle(self.data)
+      if not self.data_by_category:
+        self.data_by_category = defaultdict(list)
+        for d in self.data:
+          self.data_by_category[d.category.raw].append(d)
+      data = [random.choice(random.choice(list(self.data_by_category.values()))) 
+              for _ in range(self.iterations_per_epoch * batch_size)]
+    else:
+      data = self.data
+
+    for i, b in itertools.groupby(enumerate(data), 
+                                  lambda x: x[0] // (batch_size)):
+      sliced_data = [x[1] for x in b] # (id, data) -> data
+      batch = self.tensorize(sliced_data)
+      yield batch
+
 
 class WikiP2DGraphDataset(DatasetBase):
   '''
@@ -397,6 +419,10 @@ class WikiP2DCategoryDataset(DatasetBase):
     self.train = data_class(config, config.train_data, vocab, config.mask_link)
     self.valid = data_class(config, config.valid_data, vocab, True)
     self.test = data_class(config, config.test_data, vocab, True)
+  
+  @property
+  def size(self):
+    return self.train.size, self.valid.size, self.test.size
 
     # def print_entry(self, entry):
   #   '''

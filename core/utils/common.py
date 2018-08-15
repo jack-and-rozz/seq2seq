@@ -331,9 +331,10 @@ def print_sequence(seq, id_to_word=None):
 # argparserの文字列をboolに変換
 def str_to_bool(str_):
     bool_ = True
-    if str_ in ["T", "True", "true", "1", True]:
+    str_ = str_.lower()
+    if str_ in ["t", "true", "1", True]:
         bool_ = True
-    elif str_ in ["F", "False", "false", "0", False]:
+    elif str_ in ["f", "false", "0", False]:
         bool_ = False
     else:
         print("Irregular bool string")

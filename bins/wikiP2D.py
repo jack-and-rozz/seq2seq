@@ -33,14 +33,10 @@ class ExperimentManager(ManagerBase):
       normalize_digits=config.normalize_digits,
       normalize_embedding=True
     )
-    print(time.time()-t)
-    t = time.time()
     self.vocab.char = PredefinedCharVocab(
       config.char_vocab_path, config.vocab_size.char,
       lowercase=False,
     )
-    print(time.time()-t)
-    t = time.time()
 
     # Load Dataset.
     self.dataset = common.recDotDict()
@@ -104,6 +100,7 @@ class ExperimentManager(ManagerBase):
     if not os.path.exists(variables_path):
       with open(variables_path, 'w') as f:
         variable_names = sorted([v.name + ' ' + str(v.get_shape()) for v in tf.global_variables()])
+        variable_names = [name for name in variable_names if not re.search('Adam', name)]
         f.write('\n'.join(variable_names) + '\n')
     vocab_path = self.root_path + '/vocab.word.list'
     if not os.path.exists(vocab_path):
@@ -116,7 +113,7 @@ class ExperimentManager(ManagerBase):
     # for batch in self.dataset.coref.valid.get_batch(self.config.tasks.coref.batch_size, do_shuffle=False):
     #   pprint(batch)
     task_name = 'category'
-    batches = self.dataset[task_name].valid.get_batch(
+    batches = self.dataset[task_name].train.get_batch(
       self.config.tasks[task_name].batch_size, do_shuffle=False)
     rels = []
     for i, batch in enumerate(batches):
@@ -127,8 +124,9 @@ class ExperimentManager(ManagerBase):
         print_example(b, self.vocab)
         #exit(1)
         print('')
+      
 
-    print(self.dataset[task_name].valid.size)
+    common.dbgprint(self.dataset[task_name].valid.size)
     exit(1)
     for i, batch in enumerate(batches):
       print ('----------')
@@ -166,7 +164,7 @@ class ExperimentManager(ManagerBase):
       self.logger.info("Epoch %d (train): epoch-time %.2f, loss %s" % (epoch, epoch_time, " ".join(["%.3f" % l for l in train_loss])))
 
       batches = self.get_batch('valid')
-      epoch_time,  valid_loss, summary = m.valid(batches)
+      epoch_time, valid_loss, summary = m.valid(batches)
       self.summary_writer.add_summary(summary, m.epoch.eval())
       self.logger.info("Epoch %d (valid): epoch-time %.2f, loss %s" % (epoch, epoch_time, " ".join(["%.3f" % l for l in valid_loss])))
 
@@ -186,7 +184,7 @@ class ExperimentManager(ManagerBase):
       self.logger.info("Epoch %d (train): epoch-time %.2f, loss %.3f" % (epoch, epoch_time, train_loss))
 
       batches = self.get_batch('valid')
-      epoch_time,  valid_loss, summary = m.valid(task, batches)
+      epoch_time, valid_loss, summary = m.valid(task, batches)
       self.summary_writer.add_summary(summary, m.epoch.eval())
       self.logger.info("Epoch %d (valid): epoch-time %.2f, loss %.3f" % (epoch, epoch_time, valid_loss))
       m.add_epoch()
@@ -217,7 +215,9 @@ class ExperimentManager(ManagerBase):
     m = model
 
     if m: # in training
-      tasks = OrderedDict([(k, v) for k, v in m.tasks.items() if not target_tasks or k in target_tasks])
+      tasks = OrderedDict(
+        [(k, v) for k, v in m.tasks.items() 
+         if (not target_tasks or k in target_tasks) and k != 'adversarial'])
       epoch = m.epoch.eval()
       save_as_best = [False for t in tasks]
       for i, (task_name, task_model) in enumerate(tasks.items()):

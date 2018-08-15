@@ -131,6 +131,17 @@ class VocabularyBase(object):
     return len(self.vocab)
 
 class WordVocabularyBase(VocabularyBase):
+  @property
+  def UNK_ID(self):
+    return self.vocab.get(_UNK, self.vocab.get(_UNK,  None))
+
+  @property
+  def PAD_ID(self):
+    return self.vocab.get(_PAD, self.vocab.get(_UNK,  None))
+
+  def is_unk(self, token):
+    return self.token2id(token) == self.UNK_ID
+
   def id2token(self, _id):
     if type(_id) not in [int, np.int32, np.int64] or _id < 0 or _id > len(self.rev_vocab):
       sys.stderr.write(str(type(_id)))
@@ -239,6 +250,7 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     self.normalize_embedding = normalize_embedding
     self.vocab, self.rev_vocab, self.embeddings = self.init_vocab(
       emb_configs, vocab_size)
+
   @common.timewatch()
   def init_vocab(self, emb_configs, vocab_size):
     # Load several pretrained embeddings and concatenate them.

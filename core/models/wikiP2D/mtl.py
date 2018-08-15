@@ -14,7 +14,7 @@ from core.models.base import ModelBase, ManagerBase
 from core.models.wikiP2D.encoder import SentenceEncoder, WordEncoder, MultiEncoderWrapper
 from core.models.wikiP2D.gen_desc.gen_desc import DescriptionGeneration
 from core.models.wikiP2D.category.category import CategoryClassification
-from core.models.wikiP2D.graph.graph import GraphLinkPrediction
+from core.models.wikiP2D.graph.graph import GraphLinkPrediction, GraphLinkPredictionNoObj
 from core.models.wikiP2D.coref.coref import CoreferenceResolution
 from core.models.wikiP2D.adversarial import TaskAdversarial
 
@@ -22,6 +22,7 @@ available_models = [
   CategoryClassification,
   DescriptionGeneration,
   GraphLinkPrediction,
+  GraphLinkPredictionNoObj,
   CoreferenceResolution,
   TaskAdversarial,
 ]
@@ -69,6 +70,8 @@ class MTLManager(ManagerBase):
         #with tf.variable_scope('SentenceEncoder') as encoder_scope:
         encoder = self.get_sent_encoder(
           config.encoder, task_config.use_local_rnn, encoder_scope)
+        if i != len(config.tasks) - 1 and available_models[task_config.model_type] == TaskAdversarial:
+          raise ValueError('Adversarial task must be on the last of tasks in the config.')
         task = self.define_task(sess, task_config, encoder, device)
       self.tasks[task_name] = task
 
@@ -153,8 +156,6 @@ class BatchIterative(MTLManager):
           batch = {task_name:raw_batch}
           input_feed = self.get_input_feed(batch, is_training)
           if task_model.debug_ops:
-            print(task_model)
-            print(task_model.debug_ops)
             for ops, res in zip(task_model.debug_ops, 
                                 self.sess.run(task_model.debug_ops, input_feed)):
               print(ops, res.shape)

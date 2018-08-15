@@ -3,7 +3,7 @@ from pprint import pprint
 import math, time, sys, copy
 import tensorflow as tf
 #from core.utils import common, evaluation
-from core.utils.common import dotDict, flatten_batch, dbgprint, RED, BLUE, RESET, UNDERLINE, BOLD, GREEN
+from core.utils.common import dotDict, recDotDict, flatten_batch, dbgprint, RED, BLUE, RESET, UNDERLINE, BOLD, GREEN
 from core.utils.tf_utils import shape, batch_dot, linear, cnn, make_summary
 from core.models.base import ModelBase
 from core.vocabulary.base import UNK_ID, PAD_ID
@@ -152,82 +152,64 @@ class GraphLinkPrediction(ModelBase):
     self.cnn_filter_widths = config.cnn.filter_widths
     self.cnn_filter_size = config.cnn.filter_size
 
-    self.scoring_function = distmult
-    #self.max_batch_size = config.batch_size # for tf.dynamic_partition
-
     # Placeholders
     with tf.name_scope('Placeholder'):
-      self.text_ph = dotDict()
-      self.text_ph.word = tf.placeholder(
+      self.ph = recDotDict()
+      self.ph.text.word = tf.placeholder(
         tf.int32, name='text.word',
         shape=[None, None]) if self.encoder.wbase else None
-      self.text_ph.char = tf.placeholder(
+      self.ph.text.char = tf.placeholder(
         tf.int32, name='text.char',
         shape=[None, None, None]) if self.encoder.cbase else None
 
 
-      self.subj_ph = tf.placeholder(
+      self.ph.subj = tf.placeholder(
         tf.int32, name='subj.position', shape=[None, 2]) 
-      self.obj_ph = tf.placeholder(
+      self.ph.obj = tf.placeholder(
         tf.int32, name='obj.position', shape=[None, 2]) 
 
-      self.rel_ph = dotDict()
-      self.rel_ph.word =  tf.placeholder(
+      self.ph.rel = dotDict()
+      self.ph.rel.word =  tf.placeholder(
         tf.int32, name='rel.word',
         shape=[None, None]) if self.encoder.wbase else None
-      self.rel_ph.char =  tf.placeholder(
+      self.ph.rel.char =  tf.placeholder(
         tf.int32, name='rel.char',
         shape=[None, None, None]) if self.encoder.cbase else None
-      self.target_ph = tf.placeholder(
+      self.ph.target = tf.placeholder(
         tf.int32, name='target', shape=[None])
-      self.sentence_length = tf.count_nonzero(self.text_ph.word, axis=1)
+      self.sentence_length = tf.count_nonzero(self.ph.text.word, axis=1)
 
     with tf.name_scope('Encoder'):
-      text_emb, encoder_outputs, encoder_state = self.encoder.encode([self.text_ph.word, self.text_ph.char], self.sentence_length)
+      text_emb, encoder_outputs, encoder_state = self.encoder.encode([self.ph.text.word, self.ph.text.char], self.sentence_length)
       self.encoder_outputs = encoder_outputs
 
     with tf.variable_scope('Subject') as scope:
-      #subj_outputs = extract_span(encoder_outputs, self.subj_ph)
-      mention_starts, mention_ends = tf.unstack(self.subj_ph, axis=1)
+      mention_starts, mention_ends = tf.unstack(self.ph.subj, axis=1)
       subj_outputs, _  = self.encoder.get_batched_mention_emb(
         text_emb, encoder_outputs,
         mention_starts, mention_ends)
-      #self.debug_ops = encoder.debug_ops
 
     with tf.variable_scope('Object') as scope:
-      #obj_outputs = extract_span(encoder_outputs, self.obj_ph)
-      mention_starts, mention_ends = tf.unstack(self.obj_ph, axis=1)
+      mention_starts, mention_ends = tf.unstack(self.ph.obj, axis=1)
       obj_outputs, _ = self.encoder.get__batched_mention_emb(
         text_emb, encoder_outputs,
         mention_starts, mention_ends)
 
     with tf.variable_scope('Relation') as scope:
       # Stop gradient to prevent biased learning to the words used as relation labels.
-      rel_words_emb = tf.stop_gradient(self.encoder.word_encoder.encode([self.rel_ph.word, self.rel_ph.char])) 
+      rel_words_emb = tf.stop_gradient(self.encoder.word_encoder.encode([self.ph.rel.word, self.ph.rel.char])) 
       with tf.name_scope("compose_words"):
         rel_outputs = cnn(rel_words_emb, 
                           self.cnn_filter_widths, 
                           self.cnn_filter_size)
 
 
-    dbgprint(subj_outputs)
-    dbgprint(obj_outputs)
-    dbgprint(rel_outputs)
-
     with tf.variable_scope('Inference'):
       score_outputs = self.inference(subj_outputs, rel_outputs, obj_outputs) # [batch_size, 1]
       self.outputs = tf.round(tf.reshape(score_outputs, [shape(score_outputs, 0)])) # [batch_size]
     with tf.name_scope("Loss"):
-      self.losses = self.cross_entropy(score_outputs, self.target_ph)
+      self.losses = self.cross_entropy(score_outputs, self.ph.target)
       self.loss = tf.reduce_mean(self.losses)
-    self.debug_ops += [
-      # self.sentence_length, 
-      # tf.is_nan(encoder_outputs),
-      # tf.is_nan(subj_outputs),
-      # tf.is_nan(rel_outputs),
-      # tf.is_nan(obj_outputs),
-      # tf.is_nan(score_outputs),
-    ]
 
   def inference(self, subj, rel, obj):
     with tf.variable_scope('ffnn1'):
@@ -257,13 +239,13 @@ class GraphLinkPrediction(ModelBase):
   def get_input_feed(self, batch, is_training):
     input_feed = {}
     input_feed[self.is_training] = is_training
-    input_feed[self.text_ph.word] = batch.text.word
-    input_feed[self.text_ph.char] = batch.text.char
-    input_feed[self.rel_ph.word] = batch.rel.word
-    input_feed[self.rel_ph.char] = batch.rel.char
-    input_feed[self.subj_ph] = batch.subj.position
-    input_feed[self.obj_ph] = batch.obj.position
-    input_feed[self.target_ph] = batch.label
+    input_feed[self.ph.text.word] = batch.text.word
+    input_feed[self.ph.text.char] = batch.text.char
+    input_feed[self.ph.rel.word] = batch.rel.word
+    input_feed[self.ph.rel.char] = batch.rel.char
+    input_feed[self.ph.subj] = batch.subj.position
+    input_feed[self.ph.obj] = batch.obj.position
+    input_feed[self.ph.target] = batch.label
     return input_feed
 
   def test(self, batches, mode, logger, output_path):
@@ -305,4 +287,75 @@ class GraphLinkPrediction(ModelBase):
 
 
 #def summarize_results
+
+
+class GraphLinkPredictionNoObj(ModelBase):
+  def __init__(self, sess, config, encoder,
+               activation=tf.nn.relu):
+    super(GraphLinkPrediction, self).__init__(sess, config)
+    self.sess = sess
+    self.encoder = encoder
+    self.activation = activation
+
+    self.is_training = encoder.is_training
+    self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
+    self.ffnn_size = config.ffnn_size 
+    self.cnn_filter_widths = config.cnn.filter_widths
+    self.cnn_filter_size = config.cnn.filter_size
+
+    # Placeholders
+    with tf.name_scope('Placeholder'):
+      self.ph.text = dotDict()
+      self.ph.text.word = tf.placeholder(
+        tf.int32, name='text.word',
+        shape=[None, None]) if self.encoder.wbase else None
+      self.ph.text.char = tf.placeholder(
+        tf.int32, name='text.char',
+        shape=[None, None, None]) if self.encoder.cbase else None
+
+      self.ph.subj = tf.placeholder(
+        tf.int32, name='subj.position', shape=[None, 2]) 
+      self.ph.obj = tf.placeholder(
+        tf.int32, name='obj.position', shape=[None, 2]) 
+      self.sentence_length = tf.count_nonzero(self.ph.text.word, axis=-1)
+
+    word_repls = encoder.word_encoder.word_encode(self.ph.text.word)
+    char_repls = encoder.word_encoder.char_encode(self.ph.text.char)
+    text_emb, text_outputs, state = encoder.encode([word_repls, char_repls], 
+                                                   self.sentence_length) 
+    self.predict_mentions(text_emb, text_outputs, self.sentence_length)
+
+  def predict_mentions(self, text_emb, text_outputs, text_len):
+    with tf.name_scope('ReshapeEncoderOutputs'):
+      num_sentences = tf.shape(text_emb)[0]
+      max_sentence_length = tf.shape(text_emb)[1]
+      text_len_mask = tf.sequence_mask(text_len, maxlen=max_sentence_length)
+      text_len_mask = tf.reshape(text_len_mask, [num_sentences * max_sentence_length])
+      genre_emb = tf.nn.embedding_lookup(self.genre_emb, genre)
+      sentence_indices = tf.tile(tf.expand_dims(tf.range(num_sentences), 1), [1, max_sentence_length]) # [num_sentences, max_sentence_length]
+
+      flattened_sentence_indices = self.flatten_emb_by_sentence(sentence_indices, text_len_mask) # [num_words]
+      flattened_text_emb = self.flatten_emb_by_sentence(text_emb, text_len_mask) # [num_words, dim(word_emb + encoded_char_emb)]
+      text_outputs = self.flatten_emb_by_sentence(text_outputs, text_len_mask) # [num_words, dim(encoder_output) ]
+
+    with tf.name_scope('SpanCandidates'):
+      candidate_starts, candidate_ends = coref_ops.spans(
+        sentence_indices=flattened_sentence_indices,
+        max_width=self.max_mention_width)
+      candidate_starts.set_shape([None])
+      candidate_ends.set_shape([None])
+
+    with tf.name_scope('Mentions'):
+      candidate_mention_emb = self.get_mention_emb(flattened_text_emb, text_outputs, candidate_starts, candidate_ends) # [num_candidates, emb]
+      dbgprint(candidate_mention_emb)
+
+      candidate_mention_scores =  self.get_mention_scores(candidate_mention_emb) # [num_mentions, 1]
+      candidate_mention_scores = tf.squeeze(candidate_mention_scores, 1) # [num_mentions]
+
+      k = tf.to_int32(tf.floor(tf.to_float(tf.shape(text_outputs)[0]) * self.mention_ratio))
+      predicted_mention_indices = coref_ops.extract_mentions(candidate_mention_scores, candidate_starts, candidate_ends, k) # ([k], [k])
+      predicted_mention_indices.set_shape([None])
+
+      mention_starts = tf.gather(candidate_starts, predicted_mention_indices) # [num_mentions]
+      mention_ends = tf.gather(candidate_ends, predicted_mention_indices) # [num_mentions]
 

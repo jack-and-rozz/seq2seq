@@ -7,7 +7,7 @@ import pandas as pd
 from pprint import pprint
 
 from core.utils import tf_utils
-from core.utils.common import RED, BLUE, GREEN, YELLOW, MAGENTA, CYAN, WHITE, BOLD, BLACK, UNDERLINE, RESET, flatten, dotDict, dbgprint, timewatch
+from core.utils.common import RED, BLUE, GREEN, YELLOW, MAGENTA, CYAN, WHITE, BOLD, BLACK, UNDERLINE, RESET, flatten, dotDict, dbgprint, timewatch, recDotDict
 from core.models.base import ModelBase
 from core.models.wikiP2D.coref import coref_ops, conll, metrics
 from core.models.wikiP2D.coref import util as coref_util
@@ -36,27 +36,26 @@ class CoreferenceResolution(ModelBase):
     self.max_mention_width = config.max_mention_width
     self.use_width_feature = config.use_width_feature
     self.use_distance_feature = config.use_distance_feature
-    self.max_mention_width = config.max_mention_width
 
     # Placeholders
     with tf.name_scope('Placeholder'):
-      self.text_ph = dotDict()
-      self.text_ph.word = tf.placeholder(
+      self.ph = recDotDict()
+      self.ph.text.word = tf.placeholder(
         tf.int32, name='text.word',
         shape=[None, None]) if self.encoder.wbase else None
-      self.text_ph.char = tf.placeholder(
+      self.ph.text.char = tf.placeholder(
         tf.int32, name='text.char',
         shape=[None, None, None]) if self.encoder.cbase else None
       # TODO: truncate_exampleしたものをw_sentencesにfeedした時、何故かtruncate前の単語数を数えてしまう。とりあえずsentence_lengthを直接feedすれば問題なし？
-      #self.sentence_length = tf.count_nonzero(self.text_ph.word,
+      #self.sentence_length = tf.count_nonzero(self.ph.text.word,
       #                                        axis=1, dtype=tf.int32)
-      self.sentence_length = tf.placeholder(tf.int32, shape=[None])
-      self.speaker_ids = tf.placeholder(tf.int32, shape=[None], 
+      self.ph.sentence_length = tf.placeholder(tf.int32, shape=[None])
+      self.ph.speaker_ids = tf.placeholder(tf.int32, shape=[None], 
                                         name="speaker_ids")
-      self.genre = tf.placeholder(tf.int32, shape=[], name="genre")
-      self.gold_starts = tf.placeholder(tf.int32, name='gold_starts', shape=[None])
-      self.gold_ends = tf.placeholder(tf.int32, name='gold_ends', shape=[None])
-      self.cluster_ids = tf.placeholder(tf.int32, name='cluster_ids', shape=[None])
+      self.ph.genre = tf.placeholder(tf.int32, shape=[], name="genre")
+      self.ph.gold_starts = tf.placeholder(tf.int32, name='gold_starts', shape=[None])
+      self.ph.gold_ends = tf.placeholder(tf.int32, name='gold_ends', shape=[None])
+      self.ph.cluster_ids = tf.placeholder(tf.int32, name='cluster_ids', shape=[None])
 
     # Embeddings
     with tf.variable_scope('Embeddings'):
@@ -65,21 +64,20 @@ class CoreferenceResolution(ModelBase):
       self.genre_emb = self.initialize_embeddings('genre', [self.encoder.vocab.genre.size, self.feature_size])
       self.mention_width_emb = self.initialize_embeddings("mention_width", [self.max_mention_width, self.feature_size])
       self.mention_distance_emb = self.initialize_embeddings("mention_distance", [10, self.feature_size])
-    word_repls = encoder.word_encoder.word_encode(self.text_ph.word)
-    char_repls = encoder.word_encoder.char_encode(self.text_ph.char)
+    word_repls = encoder.word_encoder.word_encode(self.ph.text.word)
+    char_repls = encoder.word_encoder.char_encode(self.ph.text.char)
     text_emb, text_outputs, state = encoder.encode([word_repls, char_repls], 
-                                                   self.sentence_length) 
-    self.encoder_outputs = text_outputs # for adversarial MTL
+                                                   self.ph.sentence_length) 
+    self.adv_outputs = text_outputs # for adversarial MTL, it must have the shape [batch_size]
 
     with tf.name_scope('predictions_and_loss'):
-      self.predictions, self.loss = self.get_predictions_and_loss(text_emb, text_outputs, self.sentence_length, self.speaker_ids, self.genre, self.gold_starts, self.gold_ends, self.cluster_ids)
+      self.predictions, self.loss = self.get_predictions_and_loss(text_emb, text_outputs, self.ph.sentence_length, self.ph.speaker_ids, self.ph.genre, self.ph.gold_starts, self.ph.gold_ends, self.ph.cluster_ids)
 
     self.outputs = [self.predictions]
 
     with tf.name_scope("Summary"):
       self.summary_loss = tf.placeholder(tf.float32, shape=[],
                                          name='coref_loss')
-
 
   def get_predictions_and_loss(self, text_emb, text_outputs, text_len, speaker_ids, genre, gold_starts, gold_ends, cluster_ids):
     '''
@@ -105,6 +103,7 @@ class CoreferenceResolution(ModelBase):
 
     with tf.name_scope('Mentions'):
       candidate_mention_emb = self.get_mention_emb(flattened_text_emb, text_outputs, candidate_starts, candidate_ends) # [num_candidates, emb]
+      dbgprint(candidate_mention_emb)
 
       candidate_mention_scores =  self.get_mention_scores(candidate_mention_emb) # [num_mentions, 1]
       candidate_mention_scores = tf.squeeze(candidate_mention_scores, 1) # [num_mentions]
@@ -142,12 +141,13 @@ class CoreferenceResolution(ModelBase):
     text_outputs: [num_words, dim(encoder_outputs)]
     mention_starts, mention_ends: [num_mentions]
     '''
-    
+
     mention_emb, head_scores = self.encoder.get_mention_emb(text_emb, text_outputs, mention_starts, mention_ends)
 
     mention_width = 1 + mention_ends - mention_starts # [num_mentions]
     self.head_scores = head_scores
 
+    # Concatenate mention_width_feature (not shared).
     if self.use_width_feature:
       with tf.name_scope('mention_width'):
         mention_width_index = mention_width - 1  #[num_mentions]
@@ -199,6 +199,9 @@ class CoreferenceResolution(ModelBase):
     similarity_emb = antecedent_emb * target_emb_tiled # [num_mentions, max_ant, emb]
 
     pair_emb = tf.concat([target_emb_tiled, antecedent_emb, similarity_emb, feature_emb], 2) # [num_mentions, max_ant, emb]
+    dbgprint(mention_emb)
+    dbgprint(pair_emb)
+    #exit(1)
 
     with tf.variable_scope("iteration"):
       with tf.variable_scope("antecedent_scoring"):
@@ -248,12 +251,12 @@ class CoreferenceResolution(ModelBase):
     genre = batch["genre"]
     ## Texts
     if self.encoder.cbase:
-      input_feed[self.text_ph.char] = c_sentences
+      input_feed[self.ph.text.char] = c_sentences
 
     if self.encoder.wbase:
-      input_feed[self.text_ph.word] = w_sentences
+      input_feed[self.ph.text.word] = w_sentences
 
-    input_feed[self.sentence_length] = np.array([len([w for w in s if w != PAD_ID]) for s in w_sentences])
+    input_feed[self.ph.sentence_length] = np.array([len([w for w in s if w != PAD_ID]) for s in w_sentences])
     ## Mention spans and their clusters
     gold_mentions = sorted(tuple(m) for m in flatten(clusters))
     gold_mention_map = {m:i for i,m in enumerate(gold_mentions)}
@@ -263,15 +266,15 @@ class CoreferenceResolution(ModelBase):
         cluster_ids[gold_mention_map[tuple(mention)]] = cluster_id
     gold_starts, gold_ends = self.tensorize_mentions(gold_mentions)
 
-    input_feed[self.gold_starts] = np.array(gold_starts)
-    input_feed[self.gold_ends] = np.array(gold_ends)
-    input_feed[self.cluster_ids] = np.array(cluster_ids)
+    input_feed[self.ph.gold_starts] = np.array(gold_starts)
+    input_feed[self.ph.gold_ends] = np.array(gold_ends)
+    input_feed[self.ph.cluster_ids] = np.array(cluster_ids)
 
     ## Metadata
     input_feed[self.is_training] = is_training
     if self.use_metadata:
-      input_feed[self.speaker_ids] = np.array(speaker_ids)
-      input_feed[self.genre] = np.array(genre)
+      input_feed[self.ph.speaker_ids] = np.array(speaker_ids)
+      input_feed[self.ph.genre] = np.array(genre)
 
     ######### INPUT DEBUG
     # if not is_training:
@@ -280,7 +283,7 @@ class CoreferenceResolution(ModelBase):
     #     for k, v in input_feed.items():
     #       if re.search('w_sentences', k.name):
     #         print k.name
-    #         print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, self.text_ph.word), input_feed)
+    #         print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, self.ph.text.word), input_feed)
     #       else:
     #         print k.name
     #         print v
@@ -303,37 +306,37 @@ class CoreferenceResolution(ModelBase):
 
   def truncate_example(self, input_feed):
     # DEBUG
-    # print ('length of w_sentences', len(input_feed[self.text_ph.word]), sum([len([w for w in s if w != PAD_ID]) for s in input_feed[self.text_ph.word]]))
+    # print ('length of w_sentences', len(input_feed[self.ph.text.word]), sum([len([w for w in s if w != PAD_ID]) for s in input_feed[self.ph.text.word]]))
     max_training_sentences = self.max_training_sentences
-    num_sentences = input_feed[self.text_ph.word].shape[0]
+    num_sentences = input_feed[self.ph.text.word].shape[0]
     assert num_sentences > max_training_sentences
 
     sentence_offset = random.randint(0, num_sentences - max_training_sentences)
 
-    sentence_length = np.array([len([w for w in sent if w != PAD_ID]) for sent in input_feed[self.text_ph.word]]) # Number of words except PAD in each sentence.
+    sentence_length = np.array([len([w for w in sent if w != PAD_ID]) for sent in input_feed[self.ph.text.word]]) # Number of words except PAD in each sentence.
 
     word_offset = sentence_length[:sentence_offset].sum() # The sum of the number of truncated words except PAD.
     num_words = sentence_length[sentence_offset:sentence_offset + max_training_sentences].sum()
 
-    w_sentences = input_feed[self.text_ph.word][sentence_offset:sentence_offset + max_training_sentences,:]
-    c_sentences = input_feed[self.text_ph.char][sentence_offset:sentence_offset + max_training_sentences,:,:]
+    w_sentences = input_feed[self.ph.text.word][sentence_offset:sentence_offset + max_training_sentences,:]
+    c_sentences = input_feed[self.ph.text.char][sentence_offset:sentence_offset + max_training_sentences,:,:]
     sentence_length = sentence_length[sentence_offset:sentence_offset + max_training_sentences]
-    speaker_ids = input_feed[self.speaker_ids][word_offset: word_offset + num_words]
-    gold_spans = np.logical_and(input_feed[self.gold_ends] >= word_offset, input_feed[self.gold_starts] < word_offset + num_words)
-    gold_starts = input_feed[self.gold_starts][gold_spans] - word_offset
-    gold_ends = input_feed[self.gold_ends][gold_spans] - word_offset
-    cluster_ids = input_feed[self.cluster_ids][gold_spans]
+    speaker_ids = input_feed[self.ph.speaker_ids][word_offset: word_offset + num_words]
+    gold_spans = np.logical_and(input_feed[self.ph.gold_ends] >= word_offset, input_feed[self.ph.gold_starts] < word_offset + num_words)
+    gold_starts = input_feed[self.ph.gold_starts][gold_spans] - word_offset
+    gold_ends = input_feed[self.ph.gold_ends][gold_spans] - word_offset
+    cluster_ids = input_feed[self.ph.cluster_ids][gold_spans]
 
 
-    input_feed[self.text_ph.word] = w_sentences
-    input_feed[self.text_ph.char] = c_sentences
-    input_feed[self.sentence_length] = sentence_length
-    input_feed[self.speaker_ids] = speaker_ids
-    input_feed[self.gold_starts] = gold_starts
-    input_feed[self.gold_ends] = gold_ends
-    input_feed[self.cluster_ids] = cluster_ids
+    input_feed[self.ph.text.word] = w_sentences
+    input_feed[self.ph.text.char] = c_sentences
+    input_feed[self.ph.sentence_length] = sentence_length
+    input_feed[self.ph.speaker_ids] = speaker_ids
+    input_feed[self.ph.gold_starts] = gold_starts
+    input_feed[self.ph.gold_ends] = gold_ends
+    input_feed[self.ph.cluster_ids] = cluster_ids
     # DEBUG
-    #print ('length of trun w_sentences', len(input_feed[self.text_ph.word]), sum([len([w for w in s if w != PAD_ID]) for s in input_feed[self.text_ph.word]]))
+    #print ('length of trun w_sentences', len(input_feed[self.ph.text.word]), sum([len([w for w in s if w != PAD_ID]) for s in input_feed[self.ph.text.word]]))
     return input_feed
 
   ##############################################
@@ -353,9 +356,10 @@ class CoreferenceResolution(ModelBase):
     #logger.info("Epoch %d (%s): MUC, B^3, Ceaf, ave_f1 = (%.3f, %.3f, %.3f, %.3f): " % (m.epoch.eval(), mode, muc_f1, bcub_f1, ceaf_f1, sum(f1)/len(f1)))
     with open(output_path + '.detail', 'w') as f:
       sys.stdout = f
-      self.print_results(results)
+      df = self.print_results(results)
       sys.stdout = sys.__stdout__
     sys.stderr.write("Output the predicted and gold clusters to \'{}\' .\n".format(output_path))
+
     return f1, eval_summary
  
 
@@ -380,8 +384,8 @@ class CoreferenceResolution(ModelBase):
 
     for example_num, example in enumerate(batches):
       feed_dict = self.get_input_feed(example, False)
-      gold_starts = feed_dict[self.gold_starts]
-      gold_ends = feed_dict[self.gold_ends]
+      gold_starts = feed_dict[self.ph.gold_starts]
+      gold_ends = feed_dict[self.ph.gold_ends]
       candidate_starts, candidate_ends, mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores = self.sess.run(self.predictions, feed_dict=feed_dict)
       self.evaluate_mentions(candidate_starts, candidate_ends, mention_starts, mention_ends, mention_scores, gold_starts, gold_ends, example, mention_evaluators)
       predicted_antecedents = self.get_predicted_antecedents(antecedents, antecedent_scores)
@@ -512,6 +516,18 @@ class CoreferenceResolution(ModelBase):
     Args:
        - results: An Ordereddict keyed by 'doc_key', whose elements are a dictionary that has the keys, 'raw_text' and 'aligned_results'
     '''
+    color_notations = [
+      ('Success', BLUE),
+      ('Wrong or No Anaphora (Root)', MAGENTA),
+      ('Wrong Antecedent', RED), 
+      ('No Antecedent (Anaphora)', GREEN),
+      ('Not Extracted', CYAN),
+      ('Incorrect Mention', BOLD),
+      ('Unknoun word', UNDERLINE),
+    ]
+
+    print("<Colors>")
+    print(', '.join([color + k + RESET for k, color in color_notations]))
 
     results_by_mention_groups = []
     for i, (doc_key, result) in enumerate(results.items()):
@@ -524,7 +540,8 @@ class CoreferenceResolution(ModelBase):
       
       print('<text>')
       decorated_text, mention_groups = print_colored_text(
-        raw_text, aligned, extracted_mentions, predicted_antecedents, speakers)
+        raw_text, aligned, extracted_mentions, predicted_antecedents, speakers,
+        self.encoder.vocab.word)
       results_by_mention_groups.append([mention_groups, raw_text])
       print('<cluster>')
 
@@ -535,11 +552,28 @@ class CoreferenceResolution(ModelBase):
         print("%03d-P%02d  " % (i, j) , ', '.join(p))
       print('')
 
-    statistics = get_statistics(results_by_mention_groups)
-    header = ['Category'] + list(statistics['all'].keys())
-    n_mentions = sum(statistics['all'].values())
-    data = [[category] + ['%.2f' % (100.0 * n / n_mentions) if n_mentions else '0.0' for n in cnt_by_pos.values()] for category, cnt_by_pos in statistics.items() if category != 'all']
-    df = pd.DataFrame(data, columns=header)
+    statistics = get_statistics(results_by_mention_groups, self.encoder.vocab.word)
+    header = ['Category'] + list(list(statistics.values())[0].keys())
+    #n_mentions = sum([statistics[category]['all'] 
+    #                  for category in statistics.keys()])
+    #data = [[category] + ['%.2f' % (100.0 * n / n_mentions) if n_mentions else '0.0' for n in cnt_by_mention_type.values()] for category, cnt_by_mention_type in statistics.items()]
 
+    n_mentions_by_type = defaultdict(int)
+    for _, stat in statistics.items():
+      for mention_type, n in stat.items():
+        n_mentions_by_type[mention_type] += n
+    data = [
+      [category] + ['%.2f' % (100.0 * n / n_mentions_by_type[mention_type]) 
+                    for mention_type, n in cnt_by_mention_type.items()] 
+    for category, cnt_by_mention_type in statistics.items()]
+    data.append(['# Mentions'] + [x for x in n_mentions_by_type.values()])
+    df = pd.DataFrame(data, columns=header).ix[:, header]
+    df = df.set_index('Category')
     print ('<Mention group statistics>')
-    print(df.ix[:, header])
+    #print(df.ix[:, header])
+    print(df)
+    print()
+    print ('<csv ver>')
+    print(df.to_csv())
+    return df
+
