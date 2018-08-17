@@ -65,8 +65,6 @@ def linear(inputs, output_size=None,
   with tf.variable_scope(scope or "linear"):
     inputs_rank = len(inputs.get_shape().as_list())
     hidden_size = shape(inputs, -1)
-    dbgprint(hidden_size)
-    dbgprint(output_size)
     w = tf.get_variable('weights', [hidden_size, output_size])
     b = tf.get_variable('biases', [output_size])
     if inputs_rank == 3:

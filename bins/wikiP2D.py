@@ -103,19 +103,14 @@ class ExperimentManager(ManagerBase):
     return self.model
 
   def debug(self):
-    # coref = self.dataset.coref
-    # for batch in self.dataset.coref.valid.get_batch(self.config.tasks.coref.batch_size, do_shuffle=False):
-    #   pprint(batch)
     task_name = [k for k in self.config.tasks][0]
     batches = self.dataset[task_name].train.get_batch(
       self.config.tasks[task_name].batch_size, do_shuffle=False)
     rels = []
     for i, batch in enumerate(batches):
-      #print ('#####################################')
-      #print(batch.category.raw, batch.category.label)
       for j, b in enumerate(common.flatten_batch(batch)):
         print('<%03d-%03d>' % (i,j))
-        print_example(b, self.vocab)
+        self.dataset[task_name].print_example(b)
         #exit(1)
         print('')
       
@@ -137,7 +132,11 @@ class ExperimentManager(ManagerBase):
 
   def train(self):
     model = self.create_model(self.config)
-
+    if model.epoch.eval() == 0:
+      for task_name, d in self.dataset.items():
+        train_size, dev_size, test_size = d.size
+        self.logger.info('<Dataset size>')
+        self.logger.info('%s: %d, %d, %d' % (task_name, train_size, dev_size, test_size))
     if isinstance(model, mtl_model.OneByOne):
       self.train_one_by_one(model)
     else:

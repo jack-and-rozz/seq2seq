@@ -172,13 +172,15 @@ class WordVocabularyBase(VocabularyBase):
     return self.vocab.get(token, self.vocab.get(_UNK,  None))
 
   def sent2ids(self, sentence, word_dropout=0.0):
+    if not sentence:
+      return []
     if type(sentence) == list:
-      try:
-        assert type(sentence[0]) == str
-      except:
-        print(sentence)
-        exit(1)
-      sentence = " ".join(sentence)
+      if type(sentence[0]) == str:
+        sentence = " ".join(sentence)
+      elif type(sentence[0]) == list:
+        return [self.sent2ids(s, word_dropout) for s in sentence]
+      else:
+        raise Exception('Input sentence must be a string, or listed strings.')
     tokens = self.tokenizer(sentence) 
     if word_dropout:
       res = [self.token2id(word) if np.random.rand() <= word_dropout else self.vocab.get(_UNK) for word in tokens]
@@ -314,10 +316,10 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     return embedding_dict
 
 class PredefinedCharVocab(CharVocabularyBase):
-  def __init__(self, vocab_path, vocab_size, 
+  def __init__(self, vocab_path, vocab_size, start_vocab=None,
                lowercase=False, normalize_digits=False):
     super(PredefinedCharVocab, self).__init__()
-    self.start_vocab = START_VOCAB
+    self.start_vocab = start_vocab if start_vocab else START_VOCAB
     self.tokenizer = char_tokenizer(lowercase=lowercase,
                                     normalize_digits=normalize_digits)
     self.vocab, self.rev_vocab = self.init_vocab(vocab_path, vocab_size)
@@ -329,3 +331,10 @@ class PredefinedCharVocab(CharVocabularyBase):
     rev_vocab = self.start_vocab + rev_vocab
     vocab = collections.OrderedDict({t:i for i,t in enumerate(rev_vocab)})
     return vocab, rev_vocab
+
+class FeatureVocab(WordVocabularyBase):
+  def __init__(self, token_list, start_vocab=None):
+    self.start_vocab = start_vocab if start_vocab else START_VOCAB
+    self.rev_vocab = self.start_vocab + token_list
+    self.vocab = collections.OrderedDict({t:i for i,t in enumerate(self.rev_vocab)})
+    self.embeddings = None

@@ -75,8 +75,11 @@ class CoreferenceResolution(ModelBase):
                                                    self.ph.sentence_length) 
     self.adv_outputs = text_outputs # for adversarial MTL, it must have the shape [batch_size]
 
+    
     with tf.name_scope('candidates_and_mentions'):
-      candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, mention_scores, mention_emb = self.get_mentions(text_emb, text_outputs, self.ph.sentence_length)
+      flattened_text_emb, flattened_text_outputs, flattened_sentence_indices = self.flatten_doc_to_sent(text_emb, text_outputs, self.ph.sentence_length)
+      candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, mention_scores, mention_emb = self.get_mentions(
+        flattened_text_emb, flattened_text_outputs, flattened_sentence_indices)
 
     with tf.name_scope('antecedents'):
       antecedents, antecedent_scores, antecedent_labels = self.get_antecedents(
@@ -94,8 +97,10 @@ class CoreferenceResolution(ModelBase):
       self.summary_loss = tf.placeholder(tf.float32, shape=[],
                                          name='coref_loss')
 
-  def get_mentions(self, text_emb, text_outputs, text_len):
+  def flatten_doc_to_sent(self, text_emb, text_outputs, text_len):
     '''
+    Flatten 3-ranked tensor [num_sentences, max_num_words, emb] to 2-ranked tensor[num_words, emb]. 
+    The current version of this function (and whole coref module) is unable to handle a batched input.
     '''
     with tf.name_scope('ReshapeEncoderOutputs'):
       num_sentences = tf.shape(text_emb)[0]
@@ -107,6 +112,10 @@ class CoreferenceResolution(ModelBase):
       flattened_sentence_indices = self.flatten_emb_by_sentence(sentence_indices, text_len_mask) # [num_words]
       flattened_text_emb = self.flatten_emb_by_sentence(text_emb, text_len_mask) # [num_words, dim(word_emb + encoded_char_emb)]
       flattened_text_outputs = self.flatten_emb_by_sentence(text_outputs, text_len_mask) # [num_words, dim(encoder_output) ]
+    return flattened_text_emb, flattened_text_outputs, flattened_sentence_indices
+
+  def get_mentions(self, flattened_text_emb, flattened_text_outputs, 
+                   flattened_sentence_indices):
 
     with tf.name_scope('SpanCandidates'):
       candidate_starts, candidate_ends = coref_ops.spans(
@@ -138,7 +147,6 @@ class CoreferenceResolution(ModelBase):
     text_outputs: [num_words, dim(encoder_outputs)]
     mention_starts, mention_ends: [num_mentions]
     '''
-
     mention_emb, head_scores = self.encoder.get_mention_emb(text_emb, text_outputs, mention_starts, mention_ends)
 
     # Concatenate mention_width_feature (not shared).
@@ -146,6 +154,8 @@ class CoreferenceResolution(ModelBase):
       with tf.name_scope('mention_width'):
         mention_width = 1 + mention_ends - mention_starts # [num_mentions]
         mention_width_index = mention_width - 1  #[num_mentions]
+        mention_width_index = tf.clip_by_value(
+          mention_width_index, 0, self.max_mention_width - 1)
         mention_width_emb = tf.gather(self.mention_width_emb, mention_width_index) # [num_mentions, emb]
         mention_width_emb = tf.nn.dropout(mention_width_emb, self.keep_prob)
       mention_emb = tf.concat([mention_emb, mention_width_emb], axis=-1)

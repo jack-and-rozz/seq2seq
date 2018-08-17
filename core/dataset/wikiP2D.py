@@ -7,11 +7,12 @@ import numpy as np
 from collections import OrderedDict, defaultdict, Counter
 from core.models.wikiP2D.category.evaluation import decorate_text
 
-from core.utils.common import recDotDefaultDict, recDotDict, flatten, batching_dicts, pad_sequences
+from core.utils.common import dotDict, recDotDefaultDict, recDotDict, flatten, batching_dicts, dbgprint, flatten_recdict
+from core.utils.common import RED, BLUE, RESET, UNDERLINE, BOLD, GREEN, MAGENTA, CYAN, colored
 #from core.utils import visualize
 from core.dataset.base import DatasetBase
-from core.vocabulary.base import _UNK, UNK_ID, PAD_ID, fill_empty_brackets, fill_zero, VocabularyWithEmbedding
-from core.vocabulary.wikiP2D import WikiP2DVocabulary, WikiP2DSubjVocabulary, WikiP2DRelVocabulary, WikiP2DObjVocabulary
+from core.vocabulary.base import _UNK, UNK_ID, PAD_ID, fill_empty_brackets, fill_zero, VocabularyWithEmbedding, FeatureVocab
+from core.vocabulary.wikiP2D import WikiP2DRelVocabulary #WikiP2DVocabulary, WikiP2DSubjVocabulary, WikiP2DRelVocabulary, WikiP2DObjVocabulary
 
 random.seed(0)
 
@@ -84,14 +85,6 @@ def read_jsonlines(source_path, max_rows=0):
     data.append(d)
   return data
 
-def qid2position(qid, article):
-  assert qid in article.link
-  begin, end = article.link[qid]
-  entity =  recDotDefaultDict()
-  entity.raw  = article.text[begin:end+1] 
-  entity.position = (begin, end)
-  return entity
-
 def mask_span(raw_text, position, token=_UNK):
   assert type(raw_text) == list
   raw_text = copy.deepcopy(raw_text)
@@ -141,7 +134,6 @@ class _WikiP2DDataset(object):
     data = read_jsonlines(self.source_path, max_rows=self.max_rows)
     data = [self.preprocess(d) for d in data]
     self.data = flatten([self.article2entries(d) for d in data])
-    self.data = sorted(self.data, key=lambda d: len(d.contexts.raw))
 
   def tensorize(self, data):
     batch = recDotDefaultDict()
@@ -153,10 +145,18 @@ class _WikiP2DDataset(object):
   def get_batch(self, batch_size, do_shuffle=False):
     if not self.data:
       self.load_data()
+
     if do_shuffle:
       random.shuffle(self.data)
+      if hasattr(self, 'iterations_per_epoch') and self.iterations_per_epoch:
+        data = self.data[:self.iterations_per_epoch * batch_size]
+      else:
+        data = self.data
 
-    for i, b in itertools.groupby(enumerate(self.data), 
+    else:
+      data = self.data
+
+    for i, b in itertools.groupby(enumerate(data), 
                                   lambda x: x[0] // (batch_size)):
       sliced_data = [x[1] for x in b] # (id, data) -> data
       batch = self.tensorize(sliced_data)
@@ -190,6 +190,14 @@ class _WikiP2DGraphDataset(_WikiP2DDataset):
     if not (article.text and article.positive_triple and article.negative_triple):
       return []
 
+    def qid2position(qid, article):
+      assert qid in article.link
+      begin, end = article.link[qid]
+      entity =  recDotDefaultDict()
+      entity.raw  = article.text[begin:end+1] 
+      entity.position = (begin, end)
+    return entity
+
     def triple2entry(triple, article, label):
       entry = recDotDefaultDict()
       entry.qid = article.qid
@@ -210,7 +218,7 @@ class _WikiP2DGraphDataset(_WikiP2DDataset):
         raw_text = mask_span(raw_text, entry.obj.position)
       entry.text.word = self.vocab.word.sent2ids(raw_text)
       entry.text.char = self.vocab.char.sent2ids(raw_text)
-
+      
       return entry
 
     positive = triple2entry(article.positive_triple, article, 1)
@@ -218,9 +226,6 @@ class _WikiP2DGraphDataset(_WikiP2DDataset):
     return [positive, negative]
 
   def padding(self, batch):
-    '''
-    TODO: paddingどうする？paddingfifoqueueをちゃんと使ったほうが良いかも. 
-    '''
     batch.text.word = padding_2d(
        batch.text.word, 
        minlen=self.config.minlen.word,
@@ -240,80 +245,108 @@ class _WikiP2DGraphDataset(_WikiP2DDataset):
                              maxlen=[None, self.config.maxlen.char])
     return batch
 
-class _WikiP2DKnowledgeDataset(_WikiP2DDataset):
+class _WikiP2DRelExDataset(_WikiP2DDataset):
   def __init__(self, config, filename, vocab, max_rows, properties, mask_link):
     super().__init__(config, filename, vocab, max_rows)
     self.properties = properties
     self.mask_link = mask_link
+    self.max_mention_width = config.max_mention_width
+    self.min_triples = config.min_triples
 
   def preprocess(self, article):
     raw_text = [s.split() for s in article.text]
     num_words = [len(s) for s in raw_text]
-    links = {}
-
-    # Convert a list of sentneces to a flattened sequence of words.
-    for qid, link in article.link.items():
-      (sent_id, (begin, end)) = link
-      flatten_begin = begin + sum(num_words[:sent_id])
-      flatten_end = end + sum(num_words[:sent_id])
-      assert flatten_begin >= 0 and flatten_end >= 0
-      links[qid] = (flatten_begin, flatten_end)
-    article.link = links
-    article.text = flatten(raw_text)
+    article.text = raw_text
+    article.flat_text = flatten(raw_text)
     article.desc = article.desc.split()
+    article.num_words = sum([len(s) for s in article.text])
     return article
 
   def article2entries(self, article):
-    def triple2entry(triple, article, label):
-      entry = recDotDefaultDict()
-      entry.qid = article.qid
+    def qid2entity(qid, article):
+      assert qid in article.link
+      s_id, (begin, end) = article.link[qid]
 
-      subj_qid, rel_pid, obj_qid = triple
-      rel = self.properties[rel_pid].name.split()
-      entry.rel.raw = rel  # 1D tensor of str. 
-      entry.rel.word = self.vocab.word.sent2ids(rel) # 1D tensor of int.
-      entry.rel.char = self.vocab.char.sent2ids(rel) # 2D tensor of int.
-      entry.subj = qid2position(subj_qid, article) # (begin, end)
-      entry.obj = qid2position(obj_qid, article)# (begin, end)
-      entry.label = label # 1 or 0.
+      # The offset is the number of words in previous sentences. 
+      offset = sum([len(sent) for sent in article.text[:s_id]])
+      entity = recDotDefaultDict()
+      # Replace entity's name with the actual representation in the article.
+      entity.raw  = ' '.join(article.text[s_id][begin:end+1]) 
+      entity.position = article.link[qid]
+      entity.flat_position = (begin + offset, end + offset)
+      return entity
 
-      entry.text.raw = article.text
-      raw_text = article.text
-      if self.mask_link:
-        raw_text = mask_span(raw_text, entry.subj.position)
-        raw_text = mask_span(raw_text, entry.obj.position)
-      entry.text.word = self.vocab.word.sent2ids(raw_text)
-      entry.text.char = self.vocab.char.sent2ids(raw_text)
+    entry = recDotDefaultDict()
+    entry.qid = article.qid
 
-      return entry
+    entry.text.raw = article.text
+    entry.text.flat = article.flat_text
+    entry.text.word = [self.vocab.word.sent2ids(s) for s in article.text]
+    entry.text.char = [self.vocab.char.sent2ids(s) for s in article.text]
 
-    positive = triple2entry(article.positive_triple, article, 1)
-    negative = triple2entry(article.negative_triple, article, 0)
-    return [positive, negative]
+    entry.query = qid2entity(article.qid, article) # (begin, end)
+    entry.mentions.raw = []
+    entry.mentions.flat_position = []
+
+    # Articles which contain triples less than self.min_triples are discarded since they can be incorrect.
+    if len(article.triples.subjective.ids) + len(article.triples.objective.ids) < self.min_triples:
+      return []
+
+    for t_type in ['subjective', 'objective']:
+      entry.triples[t_type]= []
+      entry.target[t_type] =[[self.vocab.rel.UNK_ID for j in range(self.max_mention_width)] for i in range(article.num_words)]
+
+      for triple_idx, triple in enumerate(article.triples[t_type].ids): # triple = [subj, rel, obj]
+        is_subjective = triple[0] == article.qid
+        query_qid, rel_pid, mention_qid = triple if is_subjective else reversed(triple)
+        # TODO: 同じメンションがクエリと異なる関係を持つ場合は？
+        mention = qid2entity(mention_qid, article)
+        entry.mentions.raw.append(mention.raw)
+        entry.mentions.flat_position.append(mention.flat_position)
+
+        rel = dotDict({'raw': rel_pid, 'name': self.vocab.rel.token2name(rel_pid)})
+
+        begin, end = mention.flat_position
+        if end - begin < self.max_mention_width:
+          entry.target[t_type][begin][end-begin] = self.vocab.rel.token2id(rel_pid)
+
+        triple = [entry.query, rel, mention] if is_subjective else [mention, rel, entry.query]
+        entry.triples[t_type].append(triple)
+          #entry.triples[t_type].raw[triple_idx]
+    return [entry]
 
   def padding(self, batch):
-    '''
-    TODO: paddingどうする？paddingfifoqueueをちゃんと使ったほうが良いかも. 
-    '''
-    batch.text.word = padding_2d(
+    # [batch_size, max_num_sent, max_num_word_in_sent]
+    batch.text.word = padding(
        batch.text.word, 
-       minlen=self.config.minlen.word,
-       maxlen=self.config.maxlen.word)
+       minlen=[0, self.config.minlen.word],
+       maxlen=[0, self.config.maxlen.word])
 
-    batch.text.char = padding(
+    # [batch_size, max_num_sent, max_num_word_in_sent, max_num_char_in_word]
+    batch.text.char = padding( 
       batch.text.char, 
-      minlen=[self.config.minlen.word, self.config.minlen.char],
-      maxlen=[self.config.maxlen.word, self.config.maxlen.char])
+      minlen=[0, self.config.minlen.word, self.config.minlen.char],
+      maxlen=[0, self.config.maxlen.word, self.config.maxlen.char])
 
-    cnn_max_filter_width = 3
-    batch.rel.word = padding_2d(batch.rel.word, 
-                                minlen=cnn_max_filter_width, 
-                                maxlen=None)
-    batch.rel.char = padding(batch.rel.char, 
-                             minlen=[3, self.config.minlen.char], 
-                             maxlen=[None, self.config.maxlen.char])
+    # [batch_size, 2]
+    batch.query.flat_position = padding(
+      batch.query.flat_position,
+      minlen=[0],
+      maxlen=[0]
+    )
+    # [bach_size, max_num_word_in_doc, max_mention_width]
+    batch.target.subjective = padding(
+      batch.target.subjective,
+      minlen=[0, self.max_mention_width],
+      maxlen=[0, self.max_mention_width]
+    )
+    batch.target.objective = padding(
+      batch.target.objective,
+      minlen=[0, self.max_mention_width],
+      maxlen=[0, self.max_mention_width]
+    )
+
     return batch
-
 
 class _WikiP2DDescDataset(_WikiP2DDataset):
   def __init__(self, config, filename, vocab, max_rows):
@@ -464,6 +497,8 @@ class WikiP2DGraphDataset(DatasetBase):
     self.vocab = vocab
     properties_path = os.path.join(config.source_dir, config.prop_data)
     self.properties = OrderedDict([(d['qid'], d) for d in read_jsonlines(properties_path)])
+    self.vocab.rel = WikiP2DRelVocabulary(self.properties.values(), 
+                                          start_vocab=[_UNK])
     self.train = self.dataset_class(config, config.filename.train, vocab,
                                     config.max_rows.train,
                                     self.properties, config.mask_link)
@@ -475,11 +510,136 @@ class WikiP2DGraphDataset(DatasetBase):
                                     config.max_rows.test,
                                    self.properties, mask_link_in_test)
 
-class WikiP2DKnowledgeDataset(WikiP2DGraphDataset):
-  dataset_class =  _WikiP2DKnowledgeDataset
-
+class WikiP2DRelExDataset(WikiP2DGraphDataset):
+  dataset_class =  _WikiP2DRelExDataset
   def __init__(self, config, vocab, mask_link_in_test=False):
-    super().__init__(self, config, vocab, mask_link_in_test)
+    super().__init__(config, vocab, mask_link_in_test)
+    self.iterations_per_epoch = int(config.iterations_per_epoch)
+
+  @classmethod
+  def get_str_triple(self_class, triple):
+   s, r, o = triple 
+   return (s.raw, r.name, o.raw)
+
+  @classmethod
+  def evaluate(self_class, gold_triples, predicted_triples):
+    TP = 0.0
+    FP = 0.0
+    FN = 0.0
+    for g, p in zip(gold_triples, predicted_triples):
+      gold = set([self_class.get_str_triple(t) for t in g.subjective + g.objective])
+      pred = set([self_class.get_str_triple(t) for t in p.subjective + p.objective])
+      both = gold.intersection(pred)
+      TP += len(both)
+      FP += len(pred - both)
+      FN += len(gold - both)
+      
+    precision = TP / (TP + FP) if TP + FP else 0.0
+    recall = TP / (TP + FN) if TP + FN else 0.0
+    f1 = (precision+recall) / 2
+    print ('P, R, F = %.3f, %.3f, %.3f' % (precision, recall, f1))
+    return precision, recall, f1
+
+  @classmethod
+  def formatize_and_print(self_class, flat_batches, predictions, vocab=None):
+    '''
+    Args:
+    - predictions: A list of a tuple (relations, mention_starts, mention_ends), which contains the predicted relations (both of subj, obj) and mention spans. Each element of the list corresponds to each example.
+
+    '''
+    n_data = 0
+    n_success = 0
+    all_gold_triples = []
+    all_predicted_triples = []
+    for i, (b, p) in enumerate(zip(flat_batches, predictions)):
+      query = b.query
+      gold_triples = b.triples
+      predicted_triples = recDotDefaultDict()
+      predicted_triples.subjective = []
+      predicted_triples.objective = []
+      for (subj_rel_id, obj_rel_id), mention_start, mention_end in zip(*p):
+        if mention_end <= len(b.text.flat):
+          mention = recDotDict()
+          mention.raw = ' '.join(b.text.flat[mention_start:mention_end+1])
+          mention.flat_position = (mention_start, mention_end)
+        else:
+          continue
+        if subj_rel_id != vocab.rel.UNK_ID:
+          rel = dotDict({
+            'raw' : vocab.rel.id2token(subj_rel_id),
+            'name': vocab.rel.id2name(subj_rel_id),
+          })
+          predicted_triples.subjective.append(
+            [query, rel, mention])
+        if obj_rel_id != vocab.rel.UNK_ID:
+          rel = dotDict({
+            'raw' : vocab.rel.id2token(obj_rel_id),
+            'name': vocab.rel.id2name(obj_rel_id),
+          })
+          predicted_triples.objective.append(
+            [mention, rel, query])
+      all_gold_triples.append(gold_triples)
+      all_predicted_triples.append(predicted_triples)
+      _id = '<%04d>' % (i)
+      print (_id)
+      self_class.print_example(b, vocab, prediction=predicted_triples)
+      print ('')
+    return all_gold_triples, all_predicted_triples
+
+  @classmethod
+  def decorate_text(self_class, example, vocab, prediction=None):
+    '''
+    Args:
+    - example: A recDotDefaultDict, one example of a flattened batch.
+    Refer to WikiP2DRelExDataset.article2entries. 
+    '''
+    text = copy.deepcopy(example.text.flat)
+    query = example.query
+    for i, w in enumerate(text):
+      if vocab.word.is_unk(w):
+        text[i] = UNDERLINE + text[i]
+      query_positions = set([j for j in range(query.flat_position[0], 
+                                              query.flat_position[1]+1)])
+      gold_mention_positions = set(flatten([
+        [j for j in range(begin, end+1)]
+        for begin, end in example.mentions.flat_position]))
+
+      if i in query_positions:
+        text[i] = MAGENTA + text[i]
+      if i in gold_mention_positions:
+        text[i] = BLUE + text[i]
+      text[i] = text[i] + RESET
+    return text #'\n'.join([' '.join(sent) for sent in text])
+
+  @classmethod
+  def print_example(self_class, example, vocab, prediction=None):
+    def extract(position, text):
+      return ' '.join(text[position[0]:position[1]+1])
+
+    def print_triples(triples, text):
+      for s, r, o in triples:
+        triple_str = ', '.join([extract(s.flat_position, text), r.name, 
+                                extract(o.flat_position, text)])
+        print(triple_str)
+      if not triples:
+        print()
+
+    if example.title:
+      print('<Title>', example.title.raw)
+    decorated_text = self_class.decorate_text(example, vocab, prediction)
+    print('<Text>')
+    print(' '.join(decorated_text))
+    print('<Triples (Query-subj)>')
+    print_triples(example.triples.subjective, decorated_text)
+    print('<Triples (Query-obj)>')
+    print_triples(example.triples.objective, decorated_text)
+
+    if prediction is not None:
+      print('<Predictions (Query-subj)>')
+      print_triples(prediction.subjective, decorated_text)
+      print('<Predictions (Query-obj)>')
+      print_triples(prediction.objective, decorated_text)
+      pass
 
 class WikiP2DDescDataset(DatasetBase):
   
@@ -511,7 +671,3 @@ class WikiP2DCategoryDataset(DatasetBase):
     self.test = self.dataset_class(config, config.filename.test, vocab, 
                                    config.max_rows.test, True)
   
-  @property
-  def size(self):
-    return self.train.size, self.valid.size, self.test.size
-

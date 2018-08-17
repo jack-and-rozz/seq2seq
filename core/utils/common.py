@@ -117,6 +117,16 @@ class recDotDefaultDict(collections.defaultdict):
   def __init__(self, _=None):
     super(recDotDefaultDict, self).__init__(recDotDefaultDict)
 
+def flatten_recdict(d):
+  res = dotDict()
+  for k in d:
+    if isinstance(d[k], dict):
+      subtrees = flatten_recdict(d[k])
+      for kk, v in subtrees.items():
+        res['%s.%s' % (k, kk)] = v
+    else:
+      res[k] = d[k]
+  return res
 
 def flatten_batch(batch):
   '''
@@ -129,14 +139,23 @@ def flatten_batch(batch):
   for k in batch:
     if isinstance(batch[k], dict):
       subtrees = flatten_batch(batch[k])
-    else:
+    else: #
       subtrees = [value for value in batch[k]]
 
+    if not subtrees:
+      continue
+
     if not entries:
-      entries = [dotDict({k:sbt}) for sbt in subtrees]
+      entries = []
+      for sbt in subtrees:
+        node = recDotDefaultDict()
+        node[k] = sbt
+        entries.append(node)
+      #entries = [recDotDict({k:sbt}) for sbt in subtrees]
     else:
       for i, subtree in enumerate(subtrees):
         entries[i][k] = subtree
+
   return entries # A list of trees.
 
 def batching_dicts(batch, d):
@@ -148,10 +167,11 @@ def batching_dicts(batch, d):
   e.g. [{'a': 1, 'b':2}, {'a':10, 'b':20}] -> {'a': [1, 10], 'b': [2, 20]}
   '''
   try:
-    assert type(d) == recDotDefaultDict
-    assert type(batch) == recDotDefaultDict
+    assert type(d) in [recDotDefaultDict, recDotDict]
+    assert type(batch) in [recDotDefaultDict, recDotDict]
   except:
-    sys.stderr.write('The two arguments must be instances of recDotDefaultDict, but (%s, %s).\n' % (type(d), type(batch)))
+    sys.stderr.write('The two arguments must be instances of recDotDefaultDict, but batch, data = (%s, %s).\n' % (type(batch), type(d)))
+    print(d.keys())
     exit(1)
   for k in d:
     if isinstance(d[k], dict):
@@ -530,12 +550,13 @@ def decorate_instance_methods(func_list, decorator):
     func = decorater(func)
 
 
-def colored(str_, color):
+def colored(str_, colors):
   '''
   Args: colors: a str or list of it.
   '''
+  str_ = str.lower()
   ctable = {
-    'RESET' : "\033[0m",
+    'reset' : "\033[0m",
     'black': "\033[30m",
     'red': "\033[31m",
     'green': "\033[32m",
@@ -546,13 +567,11 @@ def colored(str_, color):
     'link': "\033[31m" + '\033[4m',
     'bold': '\033[30m' + "\033[1m",
   }
-
-  if type(color) == str:
-    res = ctable[color] + str_ + ctable['RESET']
-  elif type(color) == tuple or type(color) == list:
-    res = "".join([ctable[c] for c in color]) + str_ + CTABLE['RESET']
+  if type(colors) == str:
+    res =  + str_ + ctable['reset']
+  elif isinstance(colors, list):
+    res = "".join([ctable[c] for c in colors]) + str_ + CTABLE['reset']
   return res 
-
 
 def get_parser():
   import corenlp, json
