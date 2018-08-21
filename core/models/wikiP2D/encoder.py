@@ -111,31 +111,6 @@ class WordEncoder(ModelBase):
         self.reuse = True
     return outputs
 
-  # def encode(self, wc_inputs):
-  #   # inputs: the list of [None, max_sentence_length] or [None, max_sentence_length, max_word_length]
-  #   if not isinstance(wc_inputs, list):
-  #     wc_inputs = [wc_inputs]
-
-  #   outputs = []
-  #   with tf.variable_scope(self.shared_scope or "WordEncoder", reuse=self.reuse):
-  #     for inputs in wc_inputs:
-  #       if inputs is None:
-  #         continue
-  #       if len(inputs.get_shape()) == 3: # char-based
-  #         char_repls = tf.nn.embedding_lookup(self.c_embeddings, inputs)
-  #         batch_size = shape(char_repls, 0)
-  #         max_sentence_length = shape(char_repls, 1)
-  #         flattened_char_repls = tf.reshape(char_repls, [batch_size * max_sentence_length, shape(char_repls, 2), shape(char_repls, 3)])
-  #         flattened_aggregated_char_repls = cnn(flattened_char_repls)
-  #         word_repls = tf.reshape(flattened_aggregated_char_repls, [batch_size, max_sentence_length, shape(flattened_aggregated_char_repls, 1)]) # [num_sentences, max_sentence_length, emb_size]
-  #       else: # word-based
-  #         word_repls = tf.nn.embedding_lookup(self.w_embeddings, inputs)
-  #       outputs.append(word_repls)
-  #     outputs = tf.concat(outputs, axis=-1)
-  #     if self.shared_scope:
-  #       self.reuse = True
-  #   return tf.nn.dropout(outputs, self.keep_prob) # [None, max_sentence_length, emb_size]
-
   def get_input_feed(self, batch):
     input_feed = {}
     return input_feed

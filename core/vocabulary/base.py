@@ -294,7 +294,7 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     embedding_dict = collections.defaultdict(zero_embedding_generator(embedding_size))
 
     with open(embedding_path) as f:
-      for i, line in enumerate(f.readlines()):
+      for i, line in enumerate(f):
         if skip_first and i == 0:
           continue
         if len(embedding_dict) >= vocab_size:
@@ -307,12 +307,14 @@ class VocabularyWithEmbedding(WordVocabularyBase):
         word = word[0]
         vector = [float(s) for s in word_and_emb[1:]]
 
-        # If a capitalized (or digit-normalized) word is changed to its lowercased form, which is used as an alternative only when the exact one is not registered. 
+        # If a capitalized (or digit normalized) word is changed to its lowercased form, which is used as an alternative only when the exact one is not registered. 
         # e.g. Texas -> texas, 1999->0000, etc.
         if word == word_and_emb[0]:
           embedding_dict[word] = vector
         elif word not in embedding_dict: 
           embedding_dict[word] = vector
+    sys.stderr.write("Loading %s has done.\n" % embedding_path)
+
     return embedding_dict
 
 class PredefinedCharVocab(CharVocabularyBase):
@@ -327,7 +329,7 @@ class PredefinedCharVocab(CharVocabularyBase):
   def init_vocab(self, vocab_path, vocab_size):
     with open(vocab_path) as f:
       rev_vocab = [l.split()[0] for i, l in enumerate(f) if i < vocab_size]
-      sys.stderr.write("Done loading the vocabulary.\n")
+      sys.stderr.write("Loading %s has done.\n" % vocab_path)
     rev_vocab = self.start_vocab + rev_vocab
     vocab = collections.OrderedDict({t:i for i,t in enumerate(rev_vocab)})
     return vocab, rev_vocab

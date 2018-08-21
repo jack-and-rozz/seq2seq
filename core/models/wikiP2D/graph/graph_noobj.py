@@ -161,9 +161,9 @@ class GraphLinkPredictionNoObj(CoreferenceResolution):
     if output_path:
       sys.stderr.write("Output the testing results to \'{}\' .\n".format(output_path))
     summary_dict = {}
-    summary_dict['knowledge/%s/f1' % mode] = f1
-    summary_dict['knowledge/%s/precision' % mode] = precision
-    summary_dict['knowledge/%s/recall' % mode] = recall
+    summary_dict['relex/%s/f1' % mode] = f1
+    summary_dict['relex/%s/precision' % mode] = precision
+    summary_dict['relex/%s/recall' % mode] = recall
     summary = make_summary(summary_dict)
     return f1, summary
 

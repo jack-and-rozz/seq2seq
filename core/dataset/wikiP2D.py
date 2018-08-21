@@ -152,7 +152,6 @@ class _WikiP2DDataset(object):
         data = self.data[:self.iterations_per_epoch * batch_size]
       else:
         data = self.data
-
     else:
       data = self.data
 
@@ -252,6 +251,7 @@ class _WikiP2DRelExDataset(_WikiP2DDataset):
     self.mask_link = mask_link
     self.max_mention_width = config.max_mention_width
     self.min_triples = config.min_triples
+    self.iterations_per_epoch = int(config.iterations_per_epoch)
 
   def preprocess(self, article):
     raw_text = [s.split() for s in article.text]
@@ -514,7 +514,6 @@ class WikiP2DRelExDataset(WikiP2DGraphDataset):
   dataset_class =  _WikiP2DRelExDataset
   def __init__(self, config, vocab, mask_link_in_test=False):
     super().__init__(config, vocab, mask_link_in_test)
-    self.iterations_per_epoch = int(config.iterations_per_epoch)
 
   @classmethod
   def get_str_triple(self_class, triple):

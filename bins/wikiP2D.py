@@ -25,8 +25,8 @@ class ExperimentManager(ManagerBase):
     self.port = args.port
     self.vocab = common.dotDict()
     self.model = None
+
     # Load pretrained embeddings.
-    t = time.time()
     self.vocab.word = VocabularyWithEmbedding(
       config.embeddings_conf, config.vocab_size.word,
       lowercase=config.lowercase,
@@ -105,7 +105,7 @@ class ExperimentManager(ManagerBase):
   def debug(self):
     task_name = [k for k in self.config.tasks][0]
     batches = self.dataset[task_name].train.get_batch(
-      self.config.tasks[task_name].batch_size, do_shuffle=False)
+      self.config.tasks[task_name].batch_size, do_shuffle=True)
     rels = []
     for i, batch in enumerate(batches):
       for j, b in enumerate(common.flatten_batch(batch)):
