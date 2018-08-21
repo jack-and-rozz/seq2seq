@@ -40,13 +40,19 @@ class GraphLinkPredictionNoObj(CoreferenceResolution):
         shape=[None, None, None]) if self.encoder.cbase else None
 
       self.ph.query = tf.placeholder(
-        tf.int32, name='query.position', shape=[2]) 
-      self.ph.gold_mentions = tf.placeholder(
-        tf.int32, name='query.position', shape=[None, 2])  # [num_mentions, 2]
-      self.ph.target.subjective = tf.placeholder(
-        tf.int32, name='target.subject', shape=[None, self.max_mention_width]) # [max_sequence_len, max_mention_width] 
-      self.ph.target.objective = tf.placeholder(
-        tf.int32, name='target.object', shape=[None, self.max_mention_width]) # [max_sequence_len, max_mention_width]
+        tf.int32, name='query', shape=[2]) 
+      for k in ['subjective', 'objective']:
+        self.ph.target[k] = tf.placeholder(
+          tf.int32, name='target.%s' % k, shape=[None, self.max_mention_width]) # [max_sequence_len, max_mention_width] 
+        # self.ph.mentions[k] = tf.placeholder(
+        #   tf.int32, name='mentions.%s' % k, shape=[None, 2])  # [num_mentions, 2]
+        # self.ph.num_mentions[k] = tf.placeholder(
+        #   tf.int32, name='num_mentions.%s' % k, shape=[])
+        self.ph.mentions = tf.placeholder(
+          tf.int32, name='mentions.%s' % k, shape=[None, 2])  # [num_mentions, 2]
+        self.ph.num_mentions = tf.placeholder(
+          tf.int32, name='num_mentions.%s' % k, shape=[])
+
       self.sentence_length = tf.count_nonzero(self.ph.text.word, axis=-1)
       self.placeholders = flatten_recdict(self.ph)
 
@@ -60,52 +66,65 @@ class GraphLinkPredictionNoObj(CoreferenceResolution):
                                                    self.sentence_length)
     self.adv_outputs = text_outputs # for adversarial MTL, it must have the shape [batch_size]
 
-    with tf.name_scope('get_mentions'):
-      flattened_text_emb, flattened_text_outputs, flattened_sentence_indices = self.flatten_doc_to_sent(text_emb, text_outputs, self.sentence_length)
-      _, _, _, mention_starts, mention_ends, mention_scores, mention_emb = self.get_mentions(flattened_text_emb, flattened_text_outputs, flattened_sentence_indices)
+    self.predictions = []
+    self.loss = []
+
+    predictions, losses = self.inference(
+      text_emb, text_outputs, self.sentence_length, 
+      self.ph.query, self.ph.target.subjective, self.ph.target.objective)
+    self.predictions = predictions
+    self.loss = tf.reduce_mean(losses, axis=-1)
+
+  def inference(self, text_emb, text_outputs, sentence_length, 
+                query, subj_targets, obj_targets):
+    '''
+    Args:
+    '''
+    with tf.name_scope('flatten_text'):
+      flattened_text_emb, flattened_text_outputs, flattened_sentence_indices = self.flatten_doc_to_sent(text_emb, text_outputs, sentence_length)
 
     with tf.name_scope('get_query_emb'):
-      query_starts, query_ends = tf.unstack(tf.expand_dims(self.ph.query, 0), axis=-1)
+      query_starts, query_ends = tf.unstack(tf.expand_dims(query, 0), axis=-1)
       query_emb = self.get_mention_emb(
         flattened_text_emb, flattened_text_outputs, query_starts, query_ends)
 
+    with tf.name_scope('get_mentions'):
+      _, _, _, mention_starts, mention_ends, mention_scores, mention_emb = self.get_mentions(flattened_text_emb, flattened_text_outputs, flattened_sentence_indices)
+
     with tf.name_scope('get_rel_probabilities'):
-      with tf.name_scope('subj_logits'):
-        subj_logits = self.inference(query_emb, mention_emb, mention_scores, True,)
-      with tf.name_scope('obj_logits'):
-        obj_logits = self.inference(query_emb, mention_emb, mention_scores,
-                                    False, reuse=True)
+      with tf.name_scope('logits'):
+        subj_logits = self.predict_relation(query_emb, mention_emb, 
+                                            mention_scores, True)
+        tf.get_variable_scope().reuse_variables()
+        obj_logits = self.predict_relation(query_emb, mention_emb, 
+                                           mention_scores, False)
 
     # Concatenated [subjective, objective] relations with each mention.
     with tf.name_scope('prediction'):
-      predicted_relations =  tf.concat(
-        [tf.expand_dims(tf.argmax(subj_logits, axis=-1), -1), 
-         tf.expand_dims(tf.argmax(obj_logits, axis=-1), -1)], axis=-1) # [num_mentions, 2]
-      self.predictions = [
+      predicted_relations = tf.concat(
+        [tf.expand_dims(tf.argmax(subj_logits, axis=-1), -1),
+         tf.expand_dims(tf.argmax(obj_logits, axis=-1), -1)
+       ], axis=-1)
+      predictions = [
         predicted_relations,
         mention_starts,
         mention_ends
       ]
+
     with tf.name_scope('loss'):
       mention_indices = tf.stack([mention_starts, mention_ends-mention_starts], 
                                  axis=-1) # [num_mentions, 2]
-      subj_targets = tf.gather_nd(self.ph.target.subjective, mention_indices) # [num_mentions]
-      obj_targets = tf.gather_nd(self.ph.target.objective, mention_indices) # [num_mentions]
+      subj_targets = tf.gather_nd(subj_targets, mention_indices) # [num_mentions]
+      obj_targets = tf.gather_nd(obj_targets, mention_indices) # [num_mentions]
       subj_losses = tf.nn.sparse_softmax_cross_entropy_with_logits(
         logits=subj_logits, labels=subj_targets)
       obj_losses = tf.nn.sparse_softmax_cross_entropy_with_logits(
-        logits=obj_logits, labels=obj_targets)
-      self.loss = tf.reduce_mean(tf.concat([subj_losses, obj_losses], axis=-1))
-      # self.debug_ops += [
-      #   tf.concat([subj_losses, obj_losses], axis=-1),
-      #   subj_logits, 
-      #   predicted_relations,
-      #   subj_targets,
-      #   obj_targets,
-      # ]
+        logits=subj_logits, labels=obj_targets)
+      losses = tf.concat([subj_losses, obj_losses], axis=-1)
+    return predictions, losses
 
-  def inference(self, query_emb, mention_emb, mention_scores, 
-                is_query_subjective, reuse=None):
+  def predict_relation(self, query_emb, mention_emb, mention_scores, 
+                       is_query_subjective):
     '''
     Args:
     - query_emb:
@@ -113,7 +132,7 @@ class GraphLinkPredictionNoObj(CoreferenceResolution):
     - is_query_subjective: A boolean. If true, this function outputs a distribution of relation label probabilities for a triple (query, rel, mention) across rel, otherwise for (mention, rel, query)
     - reuse: A boolean. The variables of this network should be reused by both query-subjective and query-objective predictions by switching the orders of input representations.
     '''
-    with tf.variable_scope('pair_emb', reuse=reuse):
+    with tf.variable_scope('pair_emb'):
       n_mentions = shape(mention_emb, -2)
       query_emb = tf.tile(query_emb, [n_mentions, 1]) # [n_mentions, emb]
       if is_query_subjective:
@@ -132,8 +151,8 @@ class GraphLinkPredictionNoObj(CoreferenceResolution):
       # This penalty enables to make the mention scores to no mentions lower, since learning that a mention does not have a relation promotes this mention_unconfidence_penalty larger.
       mention_unconfidence_penalty = tf.concat([
         -tf.expand_dims(mention_scores, 1),
-        #tf.tile(tf.expand_dims(mention_scores, 1), [1, shape(logits, 1)-1])
-        tf.zeros([shape(logits, 0), shape(logits, 1) - 1], dtype=tf.float32)
+        tf.tile(tf.expand_dims(mention_scores, 1), [1, shape(logits, 1)-1])
+        #tf.zeros([shape(logits, 0), shape(logits, 1) - 1], dtype=tf.float32)
        ], axis=-1)
       return logits + mention_unconfidence_penalty
 
@@ -179,8 +198,11 @@ class GraphLinkPredictionNoObj(CoreferenceResolution):
     input_feed[self.ph.text.char] = batch.text.char[0]
 
     input_feed[self.ph.query] = batch.query.flat_position[0]
-    input_feed[self.ph.gold_mentions] = batch.mentions.flat_position[0]
-    input_feed[self.ph.target.subjective] = batch.target.subjective[0]
-    input_feed[self.ph.target.objective] = batch.target.objective[0]
+    for k in ['subjective', 'objective']:
+      #input_feed[self.ph.mentions[k]] = batch.mentions[k].flat_position[0]
+      #input_feed[self.ph.num_mentions[k]] = batch.num_mentions[k][0]
+      input_feed[self.ph.target[k]] = batch.target[k][0]
+    input_feed[self.ph.mentions] = batch.mentions.flat_position[0]
+    input_feed[self.ph.num_mentions] = batch.num_mentions[0]
     return input_feed
 

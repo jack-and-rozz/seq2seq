@@ -285,14 +285,17 @@ class _WikiP2DRelExDataset(_WikiP2DDataset):
     entry.text.char = [self.vocab.char.sent2ids(s) for s in article.text]
 
     entry.query = qid2entity(article.qid, article) # (begin, end)
-    entry.mentions.raw = []
-    entry.mentions.flat_position = []
 
     # Articles which contain triples less than self.min_triples are discarded since they can be incorrect.
     if len(article.triples.subjective.ids) + len(article.triples.objective.ids) < self.min_triples:
       return []
+    entry.mentions.raw = []
+    entry.mentions.flat_position = []
 
     for t_type in ['subjective', 'objective']:
+      #entry.mentions[t_type].raw = []
+      #entry.mentions[t_type].flat_position = []
+
       entry.triples[t_type]= []
       entry.target[t_type] =[[self.vocab.rel.UNK_ID for j in range(self.max_mention_width)] for i in range(article.num_words)]
 
@@ -301,6 +304,8 @@ class _WikiP2DRelExDataset(_WikiP2DDataset):
         query_qid, rel_pid, mention_qid = triple if is_subjective else reversed(triple)
         # TODO: 同じメンションがクエリと異なる関係を持つ場合は？
         mention = qid2entity(mention_qid, article)
+        #entry.mentions[t_type].raw.append(mention.raw)
+        #entry.mentions[t_type].flat_position.append(mention.flat_position)
         entry.mentions.raw.append(mention.raw)
         entry.mentions.flat_position.append(mention.flat_position)
 
@@ -312,7 +317,8 @@ class _WikiP2DRelExDataset(_WikiP2DDataset):
 
         triple = [entry.query, rel, mention] if is_subjective else [mention, rel, entry.query]
         entry.triples[t_type].append(triple)
-          #entry.triples[t_type].raw[triple_idx]
+      #entry.num_mentions[t_type] = len(entry.mentions[t_type].positions)
+    entry.num_mentions = len(entry.mentions.positions)
     return [entry]
 
   def padding(self, batch):
