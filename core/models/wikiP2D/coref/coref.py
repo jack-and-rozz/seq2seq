@@ -128,7 +128,7 @@ class CoreferenceResolution(ModelBase):
       candidate_mention_emb = self.get_mention_emb(flattened_text_emb, flattened_text_outputs, candidate_starts, candidate_ends) # [num_candidates, emb]
 
       candidate_mention_scores =  self.get_mention_scores(candidate_mention_emb) # [num_mentions, 1]
-      candidate_mention_scores = tf.squeeze(candidate_mention_scores, 1) # [num_mentions]
+      #candidate_mention_scores = tf.squeeze(candidate_mention_scores, 1) # [num_mentions]
 
       k = tf.to_int32(tf.floor(tf.to_float(tf.shape(flattened_text_outputs)[0]) * self.mention_ratio))
       predicted_mention_indices = coref_ops.extract_mentions(candidate_mention_scores, candidate_starts, candidate_ends, k) # ([k], [k])
@@ -165,7 +165,8 @@ class CoreferenceResolution(ModelBase):
 
   def get_mention_scores(self, mention_emb):
     with tf.variable_scope("mention_scores"):
-      return tf_utils.ffnn(mention_emb, self.ffnn_depth, self.ffnn_size, 1, self.keep_prob) # [num_mentions, 1]
+      scores = tf_utils.ffnn(mention_emb, self.ffnn_depth, self.ffnn_size, 1, self.keep_prob) # [num_mentions, 1]
+      return tf.reshape(scores, [tf_utils.shape(scores, 0)])
 
   def get_antecedents(self, mention_scores, mention_starts, mention_ends, 
                       mention_emb, speaker_ids, genre, 

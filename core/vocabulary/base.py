@@ -56,54 +56,6 @@ def char_tokenizer(special_words=START_VOCAB,
     return chars
   return _tokenizer
 
-def fill_empty_brackets(sequence, max_len):
-  """
-  - sequence: A 1D list of list.
-  """
-  return sequence + [[] for _ in range(max_len - len(sequence))]
-
-def fill_zero(sequence, length): # 最長系列が短すぎたときに0埋め
-  '''
-  Make the length of a sequence at least 'length' by truncating of filling 0.
-  Args:
-  sequence: A 1D list of integer.
-  length: an integer.
-  '''
-  if len(sequence) < length:
-    return sequence + [0 for _ in range(length - len(sequence))]
-  else:
-    return sequence
-
-
-
-def word_sent_padding(inputs, max_sent_len=None):
-  _max_sent_len = max([len(sent) for sent in inputs])
-  if not max_sent_len or _max_sent_len < max_sent_len:
-    max_sent_len = _max_sent_len
-
-  padded_sentences = tf.keras.preprocessing.sequence.pad_sequences(
-    inputs, maxlen=max_sent_len, padding='post', truncating='post', value=PAD_ID)
-  return padded_sentences # [batch_size, max_sent_len]
-
-def char_sent_padding(inputs, 
-                      max_sent_len=None, max_word_len=None):
-
-  _max_sent_len = max([len(sent) for sent in inputs])
-  if not max_sent_len or _max_sent_len < max_sent_len:
-    max_sent_len = _max_sent_len
-
-  _max_word_len = max([max([len(word) for word in sent]) for sent in inputs])
-  if not max_word_len or _max_word_len < max_word_len:
-    max_word_len = _max_word_len
-
-  # Because of the maximum window width of CNN.
-  if max_word_len < 5:
-    max_word_len = 5
-
-  padded_sentences = [fill_empty_brackets(sent, max_sent_len) for sent in inputs] 
-  padded_sentences = [tf.keras.preprocessing.sequence.pad_sequences(sent, maxlen=max_word_len, padding='post', truncating='post', value=PAD_ID) for sent in inputs]
-  return padded_sentences # [batch_size, max_sent_len, max_word_len]
-
 def random_embedding_generator(embedding_size):
   return lambda: np.random.uniform(-math.sqrt(3), math.sqrt(3), 
                                    size=embedding_size)
@@ -140,6 +92,10 @@ class WordVocabularyBase(VocabularyBase):
     return self.vocab.get(_PAD, self.vocab.get(_UNK,  None))
 
   def is_unk(self, token):
+    tokens = self.tokenizer(token)
+    if len(tokens) > 1:
+      return True
+    token = tokens[0]
     return self.token2id(token) == self.UNK_ID
 
   def id2token(self, _id):

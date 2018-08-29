@@ -1,89 +1,20 @@
 #coding: utf-8
 
 from pprint import pprint
-import os, re, sys, random, copy, time, json
+import os, re, sys, random, copy, time
 import subprocess, itertools
 import numpy as np
 from collections import OrderedDict, defaultdict, Counter
 from core.models.wikiP2D.category.evaluation import decorate_text
 
-from core.utils.common import dotDict, recDotDefaultDict, recDotDict, flatten, batching_dicts, dbgprint, flatten_recdict
+from core.utils.common import dotDict, recDotDefaultDict, recDotDict, flatten, batching_dicts, dbgprint, flatten_recdict, read_jsonlines
 from core.utils.common import RED, BLUE, RESET, UNDERLINE, BOLD, GREEN, MAGENTA, CYAN, colored
 #from core.utils import visualize
-from core.dataset.base import DatasetBase
-from core.vocabulary.base import _UNK, UNK_ID, PAD_ID, fill_empty_brackets, fill_zero, VocabularyWithEmbedding, FeatureVocab
+from core.dataset.base import DatasetBase, padding
+from core.vocabulary.base import _UNK, UNK_ID, PAD_ID, VocabularyWithEmbedding, FeatureVocab
 from core.vocabulary.wikiP2D import WikiP2DRelVocabulary #WikiP2DVocabulary, WikiP2DSubjVocabulary, WikiP2DRelVocabulary, WikiP2DObjVocabulary
 
 random.seed(0)
-
-def define_length(batch, minlen=None, maxlen=None):
-  if minlen is None:
-    minlen = 0
-
-  if maxlen:
-    return max(maxlen, minlen) 
-  else:
-    return max([len(b) for b in batch] + [minlen])
-
-def padding_2d(batch, minlen=None, maxlen=None, pad=PAD_ID, pad_type='post'):
-  '''
-  Args:
-  batch: a 2D list. 
-  maxlen: an integer.
-  Return:
-  A 2D tensor of which shape is [batch_size, max_num_word].
-  '''
-  if type(maxlen) == list:
-    maxlen = maxlen[0]
-  if type(minlen) == list:
-    minlen = minlen[0]
-
-  length_of_this_dim = define_length(batch, minlen, maxlen)
-  return np.array([fill_zero(l[:length_of_this_dim], length_of_this_dim) for l in batch])
-
-def padding(batch, minlen, maxlen):
-  '''
-  Args:
-  - batch: A list of tensors with different shapes.
-  - minlen, maxlen: A list of integers or None. Each i-th element specifies the minimum (or maximum) size of the tensor in the rank i+1.
-    minlen[i] is considered as 0 if it is None, and maxlen[i] is automatically set to be equal to the maximum size of 'batch', the input tensor.
-  
-  e.g. 
-  [[1], [2, 3], [4, 5, 6]] with minlen=[None], maxlen=[None] should be
-  [[1, 0, 0], [2, 3, 0], [4, 5, 6]]
-  '''
-  assert len(minlen) == len(maxlen)
-  rank = len(minlen) + 1
-  length_of_this_dim = define_length(batch, minlen[0], maxlen[0])
-  padded_batch = []
-  if rank == 2:
-    return padding_2d(batch, minlen=minlen[0], maxlen=maxlen[0])
-
-  for l in batch:
-    l = fill_empty_brackets(l[:length_of_this_dim], length_of_this_dim)
-    if rank == 3:
-      l = padding_2d(l, minlen=minlen[1:], maxlen=maxlen[1:])
-    else:
-      l = padding(l, minlen=minlen[1:], maxlen=maxlen[1:])
-
-    padded_batch.append(l)
-  largest_shapes = [max(n_dims) for n_dims in zip(*[tensor.shape for tensor in padded_batch])]
-  target_tensor = np.zeros([len(batch)] + largest_shapes)
-
-  for i, tensor in enumerate(padded_batch):
-    pad_lengths = [x - y for x, y in zip(largest_shapes, tensor.shape)]
-    pad_shape = [(0, l) for l in pad_lengths] 
-    padded_batch[i] = np.pad(tensor, pad_shape, 'constant')
-  return np.array(padded_batch)
-
-def read_jsonlines(source_path, max_rows=0):
-  data = []
-  for i, l in enumerate(open(source_path)):
-    if max_rows and i >= max_rows:
-      break
-    d = recDotDict(json.loads(l))
-    data.append(d)
-  return data
 
 def mask_span(raw_text, position, token=_UNK):
   assert type(raw_text) == list
@@ -225,10 +156,10 @@ class _WikiP2DGraphDataset(_WikiP2DDataset):
     return [positive, negative]
 
   def padding(self, batch):
-    batch.text.word = padding_2d(
+    batch.text.word = padding(
        batch.text.word, 
-       minlen=self.config.minlen.word,
-       maxlen=self.config.maxlen.word)
+       minlen=[self.config.minlen.word],
+       maxlen=[self.config.maxlen.word])
 
     batch.text.char = padding(
       batch.text.char, 
@@ -236,9 +167,9 @@ class _WikiP2DGraphDataset(_WikiP2DDataset):
       maxlen=[self.config.maxlen.word, self.config.maxlen.char])
 
     cnn_max_filter_width = 3
-    batch.rel.word = padding_2d(batch.rel.word, 
-                                minlen=cnn_max_filter_width, 
-                                maxlen=None)
+    batch.rel.word = padding(batch.rel.word, 
+                                minlen=[cnn_max_filter_width], 
+                                maxlen=[None])
     batch.rel.char = padding(batch.rel.char, 
                              minlen=[3, self.config.minlen.char], 
                              maxlen=[None, self.config.maxlen.char])
@@ -317,8 +248,10 @@ class _WikiP2DRelExDataset(_WikiP2DDataset):
 
         triple = [entry.query, rel, mention] if is_subjective else [mention, rel, entry.query]
         entry.triples[t_type].append(triple)
+      relation_freqs = Counter(flatten(entry.target[t_type]))
+      entry.loss_weights_by_label[t_type] = [1.0/relation_freqs[i] if i in relation_freqs else 0.0 for i in range(self.vocab.rel.size)]
       #entry.num_mentions[t_type] = len(entry.mentions[t_type].positions)
-    entry.num_mentions = len(entry.mentions.positions)
+    entry.num_mentions = len(entry.mentions.flat_position)
     return [entry]
 
   def padding(self, batch):
@@ -340,16 +273,24 @@ class _WikiP2DRelExDataset(_WikiP2DDataset):
       minlen=[0],
       maxlen=[0]
     )
-    # [bach_size, max_num_word_in_doc, max_mention_width]
+    # [batch_size, max_num_word_in_doc, max_mention_width]
     batch.target.subjective = padding(
       batch.target.subjective,
       minlen=[0, self.max_mention_width],
       maxlen=[0, self.max_mention_width]
     )
+    # [batch_size, max_num_word_in_doc, max_mention_width]
     batch.target.objective = padding(
       batch.target.objective,
       minlen=[0, self.max_mention_width],
       maxlen=[0, self.max_mention_width]
+    )
+
+    # [batch_size, max_num_mentions_in_batch, max_mention_width]
+    batch.mentions.flat_position = padding(
+      batch.mentions.flat_position,
+      minlen = [0, 2],
+      maxlen = [0, 2],
     )
 
     return batch
@@ -466,7 +407,7 @@ class _WikiP2DCategoryDataset(_WikiP2DDataset):
       batch.contexts.link,
       minlen=[None, 2],
       maxlen=[None, 2])
-    batch.desc.word = padding_2d(
+    batch.desc.word = padding(
       batch.desc.word,
       minlen=[self.config.minlen.word],
       maxlen=[self.config.maxlen.word])
@@ -527,10 +468,34 @@ class WikiP2DRelExDataset(WikiP2DGraphDataset):
    return (s.raw, r.name, o.raw)
 
   @classmethod
-  def evaluate(self_class, gold_triples, predicted_triples):
+  def evaluate_mentions(self_class, mentions):
     TP = 0.0
     FP = 0.0
     FN = 0.0
+    gold_mentions = mentions.gold
+    predicted_mentions = mentions.prediction
+    for g, p in zip(gold_mentions, predicted_mentions):
+      gold = set([tuple(m.flat_position) for m in g])
+      pred = set([tuple(m.flat_position) for m in p])
+      both = gold.intersection(pred)
+      TP += len(both)
+      FP += len(pred - both)
+      FN += len(gold - both)
+      
+    precision = TP / (TP + FP) if TP + FP else 0.0
+    recall = TP / (TP + FN) if TP + FN else 0.0
+    f1 = (precision+recall) / 2
+    print ('<Mention Evaluation>')
+    print ('P, R, F = %.3f, %.3f, %.3f' % (precision, recall, f1))
+    return precision, recall, f1
+
+  @classmethod
+  def evaluate_triples(self_class, triples):
+    TP = 0.0
+    FP = 0.0
+    FN = 0.0
+    gold_triples = triples.gold
+    predicted_triples = triples.prediction
     for g, p in zip(gold_triples, predicted_triples):
       gold = set([self_class.get_str_triple(t) for t in g.subjective + g.objective])
       pred = set([self_class.get_str_triple(t) for t in p.subjective + p.objective])
@@ -542,6 +507,7 @@ class WikiP2DRelExDataset(WikiP2DGraphDataset):
     precision = TP / (TP + FP) if TP + FP else 0.0
     recall = TP / (TP + FN) if TP + FN else 0.0
     f1 = (precision+recall) / 2
+    print ('<Triple Evaluation>')
     print ('P, R, F = %.3f, %.3f, %.3f' % (precision, recall, f1))
     return precision, recall, f1
 
@@ -554,19 +520,25 @@ class WikiP2DRelExDataset(WikiP2DGraphDataset):
     '''
     n_data = 0
     n_success = 0
-    all_gold_triples = []
-    all_predicted_triples = []
+    triples = recDotDict({'gold': [], 'prediction': []})
+    mentions = recDotDict({'gold': [], 'prediction': []})
+
     for i, (b, p) in enumerate(zip(flat_batches, predictions)):
       query = b.query
       gold_triples = b.triples
       predicted_triples = recDotDefaultDict()
       predicted_triples.subjective = []
       predicted_triples.objective = []
-      for (subj_rel_id, obj_rel_id), mention_start, mention_end in zip(*p):
-        if mention_end <= len(b.text.flat):
+
+      gold_mentions = [recDotDict({'raw': r, 'flat_position':p }) for r, p in zip(b.mentions.raw, b.mentions.flat_position)]
+
+      predicted_mentions = []
+      for (subj_rel_id, obj_rel_id), (mention_start, mention_end) in zip(*p):
+        if mention_end <= len(b.text.flat) and (mention_start, mention_end) != (PAD_ID, PAD_ID):
           mention = recDotDict()
           mention.raw = ' '.join(b.text.flat[mention_start:mention_end+1])
           mention.flat_position = (mention_start, mention_end)
+          predicted_mentions.append(mention)
         else:
           continue
         if subj_rel_id != vocab.rel.UNK_ID:
@@ -583,14 +555,18 @@ class WikiP2DRelExDataset(WikiP2DGraphDataset):
           })
           predicted_triples.objective.append(
             [mention, rel, query])
-      all_gold_triples.append(gold_triples)
-      all_predicted_triples.append(predicted_triples)
-      _id = '<%04d>' % (i)
+      triples.gold.append(gold_triples)
+      triples.prediction.append(predicted_triples)
+      mentions.gold.append(gold_mentions)
+      mentions.prediction.append(predicted_mentions)
+      _id = BOLD + '<%04d>' % (i) + RESET
       print (_id)
-      self_class.print_example(b, vocab, prediction=predicted_triples)
+      self_class.print_example(
+        b, vocab, prediction=[predicted_triples, predicted_mentions])
       print ('')
-    return all_gold_triples, all_predicted_triples
-
+    return triples, mentions
+    #return all_gold_triples, all_predicted_triples
+  
   @classmethod
   def decorate_text(self_class, example, vocab, prediction=None):
     '''
@@ -608,6 +584,8 @@ class WikiP2DRelExDataset(WikiP2DGraphDataset):
       gold_mention_positions = set(flatten([
         [j for j in range(begin, end+1)]
         for begin, end in example.mentions.flat_position]))
+      if PAD_ID in gold_mention_positions:
+        gold_mention_positions.remove(PAD_ID)
 
       if i in query_positions:
         text[i] = MAGENTA + text[i]
@@ -618,14 +596,19 @@ class WikiP2DRelExDataset(WikiP2DGraphDataset):
 
   @classmethod
   def print_example(self_class, example, vocab, prediction=None):
+    SPACE = '  '
     def extract(position, text):
       return ' '.join(text[position[0]:position[1]+1])
+
+    def print_mentions(mentions, text):
+      mentions_str = ', '.join([extract(m.flat_position, text) for m in mentions if m.flat_position != (PAD_ID, PAD_ID)])
+      print(SPACE + mentions_str)
 
     def print_triples(triples, text):
       for s, r, o in triples:
         triple_str = ', '.join([extract(s.flat_position, text), r.name, 
                                 extract(o.flat_position, text)])
-        print(triple_str)
+        print(SPACE + triple_str)
       if not triples:
         print()
 
@@ -633,17 +616,20 @@ class WikiP2DRelExDataset(WikiP2DGraphDataset):
       print('<Title>', example.title.raw)
     decorated_text = self_class.decorate_text(example, vocab, prediction)
     print('<Text>')
-    print(' '.join(decorated_text))
+    print(SPACE + ' '.join(decorated_text))
     print('<Triples (Query-subj)>')
     print_triples(example.triples.subjective, decorated_text)
     print('<Triples (Query-obj)>')
     print_triples(example.triples.objective, decorated_text)
 
     if prediction is not None:
+      triples, mentions = prediction
+      print('<Mention Candidates>')
+      print_mentions(mentions, decorated_text)
       print('<Predictions (Query-subj)>')
-      print_triples(prediction.subjective, decorated_text)
+      print_triples(triples.subjective, decorated_text)
       print('<Predictions (Query-obj)>')
-      print_triples(prediction.objective, decorated_text)
+      print_triples(triples.objective, decorated_text)
       pass
 
 class WikiP2DDescDataset(DatasetBase):

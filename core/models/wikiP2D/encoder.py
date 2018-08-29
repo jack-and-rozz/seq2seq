@@ -102,8 +102,8 @@ class WordEncoder(ModelBase):
 
       cnn_outputs = cnn(
         flattened_char_repls,
-        filter_sizes=self.cnn_filter_widths,
-        num_filters=self.cnn_filter_size,
+        filter_widths=self.cnn_filter_widths,
+        filter_size=self.cnn_filter_size,
       ) # [flattened_batch_size, cnn_output_size]
       outputs = tf.reshape(cnn_outputs, other_shapes + [shape(cnn_outputs, -1)]) # [*, cnn_output_size]
       outputs = tf.nn.dropout(outputs, self.keep_prob)

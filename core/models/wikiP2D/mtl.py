@@ -15,7 +15,7 @@ from core.models.wikiP2D.encoder import SentenceEncoder, WordEncoder, MultiEncod
 from core.models.wikiP2D.gen_desc.gen_desc import DescriptionGeneration
 from core.models.wikiP2D.category.category import CategoryClassification
 from core.models.wikiP2D.graph.graph import GraphLinkPrediction
-from core.models.wikiP2D.graph.graph_noobj import GraphLinkPredictionNoObj
+from core.models.wikiP2D.relex.relex_base import RelationExtraction
 from core.models.wikiP2D.coref.coref import CoreferenceResolution
 from core.models.wikiP2D.adversarial import TaskAdversarial
 
@@ -23,7 +23,7 @@ available_models = [
   CategoryClassification,
   DescriptionGeneration,
   GraphLinkPrediction,
-  GraphLinkPredictionNoObj,
+  RelationExtraction,
   CoreferenceResolution,
   TaskAdversarial,
 ]
@@ -159,9 +159,10 @@ class BatchIterative(MTLManager):
           if task_model.debug_ops:
             for ops, res in zip(task_model.debug_ops, 
                                 self.sess.run(task_model.debug_ops, input_feed)):
-              print(ops, res.shape)
+              #print(ops, res.shape)
+              print(ops)
               print(res)
-            exit(1)
+            #exit(1)
           output_feed = [task_model.loss]
           if is_training:
             output_feed.append(self.updates[task_name])

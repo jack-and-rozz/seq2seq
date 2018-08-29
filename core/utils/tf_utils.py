@@ -81,21 +81,21 @@ def linear(inputs, output_size=None,
     #if out_keep_prob is not None and out_keep_prob < 1.0:
     return outputs
 
-def cnn(inputs, filter_sizes=[3, 4, 5], num_filters=50, scope=None):
+def cnn(inputs, filter_widths=[3, 4, 5], filter_size=50, scope=None):
   num_words = shape(inputs, 0)
   num_chars = shape(inputs, 1)
   input_size = shape(inputs, 2)
   outputs = []
   with tf.variable_scope(scope or 'CNN'):
-    for i, filter_size in enumerate(filter_sizes):
-      with tf.variable_scope("conv_width{}".format(filter_size)):
-        w = tf.get_variable("w", [filter_size, input_size, num_filters])
-        b = tf.get_variable("b", [num_filters])
-      conv = tf.nn.conv1d(inputs, w, stride=1, padding="VALID") # [num_words, num_chars - filter_size, num_filters]
-      h = tf.nn.relu(tf.nn.bias_add(conv, b)) # [num_words, num_chars - filter_size, num_filters]
-      pooled = tf.reduce_max(h, 1) # [num_words, num_filters]
+    for i, filter_width in enumerate(filter_widths):
+      with tf.variable_scope("conv_width{}".format(filter_width)):
+        w = tf.get_variable("w", [filter_width, input_size, filter_size])
+        b = tf.get_variable("b", [filter_size])
+      conv = tf.nn.conv1d(inputs, w, stride=1, padding="VALID") # [num_words, num_chars - filter_width, filter_size]
+      h = tf.nn.relu(tf.nn.bias_add(conv, b)) # [num_words, num_chars - filter_width, filter_size]
+      pooled = tf.reduce_max(h, 1) # [num_words, filter_size]
       outputs.append(pooled)
-  return tf.concat(outputs, 1) # [num_words, num_filters * len(filter_sizes)]
+  return tf.concat(outputs, 1) # [num_words, filter_size * len(filter_widths)]
 
 def ffnn(inputs, num_hidden_layers, hidden_size, output_size, dropout, output_weights_initializer=None):
   if len(inputs.get_shape()) > 2:

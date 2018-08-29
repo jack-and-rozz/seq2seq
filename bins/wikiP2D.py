@@ -106,6 +106,8 @@ class ExperimentManager(ManagerBase):
     task_name = [k for k in self.config.tasks][0]
     batches = self.dataset[task_name].train.get_batch(
       self.config.tasks[task_name].batch_size, do_shuffle=True)
+    print(self.vocab.rel.rev_names)
+    exit(1)
     rels = []
     for i, batch in enumerate(batches):
       for j, b in enumerate(common.flatten_batch(batch)):
@@ -199,6 +201,7 @@ class ExperimentManager(ManagerBase):
       save_as_best = self.test(model=m, target_tasks=[task])
       self.save_model(m, save_as_best=save_as_best)
 
+  @common.timewatch()
   def test(self, model=None, target_tasks=None):
     '''
     Args:

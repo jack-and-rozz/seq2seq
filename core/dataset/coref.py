@@ -9,8 +9,8 @@ from collections import OrderedDict, defaultdict, Counter
 #from tensorflow.keras.preprocessing.sequence import pad_sequences
 
 from tensorflow.python.platform import gfile
-from core.dataset.base import DatasetBase
-from core.vocabulary.base import _UNK, PAD_ID, fill_empty_brackets
+from core.dataset.base import DatasetBase, fill_empty_brackets
+from core.vocabulary.base import _UNK, PAD_ID
 from core.utils.common import dotDict, flatten, pad_sequences
 
 def load_data(fpath):

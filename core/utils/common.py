@@ -1,6 +1,6 @@
 # -*- coding:utf-8 -*-
 #from __future__ import print_function
-import sys, os, time, re, math, collections
+import sys, os, time, re, math, collections, json
 import numpy as np
 import itertools
 from itertools import chain
@@ -249,6 +249,15 @@ def logManager(logger_name='main',
 ############################################
 #        File reading
 ############################################
+
+def read_jsonlines(source_path, max_rows=0):
+  data = []
+  for i, l in enumerate(open(source_path)):
+    if max_rows and i >= max_rows:
+      break
+    d = recDotDict(json.loads(l))
+    data.append(d)
+  return data
 
 def read_file(file_path, type_f=str, do_flatten=False, replace_patterns=None,
               do_tokenize=True, delim=' ', max_rows=None):
