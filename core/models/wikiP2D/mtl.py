@@ -12,7 +12,7 @@ from core.models.base import ModelBase, ManagerBase
 #import core.models.graph as graph
 #import core.models.wikiP2D.encoder as encoder
 from core.models.wikiP2D.encoder import SentenceEncoder, WordEncoder, MultiEncoderWrapper
-from core.models.wikiP2D.gen_desc.gen_desc import DescriptionGeneration
+from core.models.wikiP2D.desc.desc import DescriptionGeneration
 from core.models.wikiP2D.category.category import CategoryClassification
 from core.models.wikiP2D.graph.graph import GraphLinkPrediction
 from core.models.wikiP2D.relex.relex_base import RelationExtraction

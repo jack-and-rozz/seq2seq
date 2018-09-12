@@ -223,6 +223,7 @@ class ExperimentManager(ManagerBase):
         valid_score, valid_summary = task_model.test(batches, mode, 
                                                      self.logger, output_path)
         self.summary_writer.add_summary(valid_summary, m.epoch.eval())
+        self.logger.info("Epoch %d (valid): %s score = (%.3f): " % (m.epoch.eval(), task_name, valid_score))
 
         if valid_score > task_model.max_score.eval():
           save_as_best[i] = True
@@ -248,38 +249,9 @@ class ExperimentManager(ManagerBase):
         batches = self.get_batch(mode)[task_name]
         output_path = self.tests_path + '/%s_%s.best' % (task_name, mode)
         test_score, _ = task_model.test(batches, mode, self.logger, output_path)
+        self.logger.info("Epoch %d (test): %s score = (%.3f): " % (m.epoch.eval(), task_name, test_score))
+
       return False
-
-  # def g_test_as_valid(self, m):
-  #   save_as_best = False
-  #   # Do validation.
-  #   valid_graph_f1 = self.g_test(model=m, use_test_data=False, 
-  #                                add_summary=True)
-  #   valid_max_graph_f1 = m.tasks.graph.max_score.eval()
-  #   if valid_graph_f1 > valid_max_graph_f1:
-  #     self.logger.info("Epoch %d (valid): graph max f1 update (%.3f->%.3f): " % (m.epoch.eval(), valid_max_graph_f1, valid_graph_f1))
-  #     m.tasks.graph.update_max_score(valid_graph_f1)
-  #     save_as_best = True
-
-  #   # Do testing. (only for analysis)
-  #   test_graph_f1 = self.g_test(model=m, use_test_data=True, 
-  #                               add_summary=True)
-  #   return save_as_best
-
-  # def c_test_as_valid(self, m):
-  #   save_as_best = False
-  #   # Do validation.
-  #   valid_coref_f1 = self.c_test(model=m, use_test_data=False, add_summary=True)
-  #   valid_coref_f1 = sum(valid_coref_f1) / len(valid_coref_f1)
-  #   valid_max_coref_f1 = m.tasks.coref.max_score.eval()
-  #   if valid_coref_f1 > valid_max_coref_f1:
-  #     self.logger.info("Epoch %d (valid): coref max f1 update (%.3f->%.3f): " % (m.epoch.eval(), valid_max_coref_f1, valid_coref_f1))
-  #     save_as_best = True
-  #     m.tasks.coref.update_max_score(valid_coref_f1)
-
-  #   # Do testing. (only for analysis)
-  #   test_coref_f1 = self.c_test(model=m, use_test_data=True, add_summary=True)
-  #   return save_as_best
 
   def save_model(self, model, save_as_best=False):
     checkpoint_path = self.checkpoints_path + '/model.ckpt'
@@ -294,49 +266,6 @@ class ExperimentManager(ManagerBase):
           os.system(cmd)
 
 
-  # def c_test(self, model=None, use_test_data=True, add_summary=False): 
-  #   if 'coref' not in self.config.tasks:
-  #     sys.stderr.write('No coreference model in config.\n')
-  #     return None
-  #   m = model
-  #   mode = 'test' if use_test_data else 'valid'
-  #   conll_eval_path = os.path.join(
-  #     self.config.tasks.coref.dataset.source_dir, 
-  #     self.config.tasks.coref.dataset['%s_gold' % mode]
-  #   )
-  #   if not m:
-  #     best_ckpt = os.path.join(self.checkpoints_path, BEST_CHECKPOINT_NAME)
-  #     m = self.create_model(self.config, mode, checkpoint_path=best_ckpt)
-  #   else:
-  #     best_ckpt = None
-
-  #   batches = self.get_batch(mode)['coref']
-
-  #   if best_ckpt and os.path.exists(best_ckpt + '.index'):
-  #     output_path = self.tests_path + '/c_%s.best' % (mode)
-  #   else:
-  #     output_path = self.tests_path + '/c_%s.ep%02d' % (mode, m.epoch.eval())
-
-  #   with open(output_path + '.stat', 'w') as f:
-  #     sys.stdout = f
-  #     eval_summary, f1, results = m.tasks.coref.test(
-  #       batches, conll_eval_path, mode)
-  #     sys.stdout = sys.__stdout__
-
-  #   muc_f1, bcub_f1, ceaf_f1 = f1
-  #   self.logger.info("Epoch %d (%s): MUC, B^3, Ceaf, ave_f1 = (%.3f, %.3f, %.3f, %.3f): " % (m.epoch.eval(), mode, muc_f1, bcub_f1, ceaf_f1, sum(f1)/len(f1)))
-
-  #   if add_summary:
-  #     self.summary_writer.add_summary(eval_summary, m.epoch.eval())
-  #   with open(output_path + '.detail', 'w') as f:
-  #     sys.stdout = f
-  #     m.tasks.coref.print_results(results)
-  #     sys.stdout = sys.__stdout__
-
-  #   sys.stderr.write("Output the predicted and gold clusters to \'{}\' .\n".format(output_path))
-  #   return f1
-
-
   def c_demo(self):
     port = self.port
     max_checkpoint_path = os.path.join(self.checkpoints_path, "model.cmax.ckpt")
@@ -348,31 +277,6 @@ class ExperimentManager(ManagerBase):
     eval_data = [d for d in self.get_batch('valid')['coref']]
     run_model(m, eval_data, port)
 
-  # def g_test(self, model=None, use_test_data=True, add_summary=False):
-  #   if 'graph' not in self.config.tasks:
-  #     sys.stderr.write('No wikiP2D model in config.\n')
-  #     return 
-
-  #   m = model
-  #   mode = 'test' if use_test_data else 'valid'
-
-  #   best_ckpt = None
-  #   if not m:
-  #     best_ckpt = os.path.join(self.checkpoints_path, BEST_CHECKPOINT_NAME)
-  #     m = self.create_model(self.config, mode, checkpoint_path=best_ckpt)
-
-  #   batches = self.get_batch(mode)['graph']
-  #   if best_ckpt and os.path.exists(best_ckpt + '.index'):
-  #     output_path = self.tests_path + '/g_%s.best' % (mode)
-  #   else:
-  #     output_path = self.tests_path + '/g_%s.ep%02d' % (mode, m.epoch.eval())
-  #   (acc, precision, recall), summary = m.tasks.graph.test(
-  #     batches, mode, output_path=output_path)
-  #   self.logger.info("Epoch %d (%s): accuracy, precision, recall, f1 = (%.3f, %.3f, %.3f, %.3f): " % (m.epoch.eval(), mode, acc, precision, recall, (precision+recall)/2)) 
-  #   if add_summary:
-  #     self.summary_writer.add_summary(summary, m.epoch.eval())
-  #   return (precision + recall) / 2
-  
   def g_demo(self):
     m = self.create_model(self.self.config)
 

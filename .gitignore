@@ -2,6 +2,7 @@ checkpoints
 tmp
 tensorflow
 *.pyc
+embeddings/*
 dataset/*
 .#*
 .fuse*

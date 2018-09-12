@@ -46,19 +46,6 @@ def normalize_vector(v):
     return v
 
 
-############################################
-#       Dump Data
-############################################
-def load_or_create(processed_path, func, *args):
-  print (processed_path)
-  if not os.path.exists(processed_path):
-    data = func(*args)
-    pickle.dump(data, open(processed_path, 'wb'))
-  else:
-    data = pickle.load(open(processed_path, "rb"))
-  return data
-
-
 
 ############################################
 #        Dictionary
@@ -245,19 +232,46 @@ def logManager(logger_name='main',
     logger.addHandler(handler)
     return logger
 
+############################################
+#       Dump Data
+############################################
 
-############################################
-#        File reading
-############################################
+def load_or_create(processed_path, func, *args):
+  print (processed_path)
+  if not os.path.exists(processed_path):
+    data = func(*args)
+    pickle.dump(data, open(processed_path, 'wb'))
+  else:
+    data = pickle.load(open(processed_path, "rb"))
+  return data
+
+def dump_as_json(entities, file_path, as_jsonlines=True):
+  if as_jsonlines:
+    if os.path.exists(file_path):
+      os.system('rm %s' % file_path)
+    with open(file_path, 'a') as f:
+      for entity in entities.values():
+        json.dump(entity, f, ensure_ascii=False)
+        f.write('\n')
+  else:
+    with open(file_path, 'w') as f:
+      json.dump(entities, f, indent=4, ensure_ascii=False)
 
 def read_jsonlines(source_path, max_rows=0):
-  data = []
+  data = []#collections.OrderedDict()
   for i, l in enumerate(open(source_path)):
     if max_rows and i >= max_rows:
       break
     d = recDotDict(json.loads(l))
     data.append(d)
+    #data[d.qid] = d
   return data
+
+
+def read_json(source_path):
+  data = json.load(open(source_path)) 
+  return recDotDict(data)
+
 
 def read_file(file_path, type_f=str, do_flatten=False, replace_patterns=None,
               do_tokenize=True, delim=' ', max_rows=None):
