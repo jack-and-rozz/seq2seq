@@ -156,6 +156,7 @@ class ExperimentManager(ManagerBase):
       batches = self.get_batch('train')
       self.logger.info("Epoch %d: Start" % epoch)
       epoch_time, train_loss, summary = m.train(batches)
+      self.summary_writer.add_summary(summary, m.epoch.eval())
       self.logger.info("Epoch %d (train): epoch-time %.2f, loss %s" % (epoch, epoch_time, " ".join(["%.3f" % l for l in train_loss])))
 
       batches = self.get_batch('valid')

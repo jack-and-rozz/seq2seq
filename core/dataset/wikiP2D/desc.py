@@ -23,19 +23,12 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
     return article
 
   def article2entries(self, article):
-    if not (article.category and article.contexts):
-      return []
-
     entry = recDotDefaultDict()
     entry.title.raw = article.title
     desc = article.desc.split()
     entry.desc.raw = desc
     entry.desc.word = self.vocab.word.sent2ids(desc)
 
-    entry.category.raw = article.category
-    entry.category.label = self.vocab.category.token2id(article.category)
-    if entry.category.label == self.vocab.category.token2id(_UNK):
-      return []
     entry.contexts.raw = []
     entry.contexts.word = []
     entry.contexts.char = []

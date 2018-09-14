@@ -320,7 +320,7 @@ class SentenceEncoder(ModelBase):
             mention_head_scores = batch_gather(head_scores, mention_indices) # [num_mentions, max_mention_width, 1]
             mention_mask = tf.expand_dims(tf.sequence_mask(mention_width, max_mention_width, dtype=tf.float32), 2) # [num_mentions, max_mention_width, 1]
 
-            mention_attention = tf.nn.softmax(mention_head_scores + tf.log(mention_mask), dim=1) # [num_mentions, max_mention_width, 1]
+            mention_attention = tf.nn.softmax(mention_head_scores + tf.log(mention_mask), axis=1) # [num_mentions, max_mention_width, 1]
 
             mention_head_emb = tf.reduce_sum(mention_attention * mention_text_emb, 1) # [num_mentions, emb]
             mention_emb_list.append(mention_head_emb)

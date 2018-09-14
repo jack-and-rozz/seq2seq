@@ -64,7 +64,6 @@ class CustomLSTMCell(tf.contrib.rnn.RNNCell):
     with tf.variable_scope(scope or type(self).__name__, reuse=self._reuse): # "CustomLSTMCell"
       with tf.variable_scope('preprocess'):
         inputs = coref_util.projection(inputs, 3 * self.output_size)
-
       c, h = state
       #h *= self._dropout_mask
       h = tf.nn.dropout(h, self._dropout)
