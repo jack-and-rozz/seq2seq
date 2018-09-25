@@ -69,23 +69,18 @@ class DescriptionGeneration(ModelBase):
       word_repls = encoder.word_encoder.word_encode(self.ph.text.word)
       char_repls = encoder.word_encoder.char_encode(self.ph.text.char)
       enc_inputs = [word_repls, char_repls]
-      dbgprint(enc_inputs)
       # Encode input text
       enc_inputs, enc_outputs, enc_state = self.encoder.encode(enc_inputs, 
                                                                enc_sentence_length)
-      dbgprint(enc_state)
-      dbgprint(enc_outputs)
+      self.adv_outputs = enc_outputs
+
       mention_starts, mention_ends = tf.unstack(self.ph.link, axis=-1)
       mention_repls, head_scores = encoder.get_batched_mention_emb(
         enc_inputs, enc_outputs, mention_starts, mention_ends) # [batch_size, max_n_contexts, mention_size]
-      dbgprint(mention_starts)
-      dbgprint(mention_ends)
-      dbgprint(mention_repls)
+
       # Aggregate context representations.
       init_state = tf.reduce_sum(mention_repls, axis=1)
       init_state = init_state / tf.expand_dims(enc_context_length, -1)
-      dbgprint(init_state)
-      dbgprint(enc_context_length)
 
       self.logits, self.predictions = self.setup_decoder(
         init_state, dec_input_tokens, dec_input_lengths, dec_output_lengths)
@@ -97,7 +92,7 @@ class DescriptionGeneration(ModelBase):
       self.loss = tf.contrib.seq2seq.sequence_loss(
         self.logits, dec_output_tokens, dec_output_weights,
         average_across_timesteps=True, average_across_batch=True)
-      self.debug_ops = [self.ph.text.word, enc_sentence_length, enc_context_length]
+      #self.debug_ops = [self.ph.text.word, enc_sentence_length, enc_context_length]
 
   def setup_decoder(self, init_state, dec_input_tokens, 
                     dec_input_lengths, dec_output_lengths):
@@ -166,7 +161,7 @@ class DescriptionGeneration(ModelBase):
       sys.stderr.write("Output the testing results to \'{}\' .\n".format(output_path))
     sys.stdout = sys.__stdout__
     summary_dict = {}
-    summary_dict['category/%s/BLEU' % mode] = bleu
+    summary_dict['desc/%s/BLEU' % mode] = bleu
     summary = make_summary(summary_dict)
     return bleu, summary
 

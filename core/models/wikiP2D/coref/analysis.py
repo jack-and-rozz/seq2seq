@@ -51,7 +51,7 @@ def get_statistics(results_by_mention_groups, word_vocab):
     # All pronouns are supposed to be in vocabulary.
     statistics[category]['pronoun'] += n_pronoun
     statistics[category]['all known'] += len(mention_group) - n_pronoun - n_partially_unk - n_all_unk
-    statistics[category]['partially unk'] += n_partially_unk
+    statistics[category]['part unk'] += n_partially_unk
     statistics[category]['all unk'] += n_all_unk
     statistics[category]['overall'] += len(mention_group)
 
@@ -64,7 +64,7 @@ def get_statistics(results_by_mention_groups, word_vocab):
         statistics[key] = OrderedDict([
           ('pronoun', 0),
           ('all known', 0),
-          ('partially unk', 0),
+          ('part unk', 0),
           ('all unk', 0),
           ('overall', 0),
         ])

@@ -45,6 +45,7 @@ class TaskAdversarial(ModelBase):
       # if self.encoder.cbase:
       #   inputs.append(t.text_ph.char)
 
+      print('adv_outputs', t, t.adv_outputs)
       if isinstance(t.encoder, MultiEncoderWrapper):
         # Split the encoders' represantions into the task-shared and the task-private.
         assert len(t.adv_outputs.get_shape()) == 3 # [*, max_sentence_length, hidden_size]

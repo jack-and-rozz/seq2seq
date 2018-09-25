@@ -60,7 +60,7 @@ class _CoNLL2012CorefDataset(object):
         'clusters': jsonline['clusters'],
         'genre': self.genre_vocab.token2id(jsonline['doc_key'][:2]), # wb
         'doc_key': jsonline['doc_key'], # wb/c2e/00/c2e_0022_0 (not symbolized)
-        'speakers': speaker_ids,
+        'speakers':speaker_ids,
       }
       return record
     res = [_symbolize(jsonline) for jsonline in data]

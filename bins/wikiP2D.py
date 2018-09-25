@@ -5,24 +5,19 @@ from pprint import pprint
 import tensorflow as tf
 import numpy as np
 
-from base import ManagerBase
+from bins.base import ManagerBase
 from core.utils import common, tf_utils
 import core.dataset 
 import core.models.wikiP2D.mtl as mtl_model
 from core.models.wikiP2D.coref.demo import run_model
 from core.vocabulary.base import VocabularyWithEmbedding, PredefinedCharVocab
-from tensorflow.contrib.tensorboard.plugins import projector
-
-from core.models.wikiP2D.category.evaluation import print_example
 
 BEST_CHECKPOINT_NAME = 'model.ckpt.best'
-
 class ExperimentManager(ManagerBase):
   @common.timewatch()
   def __init__(self, args, sess):
     super().__init__(args, sess)
     self.config = config = self.load_config(args)
-    self.port = args.port
     self.vocab = common.dotDict()
     self.model = None
 
@@ -69,8 +64,10 @@ class ExperimentManager(ManagerBase):
     return batches
 
   @common.timewatch()
-  def create_model(self, config, checkpoint_path=None):
+  def create_model(self, config, load_best=False):
     mtl_model_type = getattr(mtl_model, config.model_type)
+    checkpoint_path = os.path.join(self.checkpoints_path, BEST_CHECKPOINT_NAME) if load_best else None
+
     if not self.model:
       self.model = m = mtl_model_type(self.sess, config, self.vocab) # Define computation graph
 
@@ -135,9 +132,9 @@ class ExperimentManager(ManagerBase):
   def train(self):
     model = self.create_model(self.config)
     if model.epoch.eval() == 0:
+      self.logger.info('<Dataset size>')
       for task_name, d in self.dataset.items():
         train_size, dev_size, test_size = d.size
-        self.logger.info('<Dataset size>')
         self.logger.info('%s: %d, %d, %d' % (task_name, train_size, dev_size, test_size))
     if isinstance(model, mtl_model.OneByOne):
       self.train_one_by_one(model)
@@ -164,7 +161,7 @@ class ExperimentManager(ManagerBase):
       self.summary_writer.add_summary(summary, m.epoch.eval())
       self.logger.info("Epoch %d (valid): epoch-time %.2f, loss %s" % (epoch, epoch_time, " ".join(["%.3f" % l for l in valid_loss])))
 
-      save_as_best = self.test(m)
+      save_as_best = self.test_for_valid(m)
       self.save_model(m, save_as_best=save_as_best)
       m.add_epoch()
 
@@ -189,70 +186,72 @@ class ExperimentManager(ManagerBase):
     task = m.tasks.keys()[1]
     for i in range(m.epoch.eval(), int(self.config.max_epoch/2)):
       _run_task(m, task)
-      save_as_best = self.test(model=m, target_tasks=[task])
+      save_as_best = self.test_for_valid(model=m, target_tasks=[task])
       self.save_model(m, save_as_best=save_as_best)
 
     # Load a model with the best score of WikiP2D task. 
-    best_ckpt = os.path.join(self.checkpoints_path, BEST_CHECKPOINT_NAME)
-    m = self.create_model(self.config, checkpoint_path=best_ckpt)
+    m = self.create_model(self.config, load_best=True)
 
     task = m.tasks.keys()[0]
     for epoch in range(m.epoch.eval(), self.config.max_epoch):
       _run_task(m, task)
-      save_as_best = self.test(model=m, target_tasks=[task])
+      save_as_best = self.test_for_valid(model=m, target_tasks=[task])
       self.save_model(m, save_as_best=save_as_best)
 
   @common.timewatch()
-  def test(self, model=None, target_tasks=None):
+  def test_for_valid(self, model, target_tasks=None):
     '''
-    Args:
+    This is a function to show the performance of the model in each epoch.
+    If you'd like to run testing again in a different setting from terminal, execute test().
+
+    <Args>
     - model:
     - target_tasks:
+    <Return>
+    - A boolean, which shows whether the score of the first task in this epoch becomes higher or not.
     '''
     m = model
 
-    if m: # in training
-      tasks = OrderedDict(
-        [(k, v) for k, v in m.tasks.items() 
-         if (not target_tasks or k in target_tasks) and k != 'adversarial'])
-      epoch = m.epoch.eval()
-      save_as_best = [False for t in tasks]
-      for i, (task_name, task_model) in enumerate(tasks.items()):
-        mode = 'valid'
-        batches = self.get_batch(mode)[task_name]
-        output_path = self.tests_path + '/%s_%s.%02d' % (task_name, mode, epoch)
-        valid_score, valid_summary = task_model.test(batches, mode, 
-                                                     self.logger, output_path)
-        self.summary_writer.add_summary(valid_summary, m.epoch.eval())
-        self.logger.info("Epoch %d (valid): %s score = (%.3f): " % (m.epoch.eval(), task_name, valid_score))
-
-        if valid_score > task_model.max_score.eval():
-          save_as_best[i] = True
-          self.logger.info("Epoch %d (valid): %s max score update (%.3f->%.3f): " % (m.epoch.eval(), task_name, task_model.max_score.eval(), valid_score))
-          task_model.update_max_score(valid_score)
-
-        mode = 'test'
-        batches = self.get_batch(mode)[task_name]
-        output_path = self.tests_path + '/%s_%s.%02d' % (task_name, mode, epoch)
-        test_score, test_summary = task_model.test(batches, mode, 
+    tasks = OrderedDict(
+      [(k, v) for k, v in m.tasks.items() 
+       if (not target_tasks or k in target_tasks) and k != 'adversarial'])
+    epoch = m.epoch.eval()
+    save_as_best = [False for t in tasks]
+    for i, (task_name, task_model) in enumerate(tasks.items()):
+      mode = 'valid'
+      batches = self.get_batch(mode)[task_name]
+      output_path = self.tests_path + '/%s_%s.%02d' % (task_name, mode, epoch)
+      valid_score, valid_summary = task_model.test(batches, mode, 
                                                    self.logger, output_path)
-        self.summary_writer.add_summary(test_summary, m.epoch.eval())
+      self.summary_writer.add_summary(valid_summary, m.epoch.eval())
+      self.logger.info("Epoch %d (valid): %s score = (%.3f): " % (m.epoch.eval(), task_name, valid_score))
 
-      # Currently update the best model by the score of the first task.
-      return save_as_best[0] 
+      if valid_score > task_model.max_score.eval():
+        save_as_best[i] = True
+        self.logger.info("Epoch %d (valid): %s max score update (%.3f->%.3f): " % (m.epoch.eval(), task_name, task_model.max_score.eval(), valid_score))
+        task_model.update_max_score(valid_score)
 
-    else:
       mode = 'test'
-      best_ckpt = os.path.join(self.checkpoints_path, BEST_CHECKPOINT_NAME)
-      m = self.create_model(self.config, checkpoint_path=best_ckpt)
-      tasks = OrderedDict([(k, v) for k, v in m.tasks.items() if not target_tasks or k in target_tasks])
-      for i, (task_name, task_model) in enumerate(tasks.items()):
-        batches = self.get_batch(mode)[task_name]
-        output_path = self.tests_path + '/%s_%s.best' % (task_name, mode)
-        test_score, _ = task_model.test(batches, mode, self.logger, output_path)
-        self.logger.info("Epoch %d (test): %s score = (%.3f): " % (m.epoch.eval(), task_name, test_score))
+      batches = self.get_batch(mode)[task_name]
+      output_path = self.tests_path + '/%s_%s.%02d' % (task_name, mode, epoch)
+      test_score, test_summary = task_model.test(batches, mode, 
+                                                 self.logger, output_path)
+      self.summary_writer.add_summary(test_summary, m.epoch.eval())
 
-      return False
+    # Currently update the best model by the score of the first task.
+    return save_as_best[0] 
+
+  @common.timewatch()
+  def test(self):
+    mode = 'test'
+    target_tasks = None
+    m = self.create_model(self.config, load_best=True)
+    tasks = OrderedDict([(k, v) for k, v in m.tasks.items() if not target_tasks or k in target_tasks])
+    for i, (task_name, task_model) in enumerate(tasks.items()):
+      batches = self.get_batch(mode)[task_name]
+      output_path = self.tests_path + '/%s_%s.best' % (task_name, mode)
+      test_score, _ = task_model.test(batches, mode, self.logger, output_path)
+      self.logger.info("Epoch %d (test): %s score = (%.3f): " % (m.epoch.eval(), task_name, test_score))
 
   def save_model(self, model, save_as_best=False):
     checkpoint_path = self.checkpoints_path + '/model.ckpt'
@@ -267,80 +266,20 @@ class ExperimentManager(ManagerBase):
           os.system(cmd)
 
 
-  def c_demo(self):
-    port = self.port
-    max_checkpoint_path = os.path.join(self.checkpoints_path, "model.cmax.ckpt")
-    ckpt_path = None
-    if os.path.exists(max_checkpoint_path + '.index'):
-      sys.stderr.write('Found a checkpoint {}.\n'.format(max_checkpoint_path))
-      ckpt_path = max_checkpoint_path
-    m = self.create_model(self.config, checkpoint_path=ckpt_path)
-    eval_data = [d for d in self.get_batch('valid')['coref']]
-    run_model(m, eval_data, port)
+  # def c_demo(self):
+  #   port = self.port
+  #   max_checkpoint_path = os.path.join(self.checkpoints_path, "model.cmax.ckpt")
+  #   ckpt_path = None
+  #   if os.path.exists(max_checkpoint_path + '.index'):
+  #     sys.stderr.write('Found a checkpoint {}.\n'.format(max_checkpoint_path))
+  #     ckpt_path = max_checkpoint_path
+  #   m = self.create_model(self.config, checkpoint_path=ckpt_path)
+  #   eval_data = [d for d in self.get_batch('valid')['coref']]
+  #   run_model(m, eval_data, port)
 
-  def g_demo(self):
-    m = self.create_model(self.self.config)
-
-    # for debug
-    parser = common.get_parser()
-    def get_inputs():
-      article = 'How about making the graph look nicer?'
-      link_span = (4, 4)
-      return article, link_span
-
-    def get_result(article, link_span):
-      article = " ".join(parser(article))
-      w_article = self.vocab.word.sent2ids(article)
-      c_article =  self.vocab.char.sent2ids(article)
-      p_triples = [(0, i) for i in range(10)]
-      batch = {
-        'w_articles': [w_article],
-        'c_articles': [c_article],
-        'link_spans': [link_span],
-        'p_triples': [p_triples], #self.dataset.graph.get_all_triples(),
-        'n_triples': None
-      }
-      demo_data = DemoBatch(batch)
-      results = m.test(demo_data, 1)[0][0]
-      results = common.flatten(results)
-      def id2text(r, o):
-        rid = self.vocab.rel.id2token(r)
-        rname = self.vocab.rel.id2name(r)
-        rr = "%s(%s)" % (rid, rname)
-        oid = self.vocab.obj.id2token(o)
-        oname = self.vocab.obj.id2name(o)
-        oo = "%s (%s)" % (oid, oname)
-        return (rr, oo)
-      return [(id2text(r, o), score) for (r, o), score in results]
-    print((get_result(*get_inputs())))
-    exit(1)
-    #inputs = get_inputs()
-    #print inputs
-    HOST = '127.0.0.1'
-    PORT = 50007
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind((HOST, PORT))
-    s.listen(1)
-    while True:
-      print('-----------------')
-      conn, addr = s.accept()
-      print(('Connected by', addr))
-      data = conn.recv(1024)
-      article, start, end = data.split('\t')
-      results = get_result(article, (int(start), int(end)))
-      print((results[:10]))
-      conn.send(str(results))
-      conn.close()
-    return
-
-
-class IterativeTrainer(ExperimentManager):
-  pass
 
 
 def main(args):
-  # if args.log_error:
-  #   sys.stderr = open(os.path.join(args.model_root_path, '%s.err'  % args.mode), 'w')
   tf_config = tf.ConfigProto(
     log_device_placement=False,
     allow_soft_placement=True, # GPU上で実行できない演算を自動でCPUに
@@ -350,12 +289,13 @@ def main(args):
   )
 
   with tf.Graph().as_default(), tf.Session(config=tf_config) as sess:
+    random.seed(0)
     tf.set_random_seed(0)
     manager = ExperimentManager(args, sess)
-    getattr(manager, args.mode)()
+    if mode:
+      getattr(manager, args.mode)()
 
 if __name__ == "__main__":
-  # Common arguments are defined in base.py
   desc = ""
   parser = argparse.ArgumentParser(description=desc)
   parser.add_argument('model_root_path', type=str, help ='')

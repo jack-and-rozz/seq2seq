@@ -296,29 +296,6 @@ class CoreferenceResolution(ModelBase):
       input_feed[self.ph.speaker_ids] = np.array(speaker_ids)
       input_feed[self.ph.genre] = np.array(genre)
 
-    ######### INPUT DEBUG
-    # if not is_training:
-    #   with open('feed_dict.txt', 'w') as f:
-    #     sys.stdout = f
-    #     for k, v in input_feed.items():
-    #       if re.search('w_sentences', k.name):
-    #         print k.name
-    #         print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, self.ph.text.word), input_feed)
-    #       else:
-    #         print k.name
-    #         print v
-    #     w = '_UNK'
-    #     w_id = self.encoder.vocab.word.token2id(w)
-    #     print w, w_id
-    #     print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, tf.constant(w_id)))
-    #     w = 'this'
-    #     w_id = self.encoder.vocab.word.token2id(w)
-    #     print w, w_id
-    #     print self.sess.run(tf.nn.embedding_lookup(self.encoder.w_embeddings, tf.constant(w_id)))
-    #     sys.stdout = sys.__stdout__
-    #   exit(1)
-    #########
-
     if is_training and len(w_sentences) > self.max_training_sentences:
       return self.truncate_example(input_feed)
     else:
@@ -587,6 +564,7 @@ class CoreferenceResolution(ModelBase):
                     for mention_type, n in cnt_by_mention_type.items()] 
     for category, cnt_by_mention_type in statistics.items()]
     data.append(['# Mentions'] + [x for x in n_mentions_by_type.values()])
+    pd.set_option("display.max_colwidth", 80)
     df = pd.DataFrame(data, columns=header).ix[:, header]
     df = df.set_index('Category')
     print ('<Mention group statistics>')

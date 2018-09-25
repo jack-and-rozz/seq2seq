@@ -188,10 +188,10 @@ class BatchIterative(MTLManager):
           pass
         except ValueError as e:
           print (e)
-          #print('subj.position\n', raw_batch.subj.position)
-          #print('obj.position\n', raw_batch.obj.position)
-          #print('text.raw\n', raw_batch.text.raw)
-          #print('text.word\n', raw_batch.text.word)
+          # print('subj.position\n', raw_batch.subj.position)
+          # print('obj.position\n', raw_batch.obj.position)
+          # print('text.raw\n', raw_batch.text.raw)
+          # print('text.word\n', raw_batch.text.word)
           # print('text.char\n', raw_batch.text.char)
           # print('rel.word\n', raw_batch.rel.word)
           # print('rel.char\n', raw_batch.rel.char)
@@ -238,7 +238,8 @@ class MeanLoss(MTLManager):
         break
 
       input_feed = self.get_input_feed(batch, is_training)
-      output_feed = self.losses
+      output_feed = []
+      output_feed += self.losses
       if is_training:
         output_feed.append(self.updates)
       t = time.time()

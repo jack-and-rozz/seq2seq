@@ -9,4 +9,5 @@ numpy
 pandas
 scipy
 seaborn
-tensorflow==1.2.1
+tqdm
+tensorflow==1.8.0
