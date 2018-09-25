@@ -7,7 +7,8 @@ import pandas as pd
 from pprint import pprint
 
 from core.utils import tf_utils
-from core.utils.common import RED, BLUE, GREEN, YELLOW, MAGENTA, CYAN, WHITE, BOLD, BLACK, UNDERLINE, RESET, flatten, dotDict, dbgprint, timewatch, recDotDefaultDict
+from core.utils.common import RED, BLUE, GREEN, YELLOW, MAGENTA, CYAN, WHITE, BOLD, BLACK, UNDERLINE, RESET
+from core.utils.common import dbgprint, flatten, dotDict, recDotDefaultDict, flatten_recdict
 from core.models.base import ModelBase
 from core.models.wikiP2D.coref import coref_ops, conll, metrics
 from core.models.wikiP2D.coref import util as coref_util
@@ -17,11 +18,12 @@ from collections import OrderedDict, defaultdict
 from copy import deepcopy
 
 class CoreferenceResolution(ModelBase):
-  def __init__(self, sess, config, encoder, activation=tf.nn.relu):
+  def __init__(self, sess, config, encoder, other_tasks, activation=tf.nn.relu):
     super().__init__(sess, config)
     self.sess = sess
     self.config = config
     self.encoder = encoder
+    self.other_tasks = other_tasks
 
     self.is_training = encoder.is_training
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
@@ -49,6 +51,7 @@ class CoreferenceResolution(ModelBase):
         shape=[None, None, None]) if self.encoder.cbase else None
 
       # TODO: truncate_exampleしたものをw_sentencesにfeedした時、何故かtruncate前の単語数を数えてしまう。とりあえずsentence_lengthを直接feed.
+
       #self.sentence_length = tf.count_nonzero(self.ph.text.word, axis=1, dtype=tf.int32)
       self.ph.sentence_length = tf.placeholder(tf.int32, shape=[None])
 
@@ -75,11 +78,16 @@ class CoreferenceResolution(ModelBase):
                                                    self.ph.sentence_length) 
     self.adv_outputs = text_outputs # for adversarial MTL, it must have the shape [batch_size]
 
-    
     with tf.name_scope('candidates_and_mentions'):
       flattened_text_emb, flattened_text_outputs, flattened_sentence_indices = self.flatten_doc_to_sent(text_emb, text_outputs, self.ph.sentence_length)
+    
       candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, mention_scores, mention_emb = self.get_mentions(
         flattened_text_emb, flattened_text_outputs, flattened_sentence_indices)
+
+      self.pred_mention_emb = mention_emb
+      self.gold_mention_emb = self.get_mention_emb(
+        flattened_text_emb, flattened_text_outputs, 
+        self.ph.gold_starts, self.ph.gold_ends)
 
     with tf.name_scope('antecedents'):
       antecedents, antecedent_scores, antecedent_labels = self.get_antecedents(
@@ -264,24 +272,22 @@ class CoreferenceResolution(ModelBase):
 
   def get_input_feed(self, batch, is_training):
     input_feed = {}
-    clusters = batch["clusters"]
-    c_sentences = np.array(batch['c_sentences'])
-    w_sentences = np.array(batch['w_sentences'])
-    speaker_ids = batch['speakers'] #flatten(batch['speakers'])
-    genre = batch["genre"]
+    for k, v in flatten_recdict(batch).items():
+      if type(v) == np.ndarray:
+        print(k, v.shape)
+      else:
+        print(k, v)
     ## Texts
     if self.encoder.cbase:
-      input_feed[self.ph.text.char] = c_sentences
-
+      input_feed[self.ph.text.char] = batch.text.char
     if self.encoder.wbase:
-      input_feed[self.ph.text.word] = w_sentences
-
-    input_feed[self.ph.sentence_length] = np.array([len([w for w in s if w != PAD_ID]) for s in w_sentences])
+      input_feed[self.ph.text.word] = batch.text.word
+    input_feed[self.ph.sentence_length] = batch.sentence_length
     ## Mention spans and their clusters
-    gold_mentions = sorted(tuple(m) for m in flatten(clusters))
+    gold_mentions = sorted(tuple(m) for m in flatten(batch.clusters))
     gold_mention_map = {m:i for i,m in enumerate(gold_mentions)}
     cluster_ids = np.zeros(len(gold_mentions))
-    for cluster_id, cluster in enumerate(clusters):
+    for cluster_id, cluster in enumerate(batch.clusters):
       for mention in cluster:
         cluster_ids[gold_mention_map[tuple(mention)]] = cluster_id
     gold_starts, gold_ends = self.tensorize_mentions(gold_mentions)
@@ -292,25 +298,22 @@ class CoreferenceResolution(ModelBase):
 
     ## Metadata
     input_feed[self.is_training] = is_training
-    if self.use_metadata:
-      input_feed[self.ph.speaker_ids] = np.array(speaker_ids)
-      input_feed[self.ph.genre] = np.array(genre)
+    input_feed[self.ph.speaker_ids] = batch.speakers
+    input_feed[self.ph.genre] = batch.genre
 
-    if is_training and len(w_sentences) > self.max_training_sentences:
+    if is_training and batch.text.word.shape[0] > self.max_training_sentences:
       return self.truncate_example(input_feed)
     else:
       return input_feed
 
   def truncate_example(self, input_feed):
-    # DEBUG
-    # print ('length of w_sentences', len(input_feed[self.ph.text.word]), sum([len([w for w in s if w != PAD_ID]) for s in input_feed[self.ph.text.word]]))
     max_training_sentences = self.max_training_sentences
     num_sentences = input_feed[self.ph.text.word].shape[0]
     assert num_sentences > max_training_sentences
 
     sentence_offset = random.randint(0, num_sentences - max_training_sentences)
-
-    sentence_length = np.array([len([w for w in sent if w != PAD_ID]) for sent in input_feed[self.ph.text.word]]) # Number of words except PAD in each sentence.
+    sentence_length = input_feed[self.ph.sentence_length]
+    #sentence_length = np.array([len([w for w in sent if w != PAD_ID]) for sent in input_feed[self.ph.text.word]]) # Number of words except PAD in each sentence.
 
     word_offset = sentence_length[:sentence_offset].sum() # The sum of the number of truncated words except PAD.
     num_words = sentence_length[sentence_offset:sentence_offset + max_training_sentences].sum()
@@ -386,11 +389,11 @@ class CoreferenceResolution(ModelBase):
       candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores = self.sess.run(self.outputs, feed_dict=feed_dict)
       self.evaluate_mentions(candidate_starts, candidate_ends, mention_starts, mention_ends, candidate_mention_scores, gold_starts, gold_ends, example, mention_evaluators)
       predicted_antecedents = self.get_predicted_antecedents(antecedents, antecedent_scores)
-      coref_predictions[example["doc_key"]] = self.evaluate_coref(mention_starts, mention_ends, predicted_antecedents, example["clusters"], coref_evaluator)
+      coref_predictions[example.doc_key] = self.evaluate_coref(mention_starts, mention_ends, predicted_antecedents, example.clusters, coref_evaluator)
 
-      results[example['doc_key']] = dotDict({
-        'raw_text': example['raw_text'],
-        'speakers': example['speakers'],
+      results[example.doc_key] = dotDict({
+        'raw_text': example.text.raw,
+        'speakers': example.speakers,
         'extracted_mentions': [(begin, end) for begin, end in zip(mention_starts, mention_ends)],
         'predicted_antecedents': predicted_antecedents
       })
@@ -436,7 +439,8 @@ class CoreferenceResolution(ModelBase):
     #return util.make_summary(summary_dict), average_f1, results
 
   def evaluate_mentions(self, candidate_starts, candidate_ends, mention_starts, mention_ends, mention_scores, gold_starts, gold_ends, example, evaluators):
-    text_length = sum(len(s) for s in example["w_sentences"])
+    #text_length = sum(len(s) for s in example["w_sentences"])
+    text_length = sum(len(s) for s in example.text.word)
     gold_spans = set(zip(gold_starts, gold_ends))
 
     if len(candidate_starts) > 0:
@@ -520,11 +524,12 @@ class CoreferenceResolution(ModelBase):
       ('No Antecedent (Anaphora)', GREEN),
       ('Not Extracted', CYAN),
       ('Incorrect Mention', BOLD),
-      ('Unknoun word', UNDERLINE),
+      ('Unknown word', UNDERLINE),
     ]
 
     print("<Colors>")
     print(', '.join([color + k + RESET for k, color in color_notations]))
+    print()
 
     results_by_mention_groups = []
     for i, (doc_key, result) in enumerate(results.items()):

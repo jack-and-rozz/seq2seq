@@ -1,10 +1,10 @@
 #coding: utf-8
 import sys, os, random, copy, socket, time, re, argparse
+sys.path.append(os.getcwd())
 from collections import OrderedDict
 from pprint import pprint
 import tensorflow as tf
 import numpy as np
-
 from bins.base import ManagerBase
 from core.utils import common, tf_utils
 import core.dataset 
@@ -292,8 +292,7 @@ def main(args):
     random.seed(0)
     tf.set_random_seed(0)
     manager = ExperimentManager(args, sess)
-    if mode:
-      getattr(manager, args.mode)()
+    getattr(manager, args.mode)()
 
 if __name__ == "__main__":
   desc = ""

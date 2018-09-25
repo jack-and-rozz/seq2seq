@@ -9,9 +9,9 @@ from collections import OrderedDict, defaultdict, Counter
 #from tensorflow.keras.preprocessing.sequence import pad_sequences
 
 from tensorflow.python.platform import gfile
-from core.dataset.base import DatasetBase, fill_empty_brackets
+from core.dataset.base import DatasetBase, padding
 from core.vocabulary.base import _UNK, PAD_ID
-from core.utils.common import dotDict, flatten, pad_sequences
+from core.utils.common import dotDict, recDotDict, recDotDefaultDict, batching_dicts, flatten, flatten_batch
 
 def load_data(fpath):
   sys.stderr.write("Loading coref dataset from \'%s\'... \n" % fpath)
@@ -39,103 +39,75 @@ class FeatureVocab(object):
     return [self.sent2ids(s) for s in para]
 
 class _CoNLL2012CorefDataset(object):
-  def __init__(self, data, w_vocab, c_vocab, genre_vocab):
-    self.w_vocab = w_vocab
-    self.c_vocab = c_vocab
+  def __init__(self, data, vocab, genre_vocab):
+    self.vocab = vocab
     self.genre_vocab = genre_vocab
-    self.data = self.symbolize(data)
+    self.data = self.preprocess(data)
     self.size = len(self.data)
 
-  def symbolize(self, data):
-    def _symbolize(jsonline):
-      ## Since what our model wants to know is whether each antecedent-mention pair is spoken by the same speaker, speaker_vocab is created every time only from those who are in the paragraph.
+  def preprocess(self, data):
+    def _preprocess(jsonline):
+      example = recDotDefaultDict()
+      example.text.raw = jsonline['sentences']
+      example.text.word = [self.vocab.word.sent2ids(l) for l in jsonline['sentences']]
+      example.text.char = [self.vocab.char.sent2ids(l) for l in jsonline['sentences']]
+      example.sentence_length = np.array([len([w for w in s if w != PAD_ID]) for s in example.text.word])
+
+      example.genre = self.genre_vocab.token2id(jsonline['doc_key'][:2]) 
+      example.doc_key = jsonline['doc_key'] # e.g. wb/c2e/00/c2e_0022_0 
+      example.clusters = jsonline['clusters']
+
+      # Assign unique IDs to each speaker, and the model checks whether a pair of two mentions is spoken by the same speaker or not.
       speakers = flatten(jsonline["speakers"])
       speaker_dict = { s:i for i,s in enumerate(set(speakers)) }
       speaker_ids = [speaker_dict[s] for s in speakers]
 
-      record = {
-        'raw_text': jsonline['sentences'],
-        'w_sentences': [self.w_vocab.sent2ids(l) for l in jsonline['sentences']],
-        'c_sentences': [self.c_vocab.sent2ids(l) for l in jsonline['sentences']],
-        'clusters': jsonline['clusters'],
-        'genre': self.genre_vocab.token2id(jsonline['doc_key'][:2]), # wb
-        'doc_key': jsonline['doc_key'], # wb/c2e/00/c2e_0022_0 (not symbolized)
-        'speakers':speaker_ids,
-      }
-      return record
-    res = [_symbolize(jsonline) for jsonline in data]
-    return res
+      example.speakers = speaker_ids
+      return example
+    return [_preprocess(jsonline) for jsonline in data]
 
-  def get_batch(self, batch_size, do_shuffle=False, n_batches=1):
+  def padding(self, batch):
+    # [batch_size, max_num_sent, max_num_word_in_sent]
+    batch.text.word = padding(
+      batch.text.word,
+      minlen = [None, None],
+      maxlen = [None, None]) 
+
+    # [batch_size, max_num_sent, max_num_word_in_sent, max_num_char_in_word]
+    batch.text.char = padding(
+      batch.text.char,
+      minlen = [None, None, None],
+      maxlen = [None, None, None]) 
+    batch.speaker_ids = padding(
+      batch.speakers, minlen=[None], maxlen=[None])
+    batch.genre = np.array(batch.genre)
+    return batch
+
+  def get_batch(self, batch_size, do_shuffle=False):
     '''
     '''
+    assert batch_size == 1 # The code by Li et.al cannot handle batched inputs.
     if do_shuffle:
       random.shuffle(self.data)
 
     for i, b in itertools.groupby(enumerate(self.data), 
-                                  lambda x: x[0] // (batch_size*n_batches)):
+                                  lambda x: x[0] // batch_size):
       raw_batch = [x[1] for x in b] # (id, data) -> data
-      batches = []
-      for j, b2 in itertools.groupby(enumerate(raw_batch), lambda x: x[0] // (len(raw_batch) // n_batches)):
-        batched_raw_data = [x[1] for x in b2]
-        batch = self.create_batch(batched_raw_data)
-        batches.append(batch)
-      if len(batches) == 1:
-        batches = batches[0]
-      yield batches
+      batch = self.tensorize(raw_batch)
+      batch = flatten_batch(batch)[0] # TODO
+      yield batch
 
-  def create_batch(self, data):
+  def tensorize(self, data):
     '''
     Args
     - data : A list of dictionary.
     '''
-    # TODO: batch_size is supposed to only be 1 in the original code.
-    if len(data) > 1:
-      raise NotImplementedError
-    else:
-      data = data[0]
-      data = dotDict(data)
-      data.w_sentences = self.w_padding(data.w_sentences)
-      data.c_sentences = self.c_padding(data.c_sentences)
-    return data
+    batch = recDotDefaultDict()
+    for d in data:
+      batch = batching_dicts(batch, d) # list of dictionaries to dictionary of lists.
+    batch = self.padding(batch)
+    return batch
 
-  def w_padding(self, inputs, max_sent_len=None):
-    _max_sent_len = max([len(sent) for sent in inputs])
-    if not max_sent_len or _max_sent_len < max_sent_len:
-      max_sent_len = _max_sent_len
-
-    padded_sentences = pad_sequences(
-      inputs, maxlen=max_sent_len, 
-      padding='post', truncating='post', value=PAD_ID)
-    return padded_sentences # [num_sentences, max_sent_len]
-
-  def c_padding(self, inputs, min_word_len=5, 
-                max_sent_len=None, max_word_len=None, ):
-    '''
-    Args:
-    - inputs: A list of 2d-array. Each element is a char-based sentence.
-              # [num_sentences, num_words, num_chars]
-    - min_word_len: The minimum number of characters. This must be equal or higher than CNN filter size used in model's encoder.
-    - max_sent_len: The maximum number of words.
-    - max_char_len: The maximum number of characters.
-    '''
-    _max_sent_len = max([len(sent) for sent in inputs])
-    if not max_sent_len or _max_sent_len < max_sent_len:
-      max_sent_len = _max_sent_len
-
-    _max_word_len = max([max([len(word) for word in sent]) for sent in inputs])
-    if not max_word_len or _max_word_len < max_word_len:
-      max_word_len = _max_word_len
-
-    # Because of the maximum window width of CNN.
-    if max_word_len < min_word_len:
-      max_word_len = min_word_len
-
-    padded_sentences = [fill_empty_brackets(sent, max_sent_len) for sent in inputs] 
-    padded_sentences = [pad_sequences(sent, maxlen=max_word_len, 
-                                      padding='post', truncating='post', 
-                                      value=PAD_ID) for sent in padded_sentences]
-    return padded_sentences # [num_sentences, max_sent_len, max_word_len]
 
 
 class CoNLL2012CorefDataset(DatasetBase):
@@ -156,7 +128,7 @@ class CoNLL2012CorefDataset(DatasetBase):
       raise ValueError('You have to prepare vocabularies in advance.')
 
 
-    # As this dataset is relatively small, we don't need to create processed (symbolized) files.
+    # As this dataset is relatively small, we don't need to store processed files.
     train_data = load_data(train_path)
     valid_data = load_data(valid_path)
     test_data = load_data(test_path)
@@ -164,7 +136,7 @@ class CoNLL2012CorefDataset(DatasetBase):
     genre_tokens = [d['doc_key'][:2] for d in train_data] # wb/c2e/00/c2e_0022_0 -> wb
     self.genre_vocab = FeatureVocab(genre_tokens)
 
-    self.train = _CoNLL2012CorefDataset(train_data, vocab.word, vocab.char, self.genre_vocab)
-    self.valid = _CoNLL2012CorefDataset(valid_data, vocab.word, vocab.char, self.genre_vocab)
-    self.test = _CoNLL2012CorefDataset(test_data, vocab.word, vocab.char, self.genre_vocab)
+    self.train = _CoNLL2012CorefDataset(train_data, vocab, self.genre_vocab)
+    self.valid = _CoNLL2012CorefDataset(valid_data, vocab, self.genre_vocab)
+    self.test = _CoNLL2012CorefDataset(test_data, vocab, self.genre_vocab)
 

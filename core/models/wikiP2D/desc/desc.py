@@ -16,91 +16,96 @@ START_TOKEN = PAD_ID
 END_TOKEN = PAD_ID
 
 class DescriptionGeneration(ModelBase):
-  def __init__(self, sess, config, encoder,
-               activation=tf.nn.relu):
+  def __init__(self, sess, config, encoder, other_tasks, activation=tf.nn.relu):
     """
     Args:
     """
     super(DescriptionGeneration, self).__init__(sess, config)
     self.config = config
-    self.dataset = config.dataset
     self.activation = activation
     self.encoder = encoder
+    self.other_tasks = other_tasks
+
     self.vocab = encoder.vocab
     self.w_embeddings = encoder.w_embeddings
     self.is_training = encoder.is_training
+    self.dataset = config.dataset
+    self.train_shared = config.train_shared
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
 
+    self.ph = self.setup_placeholders()
+
+    enc_sentence_length = tf.count_nonzero(self.ph.text.word, 
+                                           axis=-1, dtype=tf.int32)
+    enc_context_length =  tf.count_nonzero(enc_sentence_length, 
+                                           axis=-1, dtype=tf.float32)
+
+    word_repls = encoder.word_encoder.word_encode(self.ph.text.word)
+    char_repls = encoder.word_encoder.char_encode(self.ph.text.char)
+    enc_inputs = [word_repls, char_repls]
+    # Encode input text
+    enc_inputs, enc_outputs, enc_state = self.encoder.encode(
+      enc_inputs, enc_sentence_length, prop_gradients=self.train_shared)
+    self.adv_outputs = enc_outputs
+
+    mention_starts, mention_ends = tf.unstack(self.ph.link, axis=-1)
+    mention_repls, head_scores = encoder.get_batched_mention_emb(
+      enc_inputs, enc_outputs, mention_starts, mention_ends) # [batch_size, max_n_contexts, mention_size]
+
+    # Aggregate context representations.
+    init_state = tf.reduce_sum(mention_repls, axis=1)
+    init_state = init_state / tf.expand_dims(enc_context_length, -1)
+
+    # Add BOS and EOS to the decoder's inputs and outputs.
+    batch_size = shape(self.ph.target, 0)
+    with tf.name_scope('start_tokens'):
+      start_tokens = tf.tile(tf.constant([START_TOKEN], dtype=tf.int32), [batch_size])
+    with tf.name_scope('end_tokens'):
+      end_tokens = tf.tile(tf.constant([END_TOKEN], dtype=tf.int32), [batch_size])
+    dec_input_tokens = tf.concat([tf.expand_dims(start_tokens, 1), self.ph.target], axis=1)
+    dec_output_tokens = tf.concat([self.ph.target, tf.expand_dims(end_tokens, 1)], axis=1)
+
+    # Length of description + end_token (or start_token)
+    dec_input_lengths = dec_output_lengths = tf.count_nonzero(
+      self.ph.target, axis=1, dtype=tf.int32) + 1
+    self.logits, self.predictions = self.setup_decoder(
+      init_state, dec_input_tokens, dec_input_lengths, dec_output_lengths)
+
+    # Convert dec_output_lengths to binary masks
+    dec_output_weights = tf.sequence_mask(dec_output_lengths, dtype=tf.float32)
+
+    # Compute loss
+    self.loss = tf.contrib.seq2seq.sequence_loss(
+      self.logits, dec_output_tokens, dec_output_weights,
+      average_across_timesteps=True, average_across_batch=True)
+    #self.debug_ops = [self.ph.text.word, enc_sentence_length, enc_context_length]
+
+  def setup_placeholders(self):
     # Placeholders
     with tf.name_scope('Placeholder'):
-      self.ph = recDotDefaultDict()
+      ph = recDotDefaultDict()
       # encoder's placeholder
-      self.ph.text.word = tf.placeholder( 
+      ph.text.word = tf.placeholder( 
         tf.int32, name='text.word', shape=[None, None, None]) # [batch_size, n_max_contexts, n_max_word]
-      self.ph.text.char = tf.placeholder(
+      ph.text.char = tf.placeholder(
         tf.int32, name='text.char',
         shape=[None, None, None, None]) if self.encoder.cbase else None # [batch_size, n_max_contexts, n_max_word, n_max_char]
 
-      self.ph.link = tf.placeholder( 
+      ph.link = tf.placeholder( 
         tf.int32, name='link.position', shape=[None, None, 2]) # [batch_size, n_max_contexts, 2]
 
-      enc_sentence_length = tf.count_nonzero(self.ph.text.word, 
-                                             axis=-1, dtype=tf.int32)
-      enc_context_length =  tf.count_nonzero(enc_sentence_length, 
-                                             axis=-1, dtype=tf.float32)
-
       # decoder's placeholder
-      self.ph.target = tf.placeholder(
+      ph.target = tf.placeholder(
         tf.int32, name='descriptions', shape=[None, None])
-
-
-      # add start_token (end_token) to decoder's input (output).
-      batch_size = shape(self.ph.target, 0)
-      with tf.name_scope('start_tokens'):
-        start_tokens = tf.tile(tf.constant([START_TOKEN], dtype=tf.int32), [batch_size])
-      with tf.name_scope('end_tokens'):
-        end_tokens = tf.tile(tf.constant([END_TOKEN], dtype=tf.int32), [batch_size])
-      dec_input_tokens = tf.concat([tf.expand_dims(start_tokens, 1), self.ph.target], axis=1)
-      dec_output_tokens = tf.concat([self.ph.target, tf.expand_dims(end_tokens, 1)], axis=1)
-
-      # Length of description + end_token (or start_token)
-      dec_input_lengths = dec_output_lengths = tf.count_nonzero(
-        self.ph.target, axis=1, dtype=tf.int32) + 1
-      word_repls = encoder.word_encoder.word_encode(self.ph.text.word)
-      char_repls = encoder.word_encoder.char_encode(self.ph.text.char)
-      enc_inputs = [word_repls, char_repls]
-      # Encode input text
-      enc_inputs, enc_outputs, enc_state = self.encoder.encode(enc_inputs, 
-                                                               enc_sentence_length)
-      self.adv_outputs = enc_outputs
-
-      mention_starts, mention_ends = tf.unstack(self.ph.link, axis=-1)
-      mention_repls, head_scores = encoder.get_batched_mention_emb(
-        enc_inputs, enc_outputs, mention_starts, mention_ends) # [batch_size, max_n_contexts, mention_size]
-
-      # Aggregate context representations.
-      init_state = tf.reduce_sum(mention_repls, axis=1)
-      init_state = init_state / tf.expand_dims(enc_context_length, -1)
-
-      self.logits, self.predictions = self.setup_decoder(
-        init_state, dec_input_tokens, dec_input_lengths, dec_output_lengths)
-
-      # Convert dec_output_lengths to binary masks
-      dec_output_weights = tf.sequence_mask(dec_output_lengths, dtype=tf.float32)
-
-      # Compute loss
-      self.loss = tf.contrib.seq2seq.sequence_loss(
-        self.logits, dec_output_tokens, dec_output_weights,
-        average_across_timesteps=True, average_across_batch=True)
-      #self.debug_ops = [self.ph.text.word, enc_sentence_length, enc_context_length]
+    return ph
 
   def setup_decoder(self, init_state, dec_input_tokens, 
                     dec_input_lengths, dec_output_lengths):
-    config = self.config
+    config = self.config.decoder
     with tf.variable_scope('Decoder', reuse=tf.AUTO_REUSE) as scope:
       state_size = shape(init_state, -1)
-      dec_cell = setup_cell(config.decoder.cell, state_size, 
-                            config.decoder.num_layers,
+      dec_cell = setup_cell(config.cell, state_size, 
+                            config.num_layers,
                             keep_prob=self.keep_prob)
       with tf.variable_scope('projection') as scope:
         projection_layer = tf.layers.Dense(self.vocab.word.size, 
@@ -126,7 +131,8 @@ class DescriptionGeneration(ModelBase):
         dec_initial_state = tf.contrib.seq2seq.tile_batch(
           init_state, multiplier=beam_width)
         batch_size = shape(dec_input_tokens, 0)
-        start_tokens = tf.tile(tf.constant([START_TOKEN], dtype=tf.int32), [batch_size])
+        start_tokens = tf.tile(tf.constant([START_TOKEN], dtype=tf.int32), 
+                               [batch_size])
         test_decoder = tf.contrib.seq2seq.BeamSearchDecoder(
           dec_cell, self.w_embeddings, start_tokens, END_TOKEN, 
           dec_initial_state,
@@ -135,7 +141,7 @@ class DescriptionGeneration(ModelBase):
 
         test_dec_outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(
           test_decoder, impute_finished=False,
-          maximum_iterations=config.decoder.max_output_len, scope=scope)
+          maximum_iterations=config.max_output_len, scope=scope)
         predictions = test_dec_outputs.predicted_ids # [batch_size, T, beam_width]
         predictions = tf.transpose(predictions, perm = [0, 2, 1]) # [batch_size, beam_width, T]
     return logits, predictions
@@ -168,7 +174,6 @@ class DescriptionGeneration(ModelBase):
 
   def get_input_feed(self, batch, is_training):
     input_feed = {}
-    input_feed[self.is_training] = is_training
     input_feed[self.ph.text.word] = batch.contexts.word
     input_feed[self.ph.text.char] = batch.contexts.char
     input_feed[self.ph.link] = batch.contexts.link

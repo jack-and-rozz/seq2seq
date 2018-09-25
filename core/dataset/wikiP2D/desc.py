@@ -50,18 +50,25 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
     batch.contexts.char: [batch_size, max_contexts, max_words, max_chars]
     batch.link: [batch_size, max_contexts, 2]
     '''
-    batch.contexts.char = padding(
-      batch.contexts.char,
-      minlen=[None, self.config.minlen.word, self.config.minlen.char],
-      maxlen=[None, self.config.maxlen.word, self.config.maxlen.char])
+    # [batch_size, max_num_sent, max_num_word_in_sent]
     batch.contexts.word = padding(
       batch.contexts.word, 
       minlen=[None, self.config.minlen.word],
       maxlen=[None, self.config.maxlen.word])
+
+    # [batch_size, max_num_sent, max_num_word_in_sent, max_num_char_in_word]
+    batch.contexts.char = padding(
+      batch.contexts.char,
+      minlen=[None, self.config.minlen.word, self.config.minlen.char],
+      maxlen=[None, self.config.maxlen.word, self.config.maxlen.char])
+
+    # [batch_size, max_num_sent, 2]
     batch.contexts.link = padding(
       batch.contexts.link,
       minlen=[None, 2],
       maxlen=[None, 2])
+
+    # [batch_size, max_num_word_in_sent]
     batch.desc.word = padding(
       batch.desc.word,
       minlen=[self.config.minlen.word],

@@ -8,7 +8,7 @@ from tensorflow.python.util import nest
 from tensorflow.python.ops import rnn
 from tensorflow.contrib.rnn import LSTMStateTuple
 
-from core.utils.common import dbgprint
+from core.utils.common import dbgprint, dotDict
 from core.utils.tf_utils import shape, cnn, linear, projection, batch_gather, batch_loop 
 from core.seq2seq.rnn import setup_cell
 from core.models.base import ModelBase
@@ -42,13 +42,14 @@ def merge_state(state, merge_func=tf.concat):
 class WordEncoder(ModelBase):
   def __init__(self, config, is_training, vocab,
                activation=tf.nn.relu, shared_scope=None):
-    self.wbase = True if config.vocab_size.word else False
-    self.cbase = True if config.vocab_size.char else False
+    self.reuse = None
     self.vocab = vocab
     self.is_training = is_training
     self.activation = activation
     self.shared_scope = shared_scope # to reuse variables
-    self.reuse = None
+
+    self.wbase = config.wbase
+    self.cbase = config.cbase
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.lexical_dropout_rate
     self.cnn_filter_widths = config.cnn.filter_widths
     self.cnn_filter_size = config.cnn.filter_size
@@ -122,9 +123,7 @@ class SentenceEncoder(ModelBase):
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
     self.use_boundary = config.use_boundary
     self.model_heads = config.model_heads
-    self.merge_func = config.merge_func
-    for k, func_name in config.merge_func.items():
-      self.merge_func[k] = getattr(tf, func_name)
+    self.merge_func = dotDict({k:getattr(tf, func_name) for k, func_name in config.merge_func.items()})
     
     self.word_encoder = word_encoder
     self.vocab = word_encoder.vocab
@@ -150,9 +149,9 @@ class SentenceEncoder(ModelBase):
                                 num_layers=config.num_layers, 
                                 keep_prob=self.keep_prob)
 
-  def encode(self, inputs, sequence_length):
+  def encode(self, inputs, sequence_length, prop_gradients=True):
     '''
-    e.g. When the shape of sent_repls is [batch_size, max_seq_len, hidden_size], 
+    e.g. When the shape of inputs is [batch_size, max_seq_len, hidden_size], 
          the shape of sequence_length must be [seq_len].
     '''
     for x in inputs:
@@ -161,19 +160,17 @@ class SentenceEncoder(ModelBase):
     with tf.variable_scope(self.shared_scope or "SentenceEncoder", 
                            reuse=self.reuse_encode) as scope:
       if isinstance(inputs, list):
-        inputs = [x for x in inputs if x is not None]
-        sent_repls = tf.concat(inputs, axis=-1) # [*, max_sequence_len, hidden_size]
-      else:
-        sent_repls = inputs 
+        inputs = tf.concat([x for x in inputs if x is not None], 
+                           axis=-1) # [*, max_sequence_len, hidden_size]
 
       # Flatten the input tensor to a rank-3 tensor.
-      input_hidden_size = shape(sent_repls, -1)
-      max_sequence_len = shape(sent_repls, -2)
-      other_shapes = [shape(sent_repls, i) for i in range(len(sent_repls.get_shape()[:-2]))]
+      input_hidden_size = shape(inputs, -1)
+      max_sequence_len = shape(inputs, -2)
+      other_shapes = [shape(inputs, i) for i in range(len(inputs.get_shape()[:-2]))]
       flattened_batch_size = reduce(lambda x,y: x*y, other_shapes)
 
-      flattened_sent_repls = tf.reshape(
-        sent_repls, 
+      flattened_inputs = tf.reshape(
+        inputs, 
         [flattened_batch_size, max_sequence_len, input_hidden_size]) 
       flattened_sequence_length = tf.reshape(sequence_length, [flattened_batch_size])
 
@@ -181,20 +178,19 @@ class SentenceEncoder(ModelBase):
       initial_state_bw = self.cell_fw.initial_state(flattened_batch_size) if hasattr(self.cell_bw, 'initial_state') else None
 
       outputs, state = rnn.bidirectional_dynamic_rnn(
-        self.cell_fw, self.cell_bw, flattened_sent_repls,
+        self.cell_fw, self.cell_bw, flattened_inputs,
         initial_state_fw=initial_state_fw,
         initial_state_bw=initial_state_bw,
         sequence_length=flattened_sequence_length, dtype=tf.float32, scope=scope)
 
-      merge_func = self.merge_func.birnn
       with tf.variable_scope("outputs"):
-        axis = get_axis(merge_func)
+        axis = get_axis(self.merge_func.birnn)
 
-        outputs = merge_func(outputs, axis=axis)
+        outputs = self.merge_func.birnn(outputs, axis=axis)
         outputs = tf.nn.dropout(outputs, self.keep_prob)
 
       with tf.variable_scope("state"):
-        state = merge_state(state, merge_func=merge_func)
+        state = merge_state(state, merge_func=self.merge_func.birnn)
 
       if self.shared_scope:
         self.reuse_encode = True 
@@ -207,7 +203,17 @@ class SentenceEncoder(ModelBase):
         state = LSTMStateTuple(c=new_c, h=new_h)
       else:
         state = tf.reshape(state, other_shapes + [shape(state, -1)])
-    return sent_repls, outputs, state
+
+    # Make the encoder not to propagate gradients from inputs, outputs, state used in the latter part of (task-specific) layers.
+    if not prop_gradients:
+      inputs = tf.stop_gradient(inputs)
+      outputs = tf.stop_gradient(outputs)
+      if isinstance(state, LSTMStateTuple):
+        state = LSTMStateTuple(c=tf.stop_gradient(state.c), 
+                               h=tf.stop_gradient(state.h))
+      else:
+        state = tf.stop_gradient(state)
+    return inputs, outputs, state
 
   def get_mention_emb(self, text_emb, text_outputs, mention_starts, mention_ends):
     '''
@@ -259,7 +265,7 @@ class SentenceEncoder(ModelBase):
 
   def get_batched_mention_emb(self, text_emb, text_outputs, mention_starts, mention_ends):
     '''
-    Extract one mention representation from batched texts. 
+    Extract one mention representation per sentence. 
     Each text has only one mention corresponding to the span in mention_starts/ends.
 
     Args:
@@ -341,8 +347,8 @@ class SentenceEncoder(ModelBase):
 class MultiEncoderWrapper(SentenceEncoder):
   def __init__(self, encoders):
     """
-    Args 
-      encoders: A list of SentenceEncoders. The first encoder is regarded as the shared encoder.
+    <Args> 
+     - encoders: A list of SentenceEncoders. The first encoder is regarded as the shared encoder.
     """
     if len(encoders) > 2:
       raise Exception('Current MultiEncoderWrapper can handle up to two encoders.')
@@ -358,14 +364,19 @@ class MultiEncoderWrapper(SentenceEncoder):
     self.shared_scope = encoders[0].shared_scope
     self.merge_func = encoders[0].merge_func
 
-  def encode(self, wc_sentences, sequence_length):
+  def encode(self, wc_sentences, sequence_length, prop_gradients=True):
     if not nest.is_sequence(self.encoders):
       return self.encoders.encode(wc_sentences, sequence_length)
     outputs = []
     state = []
-    for e in self.encoders:
+    for i, e in enumerate(self.encoders):
       word_repls, o, s = e.encode(wc_sentences, sequence_length,
                                   merge_func=self.merge_func.birnn)
+      if not prop_gradients:
+        word_repls = tf.stop_gradient(word_repls)
+        if i == 0:
+          o = tf.stop_gradient(o)
+          s = tf.stop_gradient(s)
       outputs.append(o)
       state.append(s)
     self.shared_outputs = outputs[0]

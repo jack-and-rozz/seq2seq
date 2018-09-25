@@ -57,7 +57,7 @@ class MTLManager(ManagerBase):
                                                  self.word_encoder,
                                                  shared_scope=scope)
     ## Define each task
-    self.tasks = dotDict()#OrderedDict()
+    self.tasks = recDotDefaultDict()
     for i, (task_name, task_config) in enumerate(config.tasks.items()):
       num_gpus = len(tf_utils.get_available_gpus())
       if num_gpus:
@@ -81,7 +81,7 @@ class MTLManager(ManagerBase):
 
   def define_task(self, sess, task_config, encoder, device=None):
     task_class = available_models[task_config.model_type]
-    args = [sess, task_config, encoder]
+    args = [sess, task_config, encoder, self.tasks]
 
     if issubclass(task_class, TaskAdversarial):
       args.append([t for t in self.tasks.values()
