@@ -28,29 +28,15 @@ def print_example(example, vocab, prediction=None):
     print('- Title :', example.title.raw)
   print('- Contexts :')
   for i in range(len(example.contexts.raw)):
-    text = decorate_text(example.contexts.raw[i], vocab,
+    text = decorate_text(example.contexts.raw[i], vocab.encoder,
                          link=example.contexts.link[i],
                          word_ids=example.contexts.word[i])
     print(text)
-  desc = decorate_text(example.desc.raw, vocab,
+
+  desc = decorate_text(example.desc.raw, vocab.decoder,
                        word_ids=example.desc.word)
-  print ('- Reference :', BOLD + desc + RESET)
-  print ('- Hypothesis :', BOLD + prediction + RESET)
-
-  # print ('<Category>', vocab.category.id2token(example.category.label))
-  # if prediction is not None:
-  #   print ('<Prediction>', vocab.category.id2token(prediction))
-
-# def print_batch(batch, prediction, vocab):
-#   print ('<Context>')
-#   for i in range(len(batch.contexts.raw)):
-#     text = decorate_text(batch.contexts.raw[i], 
-#                          vocab,
-#                          link=batch.contexts.link[i],
-#                          word_ids=batch.contexts.word[i])
-#     print('- ' + text)
-#   print ('<Gold>      : %s' % batch.category.raw)
-#   print ('<Predicton> : %s' % vocab.category.id2token(prediction))
+  print ('- Reference :', desc)
+  print ('- Hypothesis :',prediction)
 
 def calc_bleu(reference, hypothesis):
   assert type(reference) == type(hypothesis)
@@ -62,12 +48,13 @@ def evaluate_and_print(flat_batches, predictions, vocab):
   sum_bleu = 0
   for i, (b, p) in enumerate(zip(flat_batches, predictions)):
     n_data += 1
-    p = vocab.word.ids2tokens(p)
-    bleu = calc_bleu(' '.join(b.desc.raw), p)
+    hypothesis = vocab.decoder.word.ids2tokens(p)
+    reference = ' '.join(b.desc.raw)
+    bleu = calc_bleu(reference, hypothesis)
     sum_bleu += bleu
     _id = '[%04d]' % (i)
     print (_id)
-    print_example(b, vocab, prediction=p)
+    print_example(b, vocab, prediction=hypothesis)
     print ('')
   ave_bleu = 1.0 * sum_bleu / n_data
   print('Average BLEU: %.3f' % (ave_bleu))

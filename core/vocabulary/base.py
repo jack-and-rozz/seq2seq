@@ -27,7 +27,8 @@ def format_zen_han(l):
   l = l.encode('utf-8')
   return l
 
-def word_tokenizer(lowercase=False, normalize_digits=False):
+def word_tokenizer(lowercase=False, normalize_digits=False, 
+                   separative_tokens=[]):
   '''
   Args:
      - flatten: Not to be used (used only in char_tokenizer)
@@ -37,6 +38,8 @@ def word_tokenizer(lowercase=False, normalize_digits=False):
       sent = re.sub(_DIGIT_RE, "0", sent) 
     if lowercase:
       sent = sent.lower()
+    for t in separative_tokens:
+      sent = sent.replace(t, ' %s ' % t)
     return sent.replace('\n', '').split()
   return _tokenizer
 
@@ -130,7 +133,7 @@ class WordVocabularyBase(VocabularyBase):
   def sent2ids(self, sentence, word_dropout=0.0):
     if not sentence:
       return []
-    if type(sentence) == list:
+    if type(sentence) != str:
       if type(sentence[0]) == str:
         sentence = " ".join(sentence)
       elif type(sentence[0]) == list:
@@ -189,10 +192,7 @@ class CharVocabularyBase(VocabularyBase):
 
 
 class VocabularyWithEmbedding(WordVocabularyBase):
-  def __init__(self, emb_configs, vocab_size, 
-               start_vocab=None, 
-               lowercase=False, normalize_digits=False, 
-               normalize_embedding=True):
+  def __init__(self, config, start_vocab=None):
     '''
     All pretrained embeddings must be under the source_dir.'
     This class can merge two or more pretrained embeddings by concatenating both.
@@ -200,14 +200,15 @@ class VocabularyWithEmbedding(WordVocabularyBase):
 
     '''
     super(VocabularyWithEmbedding, self).__init__()
-    self.start_vocab = start_vocab if start_vocab else START_VOCAB
-    
-    self.name = "_".join([c['path'].split('.')[0] for c in emb_configs])
-    self.tokenizer = word_tokenizer(lowercase=lowercase,
-                                    normalize_digits=normalize_digits)
-    self.normalize_embedding = normalize_embedding
+    self.trainable = config.trainable
+    self.normalize_embedding = config.normalize_embedding
+
+    self.start_vocab = start_vocab if start_vocab else START_VOCAB 
+    self.name = "_".join([c['path'].split('.')[0] for c in config.emb_configs])
+    self.tokenizer = word_tokenizer(lowercase=config.lowercase,
+                                    normalize_digits=config.normalize_digits)
     self.vocab, self.rev_vocab, self.embeddings = self.init_vocab(
-      emb_configs, vocab_size)
+      config.emb_configs, config.vocab_size)
 
   @common.timewatch()
   def init_vocab(self, emb_configs, vocab_size):
@@ -274,12 +275,13 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     return embedding_dict
 
 class PredefinedCharVocab(CharVocabularyBase):
-  def __init__(self, vocab_path, vocab_size, start_vocab=None,
-               lowercase=False, normalize_digits=False):
+  def __init__(self, config, start_vocab=None):
     super(PredefinedCharVocab, self).__init__()
+    vocab_path = config.vocab_path
+    vocab_size = config.vocab_size
+    self.trainable = True
     self.start_vocab = start_vocab if start_vocab else START_VOCAB
-    self.tokenizer = char_tokenizer(lowercase=lowercase,
-                                    normalize_digits=normalize_digits)
+    self.tokenizer = char_tokenizer()
     self.vocab, self.rev_vocab = self.init_vocab(vocab_path, vocab_size)
 
   def init_vocab(self, vocab_path, vocab_size):

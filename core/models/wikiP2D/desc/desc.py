@@ -11,12 +11,14 @@ from core.models.base import ModelBase
 from core.models.wikiP2D.desc.evaluation import evaluate_and_print
 from core.seq2seq.rnn import setup_cell
 from core.vocabulary.base import PAD_ID
+from core.models.wikiP2D.decoder import RNNDecoder
+from core.models.wikiP2D.coref.coref import CorefModelBase
 
 START_TOKEN = PAD_ID
 END_TOKEN = PAD_ID
 
 class DescriptionGeneration(ModelBase):
-  def __init__(self, sess, config, encoder, other_tasks, activation=tf.nn.relu):
+  def __init__(self, sess, config, manager, encoder, activation=tf.nn.relu):
     """
     Args:
     """
@@ -24,10 +26,8 @@ class DescriptionGeneration(ModelBase):
     self.config = config
     self.activation = activation
     self.encoder = encoder
-    self.other_tasks = other_tasks
-
-    self.vocab = encoder.vocab
-    self.w_embeddings = encoder.w_embeddings
+    self.other_tasks = manager.tasks
+    self.vocab = manager.vocab
     self.is_training = encoder.is_training
     self.dataset = config.dataset
     self.train_shared = config.train_shared
@@ -51,6 +51,9 @@ class DescriptionGeneration(ModelBase):
     mention_starts, mention_ends = tf.unstack(self.ph.link, axis=-1)
     mention_repls, head_scores = encoder.get_batched_mention_emb(
       enc_inputs, enc_outputs, mention_starts, mention_ends) # [batch_size, max_n_contexts, mention_size]
+    if not self.train_shared:
+      mention_repls = tf.stop_gradient(mention_repls)
+      head_scores = tf.stop_gradient(head_scores)
 
     # Aggregate context representations.
     init_state = tf.reduce_sum(mention_repls, axis=1)
@@ -68,8 +71,14 @@ class DescriptionGeneration(ModelBase):
     # Length of description + end_token (or start_token)
     dec_input_lengths = dec_output_lengths = tf.count_nonzero(
       self.ph.target, axis=1, dtype=tf.int32) + 1
-    self.logits, self.predictions = self.setup_decoder(
-      init_state, dec_input_tokens, dec_input_lengths, dec_output_lengths)
+
+    with tf.variable_scope('Decoder') as scope:
+      self.decoder = RNNDecoder(config.decoder, self.is_training, 
+                                self.vocab.decoder, shared_scope=scope)
+      self.logits = self.decoder.decode_train(init_state, dec_input_tokens, 
+                                              dec_input_lengths, 
+                                              dec_output_lengths)
+      self.predictions = self.decoder.decode_test(init_state)
 
     # Convert dec_output_lengths to binary masks
     dec_output_weights = tf.sequence_mask(dec_output_lengths, dtype=tf.float32)
@@ -79,6 +88,12 @@ class DescriptionGeneration(ModelBase):
       self.logits, dec_output_tokens, dec_output_weights,
       average_across_timesteps=True, average_across_batch=True)
     #self.debug_ops = [self.ph.text.word, enc_sentence_length, enc_context_length]
+
+    # Combined tests with coref task.
+    coref_model = [x for x in self.other_tasks.values() 
+                   if isinstance(x, CorefModelBase)]
+    if coref_model:
+      coref_model = coref_model[0].generate_mention_desc(self.decoder)
 
   def setup_placeholders(self):
     # Placeholders
@@ -99,53 +114,6 @@ class DescriptionGeneration(ModelBase):
         tf.int32, name='descriptions', shape=[None, None])
     return ph
 
-  def setup_decoder(self, init_state, dec_input_tokens, 
-                    dec_input_lengths, dec_output_lengths):
-    config = self.config.decoder
-    with tf.variable_scope('Decoder', reuse=tf.AUTO_REUSE) as scope:
-      state_size = shape(init_state, -1)
-      dec_cell = setup_cell(config.cell, state_size, 
-                            config.num_layers,
-                            keep_prob=self.keep_prob)
-      with tf.variable_scope('projection') as scope:
-        projection_layer = tf.layers.Dense(self.vocab.word.size, 
-                                           use_bias=True, trainable=True)
-
-      dec_input_embs = tf.nn.embedding_lookup(self.w_embeddings, 
-                                              dec_input_tokens)
-
-      with tf.name_scope('Train'):
-        helper = tf.contrib.seq2seq.TrainingHelper(
-          dec_input_embs, sequence_length=dec_input_lengths, time_major=False)
-        dec_initial_state = init_state
-        train_decoder = tf.contrib.seq2seq.BasicDecoder(
-          dec_cell, helper, dec_initial_state,
-          output_layer=projection_layer)
-        train_dec_outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(
-          train_decoder, impute_finished=True,
-          maximum_iterations=tf.reduce_max(dec_output_lengths), scope=scope)
-        logits = train_dec_outputs.rnn_output
-
-      with tf.name_scope('Test'):
-        beam_width = config.beam_width
-        dec_initial_state = tf.contrib.seq2seq.tile_batch(
-          init_state, multiplier=beam_width)
-        batch_size = shape(dec_input_tokens, 0)
-        start_tokens = tf.tile(tf.constant([START_TOKEN], dtype=tf.int32), 
-                               [batch_size])
-        test_decoder = tf.contrib.seq2seq.BeamSearchDecoder(
-          dec_cell, self.w_embeddings, start_tokens, END_TOKEN, 
-          dec_initial_state,
-          beam_width, output_layer=projection_layer,
-          length_penalty_weight=config.length_penalty_weight)
-
-        test_dec_outputs, _, _ = tf.contrib.seq2seq.dynamic_decode(
-          test_decoder, impute_finished=False,
-          maximum_iterations=config.max_output_len, scope=scope)
-        predictions = test_dec_outputs.predicted_ids # [batch_size, T, beam_width]
-        predictions = tf.transpose(predictions, perm = [0, 2, 1]) # [batch_size, beam_width, T]
-    return logits, predictions
-
   def test(self, batches, mode, logger, output_path):
     results = []
     used_batches = []
@@ -159,10 +127,10 @@ class DescriptionGeneration(ModelBase):
         print(e)
         exit(1)
       results.append(outputs[:, 0, :])
-    results = np.concatenate(results, axis=0)
+    results = flatten([r.tolist() for r in results])
     sys.stdout = open(output_path, 'w') if output_path else sys.stdout
     bleu = evaluate_and_print(used_batches, results, 
-                              vocab=self.encoder.vocab)
+                              vocab=self.vocab)
     if output_path:
       sys.stderr.write("Output the testing results to \'{}\' .\n".format(output_path))
     sys.stdout = sys.__stdout__
@@ -174,6 +142,7 @@ class DescriptionGeneration(ModelBase):
 
   def get_input_feed(self, batch, is_training):
     input_feed = {}
+    input_feed[self.is_training] = is_training
     input_feed[self.ph.text.word] = batch.contexts.word
     input_feed[self.ph.text.char] = batch.contexts.char
     input_feed[self.ph.link] = batch.contexts.link

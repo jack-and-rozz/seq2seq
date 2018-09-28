@@ -12,18 +12,22 @@ from core.utils.common import dbgprint, flatten, dotDict, recDotDefaultDict, fla
 from core.models.base import ModelBase
 from core.models.wikiP2D.coref import coref_ops, conll, metrics
 from core.models.wikiP2D.coref import util as coref_util
-from core.models.wikiP2D.coref.analysis import print_colored_text, get_statistics
+from core.models.wikiP2D.coref.analysis import print_results
 from core.vocabulary.base import _UNK, PAD_ID
 from collections import OrderedDict, defaultdict
 from copy import deepcopy
 
-class CoreferenceResolution(ModelBase):
-  def __init__(self, sess, config, encoder, other_tasks, activation=tf.nn.relu):
+class CorefModelBase(ModelBase):
+  pass
+
+class CoreferenceResolution(CorefModelBase):
+  def __init__(self, sess, config, manager, encoder, activation=tf.nn.relu):
     super().__init__(sess, config)
     self.sess = sess
     self.config = config
     self.encoder = encoder
-    self.other_tasks = other_tasks
+    self.vocab = manager.vocab
+    self.other_tasks = manager.tasks
 
     self.is_training = encoder.is_training
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
@@ -68,7 +72,7 @@ class CoreferenceResolution(ModelBase):
     with tf.variable_scope('Embeddings'):
       self.same_speaker_emb = self.initialize_embeddings(
         'same_speaker', [2, self.feature_size]) # True or False.
-      self.genre_emb = self.initialize_embeddings('genre', [self.encoder.vocab.genre.size, self.feature_size])
+      self.genre_emb = self.initialize_embeddings('genre', [self.vocab.genre.size, self.feature_size])
       self.mention_width_emb = self.initialize_embeddings("mention_width", [self.max_mention_width, self.feature_size])
       self.mention_distance_emb = self.initialize_embeddings("mention_distance", [10, self.feature_size])
 
@@ -80,14 +84,26 @@ class CoreferenceResolution(ModelBase):
 
     with tf.name_scope('candidates_and_mentions'):
       flattened_text_emb, flattened_text_outputs, flattened_sentence_indices = self.flatten_doc_to_sent(text_emb, text_outputs, self.ph.sentence_length)
-    
+
       candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, mention_scores, mention_emb = self.get_mentions(
         flattened_text_emb, flattened_text_outputs, flattened_sentence_indices)
 
-      self.pred_mention_emb = mention_emb
-      self.gold_mention_emb = self.get_mention_emb(
-        flattened_text_emb, flattened_text_outputs, 
-        self.ph.gold_starts, self.ph.gold_ends)
+      with tf.name_scope('keep_mention_embs'):
+        self.pred_mention_emb = self.get_mention_emb(
+          flattened_text_emb, flattened_text_outputs, 
+          mention_starts, 
+          mention_ends, 
+          False)
+
+        # Add dummy to gold mentions for the case that an example has no gold mentions and self.get_mention_emb(...) causes an error.
+        dummy = tf.constant([0], dtype=tf.int32)
+        self.gold_mention_emb = self.get_mention_emb(
+          flattened_text_emb, flattened_text_outputs, 
+          # self.ph.gold_starts, 
+          # self.ph.gold_ends, 
+          tf.concat([self.ph.gold_starts, dummy], axis=0),
+          tf.concat([self.ph.gold_ends, dummy], axis=0),
+          False)
 
     with tf.name_scope('antecedents'):
       antecedents, antecedent_scores, antecedent_labels = self.get_antecedents(
@@ -104,6 +120,17 @@ class CoreferenceResolution(ModelBase):
     with tf.name_scope("Summary"):
       self.summary_loss = tf.placeholder(tf.float32, shape=[],
                                          name='coref_loss')
+    #self.debug_ops = [flattened_text_emb, mention_starts, mention_ends, self.ph.gold_starts, self.ph.gold_ends]
+
+  def generate_mention_desc(self, decoder):
+    # mention_embs = tf.concat([
+    #   self.pred_mention_emb, self.gold_mention_emb
+    # ], axis=0)
+    # mention_desc = decoder.decode_test(mention_embs)
+    # self.outputs += [mention_desc]
+    pred_mention_desc = decoder.decode_test(self.pred_mention_emb)
+    gold_mention_desc = decoder.decode_test(self.gold_mention_emb)
+    self.outputs += [pred_mention_desc, gold_mention_desc]
 
   def flatten_doc_to_sent(self, text_emb, text_outputs, text_len):
     '''
@@ -133,7 +160,7 @@ class CoreferenceResolution(ModelBase):
       candidate_ends.set_shape([None])
 
     with tf.name_scope('Mentions'):
-      candidate_mention_emb = self.get_mention_emb(flattened_text_emb, flattened_text_outputs, candidate_starts, candidate_ends) # [num_candidates, emb]
+      candidate_mention_emb = self.get_mention_emb(flattened_text_emb, flattened_text_outputs, candidate_starts, candidate_ends, self.use_width_feature) # [num_candidates, emb]
 
       candidate_mention_scores =  self.get_mention_scores(candidate_mention_emb) # [num_mentions, 1]
       #candidate_mention_scores = tf.squeeze(candidate_mention_scores, 1) # [num_mentions]
@@ -149,7 +176,8 @@ class CoreferenceResolution(ModelBase):
 
     return candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, mention_scores, mention_emb
 
-  def get_mention_emb(self, text_emb, text_outputs, mention_starts, mention_ends):
+  def get_mention_emb(self, text_emb, text_outputs, mention_starts, mention_ends,
+                      use_width_feature):
     '''
     text_emb: [num_words, dim(word_emb + char_emb)]
     text_outputs: [num_words, dim(encoder_outputs)]
@@ -158,7 +186,7 @@ class CoreferenceResolution(ModelBase):
     mention_emb, head_scores = self.encoder.get_mention_emb(text_emb, text_outputs, mention_starts, mention_ends)
 
     # Concatenate mention_width_feature (not shared).
-    if self.use_width_feature:
+    if use_width_feature:
       with tf.name_scope('mention_width'):
         mention_width = 1 + mention_ends - mention_starts # [num_mentions]
         mention_width_index = mention_width - 1  #[num_mentions]
@@ -223,7 +251,6 @@ class CoreferenceResolution(ModelBase):
     antecedent_emb = tf.gather(mention_emb, antecedents) # [num_mentions, max_ant, emb]
     target_emb_tiled = tf.tile(tf.expand_dims(mention_emb, 1), [1, max_antecedents, 1]) # [num_mentions, max_ant, emb]
     similarity_emb = antecedent_emb * target_emb_tiled # [num_mentions, max_ant, emb]
-
     pair_emb = tf.concat([target_emb_tiled, antecedent_emb, similarity_emb, feature_emb], 2) # [num_mentions, max_ant, emb]
 
     with tf.variable_scope("iteration"):
@@ -259,7 +286,6 @@ class CoreferenceResolution(ModelBase):
       flattened_emb = tf.reshape(emb, [num_sentences * max_sentence_length, tf_utils.shape(emb, 2)])
     else:
       raise ValueError("Unsupported rank: {}".format(emb_rank))
-    #return tf.boolean_mask(flattened_emb, text_len_mask, axis=0) # Set axis for the latest tf
     return tf.boolean_mask(flattened_emb, text_len_mask) # remove masked elements 
 
   def tensorize_mentions(self, mentions):
@@ -272,17 +298,14 @@ class CoreferenceResolution(ModelBase):
 
   def get_input_feed(self, batch, is_training):
     input_feed = {}
-    for k, v in flatten_recdict(batch).items():
-      if type(v) == np.ndarray:
-        print(k, v.shape)
-      else:
-        print(k, v)
+
     ## Texts
     if self.encoder.cbase:
       input_feed[self.ph.text.char] = batch.text.char
     if self.encoder.wbase:
       input_feed[self.ph.text.word] = batch.text.word
     input_feed[self.ph.sentence_length] = batch.sentence_length
+
     ## Mention spans and their clusters
     gold_mentions = sorted(tuple(m) for m in flatten(batch.clusters))
     gold_mention_map = {m:i for i,m in enumerate(gold_mentions)}
@@ -352,16 +375,21 @@ class CoreferenceResolution(ModelBase):
       eval_summary, f1, results = self.evaluate(
         batches, conll_eval_path, mode)
       sys.stdout = sys.__stdout__
-    
-    #logger.info("Epoch %d (%s): MUC, B^3, Ceaf, ave_f1 = (%.3f, %.3f, %.3f, %.3f): " % (m.epoch.eval(), mode, muc_f1, bcub_f1, ceaf_f1, sum(f1)/len(f1)))
+
     with open(output_path + '.detail', 'w') as f:
       sys.stdout = f
-      df = self.print_results(results)
+      df = print_results(results, self.vocab.encoder, False)
       sys.stdout = sys.__stdout__
+
+    if [k for k, v in self.other_tasks.items() if isinstance(v, CorefModelBase)]:
+      with open(output_path + '.detail.with_desc', 'w') as f:
+        sys.stdout = f
+        df = print_results(results, self.vocab.encoder, True)
+        sys.stdout = sys.__stdout__
+
     sys.stderr.write("Output the predicted and gold clusters to \'{}\' .\n".format(output_path))
 
     return f1, eval_summary
- 
 
   def evaluate(self, batches, gold_path, mode, official_stdout=False):
     def _k_to_tag(k):
@@ -383,10 +411,27 @@ class CoreferenceResolution(ModelBase):
     results = OrderedDict()
 
     for example_num, example in enumerate(batches):
-      feed_dict = self.get_input_feed(example, False)
-      gold_starts = feed_dict[self.ph.gold_starts]
-      gold_ends = feed_dict[self.ph.gold_ends]
-      candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores = self.sess.run(self.outputs, feed_dict=feed_dict)
+      input_feed = self.get_input_feed(example, False)
+      gold_starts = input_feed[self.ph.gold_starts]
+      gold_ends = input_feed[self.ph.gold_ends]
+
+      ######
+      # debug
+      # flattened_text_emb, mention_starts, mention_ends, gold_starts, gold_ends = self.sess.run(self.debug_ops, input_feed)
+      # dbgprint(str(example_num) + ':')
+      # print('text_shape', flattened_text_emb.shape)
+      # print('pred_mentions', np.concatenate([np.expand_dims(mention_starts, -1), 
+      #                                        np.expand_dims(mention_ends, -1)], 
+      #                                       axis=-1))
+      # print('gold_mentions', np.concatenate([np.expand_dims(gold_starts, -1), 
+      #                                        np.expand_dims(gold_ends, -1)], 
+      #                                       axis=-1))
+      # print()
+      ######
+
+      outputs = self.sess.run(self.outputs, input_feed)
+      candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, antecedents, antecedent_scores = outputs[:7]
+
       self.evaluate_mentions(candidate_starts, candidate_ends, mention_starts, mention_ends, candidate_mention_scores, gold_starts, gold_ends, example, mention_evaluators)
       predicted_antecedents = self.get_predicted_antecedents(antecedents, antecedent_scores)
       coref_predictions[example.doc_key] = self.evaluate_coref(mention_starts, mention_ends, predicted_antecedents, example.clusters, coref_evaluator)
@@ -397,8 +442,21 @@ class CoreferenceResolution(ModelBase):
         'extracted_mentions': [(begin, end) for begin, end in zip(mention_starts, mention_ends)],
         'predicted_antecedents': predicted_antecedents
       })
+      if len(outputs) > 7:
+        mention_descs = {}
+        
+        pred_mention_desc = [self.vocab.decoder.word.ids2tokens(s) for s in outputs[7][:, 0, :]]
+        gold_mention_desc = [self.vocab.decoder.word.ids2tokens(s) for s in outputs[8][:, 0, :]]
+        for s, e, desc in zip(mention_starts, mention_ends, pred_mention_desc):
+          mention_descs[(s, e)] = desc
+        for s, e, desc in zip(gold_starts, gold_ends, pred_mention_desc):
+          mention_descs[(s, e)] = desc
 
+        results[example.doc_key].mention_descs = mention_descs
+      else:
+        results[example.doc_key].mention_descs = []
     summary_dict = {}
+
     for k, evaluator in sorted(list(mention_evaluators.items()), key=operator.itemgetter(0)):
       tags = ["mention/{} @ {}".format(t, _k_to_tag(k)) for t in ("R", "P", "F")]
       results_to_print = []
@@ -512,71 +570,4 @@ class CoreferenceResolution(ModelBase):
     evaluator.update(predicted_clusters, gold_clusters, mention_to_predicted, mention_to_gold)
     return predicted_clusters
 
-  def print_results(self, results):
-    '''
-    Args:
-       - results: An Ordereddict keyed by 'doc_key', whose elements are a dictionary that has the keys, 'raw_text' and 'aligned_results'
-    '''
-    color_notations = [
-      ('Success', BLUE),
-      ('Wrong or No Anaphora (Root)', MAGENTA),
-      ('Wrong Antecedent', RED), 
-      ('No Antecedent (Anaphora)', GREEN),
-      ('Not Extracted', CYAN),
-      ('Incorrect Mention', BOLD),
-      ('Unknown word', UNDERLINE),
-    ]
-
-    print("<Colors>")
-    print(', '.join([color + k + RESET for k, color in color_notations]))
-    print()
-
-    results_by_mention_groups = []
-    for i, (doc_key, result) in enumerate(results.items()):
-      print("===%03d===\t%s" % (i, doc_key))
-      raw_text = flatten(result['raw_text'])
-      extracted_mentions = result['extracted_mentions']
-      predicted_antecedents = result['predicted_antecedents']
-      aligned = result['aligned_results']
-      speakers = result['speakers']
-      
-      print('<text>')
-      decorated_text, mention_groups = print_colored_text(
-        raw_text, aligned, extracted_mentions, predicted_antecedents, speakers,
-        self.encoder.vocab.word)
-      results_by_mention_groups.append([mention_groups, raw_text])
-      print('<cluster>')
-
-      for j, (gold_cluster, predicted_cluster) in enumerate(aligned):
-        g = ["".join(decorated_text[s:e+1]) + str((s, e)) for (s,e) in gold_cluster]
-        p = ["".join(decorated_text[s:e+1]) + str((s, e)) for (s,e) in predicted_cluster]
-        print("%03d-G%02d  " % (i, j) , ', '.join(g))
-        print("%03d-P%02d  " % (i, j) , ', '.join(p))
-      print('')
-
-    statistics = get_statistics(results_by_mention_groups, self.encoder.vocab.word)
-    header = ['Category'] + list(list(statistics.values())[0].keys())
-    #n_mentions = sum([statistics[category]['all'] 
-    #                  for category in statistics.keys()])
-    #data = [[category] + ['%.2f' % (100.0 * n / n_mentions) if n_mentions else '0.0' for n in cnt_by_mention_type.values()] for category, cnt_by_mention_type in statistics.items()]
-
-    n_mentions_by_type = defaultdict(int)
-    for _, stat in statistics.items():
-      for mention_type, n in stat.items():
-        n_mentions_by_type[mention_type] += n
-    data = [
-      [category] + ['%.2f' % (100.0 * n / n_mentions_by_type[mention_type]) 
-                    for mention_type, n in cnt_by_mention_type.items()] 
-    for category, cnt_by_mention_type in statistics.items()]
-    data.append(['# Mentions'] + [x for x in n_mentions_by_type.values()])
-    pd.set_option("display.max_colwidth", 80)
-    df = pd.DataFrame(data, columns=header).ix[:, header]
-    df = df.set_index('Category')
-    print ('<Mention group statistics>')
-    #print(df.ix[:, header])
-    print(df)
-    print()
-    print ('<csv ver>')
-    print(df.to_csv())
-    return df
 

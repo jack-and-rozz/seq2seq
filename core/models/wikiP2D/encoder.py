@@ -43,36 +43,37 @@ class WordEncoder(ModelBase):
   def __init__(self, config, is_training, vocab,
                activation=tf.nn.relu, shared_scope=None):
     self.reuse = None
-    self.vocab = vocab
+    self.vocab = vocab.encoder
     self.is_training = is_training
     self.activation = activation
     self.shared_scope = shared_scope # to reuse variables
 
-    self.wbase = config.wbase
-    self.cbase = config.cbase
+    self.wbase = True if vocab.word.size else False
+    self.cbase = True if vocab.char.size else False
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.lexical_dropout_rate
     self.cnn_filter_widths = config.cnn.filter_widths
     self.cnn_filter_size = config.cnn.filter_size
 
-    w_trainable = config.trainable_emb
     sys.stderr.write("Initialize word embeddings with pretrained ones.\n")
+    w_trainable = vocab.trainable
     w_initializer = tf.constant_initializer(vocab.word.embeddings)
     w_emb_shape = vocab.word.embeddings.shape
 
     with tf.device('/cpu:0'):
-      self.w_embeddings = self.initialize_embeddings('word_emb', w_emb_shape, initializer=w_initializer, trainable=w_trainable)
+      self.embeddings = dotDict()
+      self.embeddings.word = self.initialize_embeddings('word_emb', w_emb_shape, initializer=w_initializer, trainable=w_trainable)
 
     if self.cbase:
       c_emb_shape = [vocab.char.size, config.embedding_size.char] 
       with tf.device('/cpu:0'):
-        self.c_embeddings = self.initialize_embeddings(
+        self.embeddings.char = self.initialize_embeddings(
           'char_emb', c_emb_shape, trainable=True)
 
   def word_encode(self, inputs):
     if inputs is None:
       return inputs
     with tf.variable_scope(self.shared_scope or "WordEncoder", reuse=self.reuse):
-      outputs = tf.nn.embedding_lookup(self.w_embeddings, inputs)
+      outputs = tf.nn.embedding_lookup(self.embeddings.word, inputs)
       outputs = tf.nn.dropout(outputs, self.keep_prob)
     return outputs
 
@@ -90,7 +91,7 @@ class WordEncoder(ModelBase):
     with tf.variable_scope(self.shared_scope or "WordEncoder", reuse=self.reuse):
       # Flatten the input tensor to each word (rank-3 tensor).
       with tf.name_scope('flatten'):
-        char_repls = tf.nn.embedding_lookup(self.c_embeddings, inputs) # [*, max_word_len, char_emb_size]
+        char_repls = tf.nn.embedding_lookup(self.embeddings.char, inputs) # [*, max_word_len, char_emb_size]
         other_shapes = [shape(char_repls, i) for i in range(len(char_repls.get_shape()[:-2]))]
 
         flattened_batch_size = reduce(lambda x,y: x*y, other_shapes)
@@ -129,8 +130,8 @@ class SentenceEncoder(ModelBase):
     self.vocab = word_encoder.vocab
     self.wbase = word_encoder.wbase
     self.cbase = word_encoder.cbase
-    self.w_embeddings = word_encoder.w_embeddings
-    self.c_embeddings = word_encoder.c_embeddings
+    self.embeddings = word_encoder.embeddings
+
     self.activation = activation
     self.shared_scope = shared_scope
 
@@ -357,8 +358,8 @@ class MultiEncoderWrapper(SentenceEncoder):
     self.is_training = encoders[0].is_training
     self.vocab = encoders[0].vocab
     self.word_encoder = encoders[0].word_encoder
-    self.w_embeddings = encoders[0].w_embeddings
-    self.c_embeddings = encoders[0].c_embeddings
+    self.embeddings.word = encoders[0].embeddings.word
+    self.embeddings.char = encoders[0].embeddings.char
     self.cbase = encoders[0].cbase
     self.wbase = encoders[0].wbase
     self.shared_scope = encoders[0].shared_scope

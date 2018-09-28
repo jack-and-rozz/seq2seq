@@ -40,7 +40,7 @@ class FeatureVocab(object):
 
 class _CoNLL2012CorefDataset(object):
   def __init__(self, data, vocab, genre_vocab):
-    self.vocab = vocab
+    self.vocab = vocab.encoder
     self.genre_vocab = genre_vocab
     self.data = self.preprocess(data)
     self.size = len(self.data)
@@ -123,10 +123,6 @@ class CoNLL2012CorefDataset(DatasetBase):
     valid_path = os.path.join(source_dir, dataset_path.valid_data)
     test_path = os.path.join(source_dir, dataset_path.test_data)
     self.vocab = vocab
-
-    if 'word' not in vocab and 'char' not in vocab:
-      raise ValueError('You have to prepare vocabularies in advance.')
-
 
     # As this dataset is relatively small, we don't need to store processed files.
     train_data = load_data(train_path)

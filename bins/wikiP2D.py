@@ -18,20 +18,13 @@ class ExperimentManager(ManagerBase):
   def __init__(self, args, sess):
     super().__init__(args, sess)
     self.config = config = self.load_config(args)
-    self.vocab = common.dotDict()
+    self.vocab = common.recDotDefaultDict()
     self.model = None
 
     # Load pretrained embeddings.
-    self.vocab.word = VocabularyWithEmbedding(
-      config.embeddings_conf, config.vocab_size.word,
-      lowercase=config.lowercase,
-      normalize_digits=config.normalize_digits,
-      normalize_embedding=True
-    )
-    self.vocab.char = PredefinedCharVocab(
-      config.char_vocab_path, config.vocab_size.char,
-      lowercase=False,
-    )
+    self.vocab.encoder.word = VocabularyWithEmbedding(config.vocab.encoder.word)
+    self.vocab.encoder.char = PredefinedCharVocab(config.vocab.encoder.char)
+    self.vocab.decoder.word = VocabularyWithEmbedding(config.vocab.decoder.word)
 
     # Load Dataset.
     self.dataset = common.recDotDict()
@@ -244,7 +237,8 @@ class ExperimentManager(ManagerBase):
   @common.timewatch()
   def test(self):
     mode = 'test'
-    target_tasks = None
+    target_tasks = []
+    
     m = self.create_model(self.config, load_best=True)
     tasks = OrderedDict([(k, v) for k, v in m.tasks.items() if not target_tasks or k in target_tasks])
     for i, (task_name, task_model) in enumerate(tasks.items()):
@@ -308,6 +302,8 @@ if __name__ == "__main__":
                       type=common.str2bool, help ='')
   parser.add_argument('--cleanup', default=False,
                       type=common.str2bool, help ='')
+  # parser.add_argument('-t', '--target_tasks', default=[],
+  #                     type=common.str2arr, help ='The list of tasks to be tested.')
   #parser.add_argument('-le', '--log_error', default=False,
   #                    type=common.str2bool, help ='')
   args = parser.parse_args()

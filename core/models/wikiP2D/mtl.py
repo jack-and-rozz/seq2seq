@@ -47,17 +47,19 @@ class MTLManager(ManagerBase):
   def __init__(self, sess, config, vocab, activation=tf.nn.relu):
     super(MTLManager, self).__init__(sess, config)
     self.is_training = tf.placeholder(tf.bool, name='is_training', shape=[]) 
+    self.vocab = vocab
 
     # with tf >= 1.2, the scope where a RNNCell is called first is cached and the variables are automatically reused.
     with tf.variable_scope("WordEncoder") as scope:
-      self.word_encoder = WordEncoder(config.encoder, self.is_training, vocab,
+      self.word_encoder = WordEncoder(config.encoder, self.is_training, 
+                                      vocab.encoder,
                                       shared_scope=scope)
     with tf.variable_scope("GlobalEncoder") as scope:
       self.shared_sent_encoder = SentenceEncoder(config.encoder, self.is_training,
                                                  self.word_encoder,
                                                  shared_scope=scope)
     ## Define each task
-    self.tasks = recDotDefaultDict()
+    self.tasks = dotDict()
     for i, (task_name, task_config) in enumerate(config.tasks.items()):
       num_gpus = len(tf_utils.get_available_gpus())
       if num_gpus:
@@ -75,13 +77,13 @@ class MTLManager(ManagerBase):
           raise ValueError('Adversarial task must be on the last of tasks in the config.')
         task = self.define_task(sess, task_config, encoder, device)
       self.tasks[task_name] = task
-
+      print(self.tasks)
     self.losses = [t.loss for t in self.tasks.values()]
     self.updates = self.get_updates()
 
   def define_task(self, sess, task_config, encoder, device=None):
     task_class = available_models[task_config.model_type]
-    args = [sess, task_config, encoder, self.tasks]
+    args = [sess, task_config, self, encoder]
 
     if issubclass(task_class, TaskAdversarial):
       args.append([t for t in self.tasks.values()
@@ -213,9 +215,9 @@ class MeanLoss(MTLManager):
  
   def run_epoch(self, batches, is_training):
     start_time = time.time()
-    num_steps_in_epoch = [0 for _ in self.tasks]
     loss = np.array([0.0 for _ in self.tasks])
 
+    num_steps = 0
     while True:
       t = time.time()
       batch = {}
@@ -226,7 +228,6 @@ class MeanLoss(MTLManager):
             batch.update({task_name:raw_batch})
           else:
             batch.update({task_name:{}})
-          num_steps_in_epoch[i] += 1
         except StopIteration as e:
           pass
         except ValueError as e:
@@ -247,20 +248,27 @@ class MeanLoss(MTLManager):
       t = time.time() - t
       step_loss = outputs[:len(self.tasks)]
       loss += np.array(step_loss)
-      
+
       print('epoch: %d,' % self.epoch.eval(), 
             'step: %d,' % self.global_step.eval(),
             'task: %s,' % ' '.join(self.tasks.keys()),
             'step_loss: %s,' % ' '.join(["%.3f" % l for l in step_loss]), 
             'step_time: %f,' % t)
+      num_steps += 1
       sys.stdout.flush()
 
     epoch_time = (time.time() - start_time)
-    loss = [l/num_steps for l, num_steps in zip(loss, num_steps_in_epoch)]
+    loss = [l/num_steps for l in loss]
     mode = 'train' if is_training else 'valid'
     summary_dict = {'%s/%s/loss' % (task_name, mode): l for task_name, l in zip(self.tasks, loss)}
     summary = tf_utils.make_summary(summary_dict)
     return epoch_time, loss, summary
+
+class SumLoss(MeanLoss):
+  def get_updates(self):
+    loss = tf.reduce_sum([t.loss_weight * t.loss for t in self.tasks.values()])
+    updates = super(MTLManager, self).get_updates(loss, self.global_step)
+    return updates
 
 
 class OneByOne(MTLManager):
@@ -348,3 +356,5 @@ class EWC(OneByOne):
                                                  task_model.global_step) 
       reuse = True
     return updates
+
+

@@ -330,7 +330,7 @@ def print_sequence(seq, id_to_word=None):
       print ('')
 
 # argparserの文字列をboolに変換
-def str_to_bool(str_):
+def str2bool(str_):
     bool_ = True
     str_ = str_.lower()
     if str_ in ["t", "true", "1", True]:
@@ -342,8 +342,8 @@ def str_to_bool(str_):
         exit(1)
     return bool_
 
-def str2bool(str_):
-  return str_to_bool(str_)
+def str2arr(v):
+  return [x for x in v.split(',') if x]
 
 def separate_path_and_filename(file_path):
     pattern = '^(.+)/(.+)$'

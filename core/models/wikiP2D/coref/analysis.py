@@ -162,14 +162,6 @@ def print_colored_text(raw_text, aligned, extracted_mentions,
     (failure_unlinked, GREEN),
     (failure_unextracted, CYAN),
     (failure_irregular_mention, BOLD),
-    # (success_root, BLUE+UNDERLINE),
-    # (failure_root, MAGENTA+UNDERLINE),
-    # (success_linked, BLUE+UNDERLINE),
-    # (failure_linked, RED+UNDERLINE),
-    # (failure_unlinked, GREEN+UNDERLINE),
-    # (failure_unextracted, CYAN+UNDERLINE),
-    # #(failure_extracted, MAGENTA),
-    # (failure_irregular_mention, BOLD+UNDERLINE),
     (others, YELLOW),
     (unknowns, UNDERLINE)
   ]
@@ -203,8 +195,6 @@ def print_colored_text(raw_text, aligned, extracted_mentions,
 
   mention_groups = OrderedDict([
     ('Success', success_root+ success_linked),
-    #('Success (Root)', success_root),
-    #('Success (Anaphora)', success_linked),
     ('Wrong or No Anaphora (Root)', failure_root),
     ('Wrong Antecedent', failure_linked), 
     ('No Antecedent (Anaphora)', failure_unlinked),
@@ -213,3 +203,73 @@ def print_colored_text(raw_text, aligned, extracted_mentions,
   ])
   return decorated_text, mention_groups
 
+
+def print_results(results, vocab, print_mention_descs=True):
+  '''
+  Args:
+  - results: An Ordereddict keyed by 'doc_key', whose elements are a dictionary that has the keys, 'raw_text' and 'aligned_results'
+    '''
+  color_notations = [
+    ('Success', BLUE, ''),
+    ('Wrong or No Anaphora (Root)', MAGENTA, ''),
+    ('Wrong Antecedent', RED, ''), 
+    ('No Antecedent (Anaphora)', GREEN, ''),
+    ('Not Extracted', CYAN, ''),
+    ('Incorrect Mention', BOLD, ''),
+    ('Unknown word', UNDERLINE, ''),
+  ]
+
+  print("<Colors>")
+  print('\n'.join([color + k + RESET + ' : ' + desc for k, color, desc in color_notations]))
+  print()
+
+  results_by_mention_groups = []
+  for i, (doc_key, result) in enumerate(results.items()):
+    print("===%03d===\t%s" % (i, doc_key))
+    raw_text = flatten(result['raw_text'])
+    extracted_mentions = result['extracted_mentions']
+    predicted_antecedents = result['predicted_antecedents']
+    aligned = result['aligned_results']
+    speakers = result['speakers']
+
+    print('<text>')
+    decorated_text, mention_groups = print_colored_text(
+      raw_text, aligned, extracted_mentions, predicted_antecedents, speakers,
+      vocab.word)
+    results_by_mention_groups.append([mention_groups, raw_text])
+
+    print('<cluster>')
+    for j, (gold_cluster, predicted_cluster) in enumerate(aligned):
+      g = ["".join(decorated_text[s:e+1]) + str((s, e)) for (s,e) in gold_cluster]
+      p = ["".join(decorated_text[s:e+1]) + str((s, e)) for (s,e) in predicted_cluster]
+      print("%03d-G%02d  " % (i, j) , ', '.join(g))
+      print("%03d-P%02d  " % (i, j) , ', '.join(p))
+      if result.mention_descs and print_mention_descs:
+        print("%03d-D%02d  " % (i, j))
+        for (s, e) in set(gold_cluster + predicted_cluster):
+          desc = "".join(decorated_text[s:e+1]) + str((s, e)) 
+          desc += ':\t' + result.mention_descs[(s,e)]
+          print(' - ' + desc)
+    print('')
+
+  statistics = get_statistics(results_by_mention_groups, vocab.word)
+  header = ['Category'] + list(list(statistics.values())[0].keys())
+    
+  n_mentions_by_type = defaultdict(int)
+  for _, stat in statistics.items():
+    for mention_type, n in stat.items():
+      n_mentions_by_type[mention_type] += n
+  data = [
+    [category] + ['%.2f' % (100.0 * n / n_mentions_by_type[mention_type]) 
+                  for mention_type, n in cnt_by_mention_type.items()] 
+    for category, cnt_by_mention_type in statistics.items()]
+  data.append(['# Mentions'] + [x for x in n_mentions_by_type.values()])
+  pd.set_option("display.max_colwidth", 80)
+  df = pd.DataFrame(data, columns=header).ix[:, header]
+  df = df.set_index('Category')
+  print ('<Mention group statistics>')
+  print(df)
+  print()
+  print ('<csv ver>')
+  print(df.to_csv())
+  return df
