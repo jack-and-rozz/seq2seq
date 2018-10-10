@@ -1,7 +1,6 @@
 # coding: utf-8
-import math
 import tensorflow as tf
-
+from core.models.wikiP2D.encoder import SentenceEncoder, MultiEncoderWrapper #
 
 class ManagerBase(object):
   def __init__(self, sess, config):
@@ -53,6 +52,7 @@ class ManagerBase(object):
 class ModelBase(object):
   def __init__(self, sess, config):
     self.sess = sess
+    self.scope = tf.get_variable_scope()
     self.loss_weight = config.loss_weight if 'loss_weight' in config else 1.0
     self.debug_ops = []
     self.global_step = tf.get_variable(
@@ -68,14 +68,6 @@ class ModelBase(object):
     self._next_score = tf.placeholder(tf.float32, name='max_score_ph', shape=[])
     self._update_max_score = tf.assign(self.max_score, self._next_score)
 
-  def initialize_embeddings(self, name, emb_shape, initializer=None, 
-                            trainable=True):
-    if not initializer:
-      initializer = tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3))
-    embeddings = tf.get_variable(name, emb_shape, trainable=trainable,
-                                 initializer=initializer)
-    return embeddings
-
   def get_input_feed(self, batch, is_training):
     return {}
 
@@ -88,3 +80,24 @@ class ModelBase(object):
     #self.sess.run(tf.assign(self.max_score, tf.constant(score, dtype=tf.float32)))
     
     self.sess.run(self._update_max_score, feed_dict={self._next_score:score})
+
+  def setup_encoder(self, shared_encoder, use_local_rnn, scope=None):
+    if use_local_rnn:
+      private_encoder = SentenceEncoder(shared_encoder.config, 
+                                        shared_encoder.is_training, 
+                                        shared_encoder.word_encoder,
+                                        shared_scope=scope)
+      encoders = [shared_encoder, private_encoder]
+      return MultiEncoderWrapper(encoders)
+    else:
+      return shared_encoder
+
+
+  def define_combination(self, other_models):
+    '''
+    This function is to define combined executions across different models. 
+    (e.g. run a description decoder to coref dataset)
+    <Args>
+    - all_models : a list of models.
+    '''
+    pass

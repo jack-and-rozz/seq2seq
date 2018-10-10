@@ -1,4 +1,6 @@
+
 #coding: utf-8
+import math
 import shutil
 import tensorflow as tf
 from tensorflow.python.client import device_lib
@@ -127,8 +129,6 @@ def projection(inputs, output_size, initializer=None):
   return ffnn(inputs, 0, -1, output_size, dropout=None, output_weights_initializer=initializer)
 
 
-
-
 def batch_loop(loop_func, *args, n_parallel=10):
   '''
   Args:
@@ -153,3 +153,10 @@ def batch_loop(loop_func, *args, n_parallel=10):
     return res
 
 
+def initialize_embeddings(name, emb_shape, initializer=None, 
+                          trainable=True):
+  if not initializer:
+    initializer = tf.random_uniform_initializer(-math.sqrt(3), math.sqrt(3))
+  embeddings = tf.get_variable(name, emb_shape, trainable=trainable,
+                               initializer=initializer)
+  return embeddings

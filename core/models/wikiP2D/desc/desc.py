@@ -12,27 +12,33 @@ from core.models.wikiP2D.desc.evaluation import evaluate_and_print
 from core.seq2seq.rnn import setup_cell
 from core.vocabulary.base import PAD_ID
 from core.models.wikiP2D.decoder import RNNDecoder
-from core.models.wikiP2D.coref.coref import CorefModelBase
 
 START_TOKEN = PAD_ID
 END_TOKEN = PAD_ID
 
-class DescriptionGeneration(ModelBase):
-  def __init__(self, sess, config, manager, encoder, activation=tf.nn.relu):
+
+class DescModelBase(ModelBase):
+  pass
+
+class DescriptionGeneration(DescModelBase):
+  def __init__(self, sess, config, manager, activation=tf.nn.relu):
     """
     Args:
     """
     super(DescriptionGeneration, self).__init__(sess, config)
     self.config = config
     self.activation = activation
-    self.encoder = encoder
-    self.other_tasks = manager.tasks
-    self.vocab = manager.vocab
-    self.is_training = encoder.is_training
     self.dataset = config.dataset
     self.train_shared = config.train_shared
-    self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
 
+    # Encoder
+    self.is_training = manager.is_training
+    self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
+    self.vocab = manager.vocab
+    self.encoder = self.setup_encoder(manager.shared_layers.encoder, 
+                                      config.use_local_rnn)
+
+    # Placeholders
     self.ph = self.setup_placeholders()
 
     enc_sentence_length = tf.count_nonzero(self.ph.text.word, 
@@ -40,16 +46,15 @@ class DescriptionGeneration(ModelBase):
     enc_context_length =  tf.count_nonzero(enc_sentence_length, 
                                            axis=-1, dtype=tf.float32)
 
-    word_repls = encoder.word_encoder.word_encode(self.ph.text.word)
-    char_repls = encoder.word_encoder.char_encode(self.ph.text.char)
+    word_repls = self.encoder.word_encoder.word_encode(self.ph.text.word)
+    char_repls = self.encoder.word_encoder.char_encode(self.ph.text.char)
     enc_inputs = [word_repls, char_repls]
     # Encode input text
     enc_inputs, enc_outputs, enc_state = self.encoder.encode(
       enc_inputs, enc_sentence_length, prop_gradients=self.train_shared)
-    self.adv_outputs = enc_outputs
 
     mention_starts, mention_ends = tf.unstack(self.ph.link, axis=-1)
-    mention_repls, head_scores = encoder.get_batched_mention_emb(
+    mention_repls, head_scores = self.encoder.get_batched_mention_emb(
       enc_inputs, enc_outputs, mention_starts, mention_ends) # [batch_size, max_n_contexts, mention_size]
     if not self.train_shared:
       mention_repls = tf.stop_gradient(mention_repls)
@@ -89,11 +94,9 @@ class DescriptionGeneration(ModelBase):
       average_across_timesteps=True, average_across_batch=True)
     #self.debug_ops = [self.ph.text.word, enc_sentence_length, enc_context_length]
 
-    # Combined tests with coref task.
-    coref_model = [x for x in self.other_tasks.values() 
-                   if isinstance(x, CorefModelBase)]
-    if coref_model:
-      coref_model = coref_model[0].generate_mention_desc(self.decoder)
+    with tf.name_scope('AdversarialInputs'):
+      self.adv_inputs = tf.reshape(tf.reduce_mean(enc_outputs, axis=1), 
+                                   [-1, shape(enc_outputs, -1)])
 
   def setup_placeholders(self):
     # Placeholders

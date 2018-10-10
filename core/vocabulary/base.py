@@ -277,12 +277,10 @@ class VocabularyWithEmbedding(WordVocabularyBase):
 class PredefinedCharVocab(CharVocabularyBase):
   def __init__(self, config, start_vocab=None):
     super(PredefinedCharVocab, self).__init__()
-    vocab_path = config.vocab_path
-    vocab_size = config.vocab_size
     self.trainable = True
     self.start_vocab = start_vocab if start_vocab else START_VOCAB
     self.tokenizer = char_tokenizer()
-    self.vocab, self.rev_vocab = self.init_vocab(vocab_path, vocab_size)
+    self.vocab, self.rev_vocab = self.init_vocab(config.vocab_path, config.vocab_size)
 
   def init_vocab(self, vocab_path, vocab_size):
     with open(vocab_path) as f:

@@ -41,16 +41,16 @@ class ExperimentManager(ManagerBase):
         self.dataset[k] = dataset_type(v.dataset, self.vocab)
 
   def get_batch(self, batch_type):
-    batches = common.recDotDict({'is_training': False})
-    do_shuffle = False
+    batches = common.recDotDefaultDict()
 
     if batch_type == 'train':
       batches.is_training = True
       do_shuffle = True
+    else:
+      batches.is_training = False
+      do_shuffle = False
 
-    for task_name in self.config.tasks:
-      if not task_name in self.dataset:
-        continue
+    for task_name in self.dataset:
       batches[task_name] = getattr(self.dataset[task_name], batch_type).get_batch(
         self.config.tasks[task_name].batch_size,
         do_shuffle=do_shuffle) 
@@ -93,6 +93,8 @@ class ExperimentManager(ManagerBase):
     return self.model
 
   def debug(self):
+    m = self.create_model(self.config, load_best=True)
+    exit(1)
     task_name = [k for k in self.config.tasks][0]
     batches = self.dataset[task_name].train.get_batch(
       self.config.tasks[task_name].batch_size, do_shuffle=True)
@@ -211,6 +213,8 @@ class ExperimentManager(ManagerBase):
     epoch = m.epoch.eval()
     save_as_best = [False for t in tasks]
     for i, (task_name, task_model) in enumerate(tasks.items()):
+      if not task_name in self.dataset:
+        continue
       mode = 'valid'
       batches = self.get_batch(mode)[task_name]
       output_path = self.tests_path + '/%s_%s.%02d' % (task_name, mode, epoch)
@@ -236,16 +240,29 @@ class ExperimentManager(ManagerBase):
 
   @common.timewatch()
   def test(self):
-    mode = 'test'
     target_tasks = []
-    
+    #target_tasks = ['coref']
     m = self.create_model(self.config, load_best=True)
     tasks = OrderedDict([(k, v) for k, v in m.tasks.items() if not target_tasks or k in target_tasks])
+
+    mode = 'valid'
     for i, (task_name, task_model) in enumerate(tasks.items()):
+      if not task_name in self.dataset:
+        continue
+
       batches = self.get_batch(mode)[task_name]
       output_path = self.tests_path + '/%s_%s.best' % (task_name, mode)
       test_score, _ = task_model.test(batches, mode, self.logger, output_path)
-      self.logger.info("Epoch %d (test): %s score = (%.3f): " % (m.epoch.eval(), task_name, test_score))
+      self.logger.info("Epoch %d (%s): %s score = (%.3f): " % (m.epoch.eval(), mode, task_name, test_score))
+    
+    mode = 'test'
+    for i, (task_name, task_model) in enumerate(tasks.items()):
+      if not task_name in self.dataset:
+        continue
+      batches = self.get_batch(mode)[task_name]
+      output_path = self.tests_path + '/%s_%s.best' % (task_name, mode)
+      test_score, _ = task_model.test(batches, mode, self.logger, output_path)
+      self.logger.info("Epoch %d (%s): %s score = (%.3f): " % (m.epoch.eval(), mode, task_name, test_score))
 
   def save_model(self, model, save_as_best=False):
     checkpoint_path = self.checkpoints_path + '/model.ckpt'

@@ -233,17 +233,8 @@ def logManager(logger_name='main',
     return logger
 
 ############################################
-#       Dump Data
+#     Read and Write files
 ############################################
-
-def load_or_create(processed_path, func, *args):
-  print (processed_path)
-  if not os.path.exists(processed_path):
-    data = func(*args)
-    pickle.dump(data, open(processed_path, 'wb'))
-  else:
-    data = pickle.load(open(processed_path, "rb"))
-  return data
 
 def dump_as_json(entities, file_path, as_jsonlines=True):
   if as_jsonlines:
@@ -267,47 +258,20 @@ def read_jsonlines(source_path, max_rows=0):
     #data[d.qid] = d
   return data
 
-
 def read_json(source_path):
   data = json.load(open(source_path)) 
   return recDotDict(data)
 
-
-def read_file(file_path, type_f=str, do_flatten=False, replace_patterns=None,
-              do_tokenize=True, delim=' ', max_rows=None):
-  lines = []
-  for i, line in enumerate(open(file_path, "r")):
-    if max_rows and i > max_rows:
+def read_embeddings(emb_path, max_rows=0):
+  d = collections.OrderedDict()
+  for i, l in enumerate(open(emb_path)):
+    if max_rows and i >= max_rows:
       break
-    line = line.replace("\n", "")
-    if replace_patterns:
-      for (before, after) in replace_patterns:
-        line = line.replace(before,  after)
-    lines.append(line)
-
-  if do_tokenize:
-    lines = [[type_f(t) for t in line.split(delim) if t != ''] for line in lines]
-
-  if do_flatten:
-    lines = flatten(lines)
-  return lines
-
-def read_file_with_header(file_path, type_f=str, do_flatten=False, delim=' ', do_tokenize=True):
-    data = read_file(file_path, type_f, do_flatten, delim, do_tokenize)
-    header = data[0]
-    data = data[1:]
-    return header, data
-
-def read_vector(file_path, type_f=float):
-    # あんまりサイズが大きくなるとエラー？
-    lines = read_file(file_path)
-    vector_dict = collections.OrderedDict({})
-    # 初めの一行目はベクトルの行数と次元なのでスキップ
-    for l in lines[1:]:
-        vector_dict[l[0]] = np.array([type_f(w) for w in l[1:]])
-    return vector_dict
-
-
+    l = l.replace('\n', '').split(' ')
+    word = l[0]
+    vector = [float(x) for x in l[1:]]
+    d[word] = vector
+  return d
 
 ############################################
 #        String

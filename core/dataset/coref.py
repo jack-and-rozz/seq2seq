@@ -13,9 +13,14 @@ from core.dataset.base import DatasetBase, padding
 from core.vocabulary.base import _UNK, PAD_ID
 from core.utils.common import dotDict, recDotDict, recDotDefaultDict, batching_dicts, flatten, flatten_batch
 
-def load_data(fpath):
+def load_data(fpath, genres):
   sys.stderr.write("Loading coref dataset from \'%s\'... \n" % fpath)
-  return [json.loads(line) for line in open(fpath)]
+  def _load(line):
+    d = json.loads(line)
+    return d if d['doc_key'][:2] in genres else None
+
+  data = [_load(line) for line in open(fpath)]
+  return [d for d in data if d]
 
 class FeatureVocab(object):
   def __init__(self, all_tokens):
@@ -111,28 +116,31 @@ class _CoNLL2012CorefDataset(object):
 
 
 class CoNLL2012CorefDataset(DatasetBase):
-  def __init__(self, dataset_path, vocab):
+  def __init__(self, config, vocab):
     '''
     Args:
-    - dataset_path : A dictionary which contains pathes of CoNLL datasets.
+    - config : A config dictionary.
     - w_vocab :
     - c_vocab :
     '''
-    source_dir = dataset_path.source_dir
-    train_path = os.path.join(source_dir, dataset_path.train_data)
-    valid_path = os.path.join(source_dir, dataset_path.valid_data)
-    test_path = os.path.join(source_dir, dataset_path.test_data)
+    source_dir = config.source_dir
+    train_path = os.path.join(source_dir, config.train_data)
+    valid_path = os.path.join(source_dir, config.valid_data)
+    test_path = os.path.join(source_dir, config.test_data)
     self.vocab = vocab
 
-    # As this dataset is relatively small, we don't need to store processed files.
-    train_data = load_data(train_path)
-    valid_data = load_data(valid_path)
-    test_data = load_data(test_path)
+    # The processed files are not stored as this dataset is relatively small.
+    train_data = load_data(train_path, config.genres.train)
+    valid_data = load_data(valid_path, config.genres.valid)
+    test_data = load_data(test_path, config.genres.test)
 
     genre_tokens = [d['doc_key'][:2] for d in train_data] # wb/c2e/00/c2e_0022_0 -> wb
     self.genre_vocab = FeatureVocab(genre_tokens)
 
-    self.train = _CoNLL2012CorefDataset(train_data, vocab, self.genre_vocab)
-    self.valid = _CoNLL2012CorefDataset(valid_data, vocab, self.genre_vocab)
-    self.test = _CoNLL2012CorefDataset(test_data, vocab, self.genre_vocab)
+    self.train = _CoNLL2012CorefDataset(train_data, vocab, 
+                                        self.genre_vocab)
+    self.valid = _CoNLL2012CorefDataset(valid_data, vocab, 
+                                        self.genre_vocab)
+    self.test = _CoNLL2012CorefDataset(test_data, vocab, 
+                                       self.genre_vocab)
 

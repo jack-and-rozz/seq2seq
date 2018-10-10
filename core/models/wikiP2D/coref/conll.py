@@ -34,7 +34,7 @@ def output_conll(input_file, output_file, predictions):
       end_map[k] = [cluster_id for cluster_id, start in sorted(v, key=operator.itemgetter(1), reverse=True)]
     prediction_map[doc_key] = (start_map, end_map, word_map)
 
-  ## NOTE: the string written to 'output_file' must be byte object in python3.
+  ## NOTE: the strings written to 'output_file' must be a byte object in python3.
   word_index = 0
   for line in input_file.readlines():
     row = line.split()
@@ -45,9 +45,13 @@ def output_conll(input_file, output_file, predictions):
       if begin_match:
         doc_key = get_doc_key(begin_match.group(1), begin_match.group(2))
         start_map, end_map, word_map = prediction_map[doc_key]
+        #start_map, end_map, word_map = prediction_map[doc_key] if doc_key in prediction_map else None, None, None
         word_index = 0
       line += "\n"
       output_file.write(line.encode())
+      #line += "\n"
+      #output_file.write(line.encode())
+    #else:
     else:
       assert get_doc_key(row[0], row[1]) == doc_key
       coref_list = []
@@ -69,8 +73,8 @@ def output_conll(input_file, output_file, predictions):
       output_file.write(output_line.encode())
       word_index += 1
 
-def official_conll_eval(gold_path, predicted_path, metric, official_stdout=False,
-                        scorer_path="dataset/coref/conll-2012/scorer/v8.01/scorer.pl"):
+def official_conll_eval(gold_path, predicted_path, metric, scorer_path,
+                        official_stdout=False):
   cmd = [scorer_path, metric, gold_path, predicted_path, "none"]
 
   process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
@@ -90,9 +94,10 @@ def official_conll_eval(gold_path, predicted_path, metric, official_stdout=False
   f1 = float(coref_results_match.group(3))
   return { "r": recall, "p": precision, "f": f1 }
 
-def evaluate_conll(gold_path, predictions, official_stdout=False):
+def evaluate_conll(gold_path, predictions, scorer_path, official_stdout=False):
   with tempfile.NamedTemporaryFile(delete=False) as prediction_file:
+    sys.stderr.write(prediction_file.name + '\n')
     with open(gold_path, "r") as gold_file:
       output_conll(gold_file, prediction_file, predictions)
     print(("Predicted conll file: {}".format(prediction_file.name)))
-  return { m: official_conll_eval(gold_file.name, prediction_file.name, m, official_stdout) for m in ("muc", "bcub", "ceafe") }
+  return { m: official_conll_eval(gold_file.name, prediction_file.name, m, scorer_path, official_stdout) for m in ("muc", "bcub", "ceafe") }

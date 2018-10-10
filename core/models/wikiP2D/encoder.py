@@ -9,9 +9,8 @@ from tensorflow.python.ops import rnn
 from tensorflow.contrib.rnn import LSTMStateTuple
 
 from core.utils.common import dbgprint, dotDict
-from core.utils.tf_utils import shape, cnn, linear, projection, batch_gather, batch_loop 
+from core.utils.tf_utils import shape, cnn, linear, projection, batch_gather, batch_loop, initialize_embeddings
 from core.seq2seq.rnn import setup_cell
-from core.models.base import ModelBase
 from core.vocabulary.base import VocabularyWithEmbedding
 
 
@@ -39,10 +38,9 @@ def merge_state(state, merge_func=tf.concat):
   return state
 
 
-class WordEncoder(ModelBase):
+class WordEncoder(object):
   def __init__(self, config, is_training, vocab,
                activation=tf.nn.relu, shared_scope=None):
-    self.reuse = None
     self.vocab = vocab.encoder
     self.is_training = is_training
     self.activation = activation
@@ -61,18 +59,18 @@ class WordEncoder(ModelBase):
 
     with tf.device('/cpu:0'):
       self.embeddings = dotDict()
-      self.embeddings.word = self.initialize_embeddings('word_emb', w_emb_shape, initializer=w_initializer, trainable=w_trainable)
+      self.embeddings.word = initialize_embeddings('word_emb', w_emb_shape, initializer=w_initializer, trainable=w_trainable)
 
     if self.cbase:
       c_emb_shape = [vocab.char.size, config.embedding_size.char] 
       with tf.device('/cpu:0'):
-        self.embeddings.char = self.initialize_embeddings(
+        self.embeddings.char = initialize_embeddings(
           'char_emb', c_emb_shape, trainable=True)
 
   def word_encode(self, inputs):
     if inputs is None:
       return inputs
-    with tf.variable_scope(self.shared_scope or "WordEncoder", reuse=self.reuse):
+    with tf.variable_scope(self.shared_scope or "WordEncoder"):
       outputs = tf.nn.embedding_lookup(self.embeddings.word, inputs)
       outputs = tf.nn.dropout(outputs, self.keep_prob)
     return outputs
@@ -88,7 +86,7 @@ class WordEncoder(ModelBase):
       return inputs
 
 
-    with tf.variable_scope(self.shared_scope or "WordEncoder", reuse=self.reuse):
+    with tf.variable_scope(self.shared_scope or "WordEncoder"):
       # Flatten the input tensor to each word (rank-3 tensor).
       with tf.name_scope('flatten'):
         char_repls = tf.nn.embedding_lookup(self.embeddings.char, inputs) # [*, max_word_len, char_emb_size]
@@ -109,17 +107,16 @@ class WordEncoder(ModelBase):
       ) # [flattened_batch_size, cnn_output_size]
       outputs = tf.reshape(cnn_outputs, other_shapes + [shape(cnn_outputs, -1)]) # [*, cnn_output_size]
       outputs = tf.nn.dropout(outputs, self.keep_prob)
-      if self.shared_scope:
-        self.reuse = True
     return outputs
 
   def get_input_feed(self, batch):
     input_feed = {}
     return input_feed
 
-class SentenceEncoder(ModelBase):
+class SentenceEncoder(object):
   def __init__(self, config, is_training, word_encoder, activation=tf.nn.relu, 
                shared_scope=None):
+    self.config = config
     self.is_training = is_training
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
     self.use_boundary = config.use_boundary
@@ -135,17 +132,14 @@ class SentenceEncoder(ModelBase):
     self.activation = activation
     self.shared_scope = shared_scope
 
-    self.reuse_encode = None # to reuse variables defined in encode()
-    self.reuse_mention = None # to reuse variables defined in get_mention_emb()
-
     # For 'initial_state' of CustomLSTMCell, different scopes are required in these initializations.
 
-    with tf.variable_scope('fw_cell', reuse=tf.get_variable_scope().reuse):
+    with tf.variable_scope('fw_cell'):
       self.cell_fw = setup_cell(config.cell, config.rnn_size, 
                                 num_layers=config.num_layers, 
                                 keep_prob=self.keep_prob)
 
-    with tf.variable_scope('bw_cell', reuse=tf.get_variable_scope().reuse):
+    with tf.variable_scope('bw_cell'):
       self.cell_bw = setup_cell(config.cell, config.rnn_size, 
                                 num_layers=config.num_layers, 
                                 keep_prob=self.keep_prob)
@@ -158,8 +152,7 @@ class SentenceEncoder(ModelBase):
     for x in inputs:
       assert len(x.get_shape()) == len(sequence_length.get_shape()) + 2
 
-    with tf.variable_scope(self.shared_scope or "SentenceEncoder", 
-                           reuse=self.reuse_encode) as scope:
+    with tf.variable_scope(self.shared_scope or "SentenceEncoder") as scope:
       if isinstance(inputs, list):
         inputs = tf.concat([x for x in inputs if x is not None], 
                            axis=-1) # [*, max_sequence_len, hidden_size]
@@ -193,8 +186,6 @@ class SentenceEncoder(ModelBase):
       with tf.variable_scope("state"):
         state = merge_state(state, merge_func=self.merge_func.birnn)
 
-      if self.shared_scope:
-        self.reuse_encode = True 
 
       # Reshape the flattened output to that of the original tensor.
       outputs = tf.reshape(outputs, other_shapes + [max_sequence_len, shape(outputs, -1)])
@@ -229,8 +220,7 @@ class SentenceEncoder(ModelBase):
     - head_scores: [num_words, 1]
     '''
 
-    with tf.variable_scope(self.shared_scope or "SentenceEncoder", 
-                           reuse=self.reuse_mention) as scope:
+    with tf.variable_scope(self.shared_scope or "SentenceEncoder") as scope:
       with tf.variable_scope('get_mention_emb'):
         mention_emb_list = []
         mention_width = 1 + mention_ends - mention_starts # [num_mentions]
@@ -258,9 +248,6 @@ class SentenceEncoder(ModelBase):
             mention_head_emb = tf.reduce_sum(mention_attention * mention_text_emb, 1) # [num_mentions, emb]
             mention_emb_list.append(mention_head_emb)
         mention_emb = tf.concat(mention_emb_list, 1) # [num_mentions, emb]
-
-      if self.shared_scope:
-        self.reuse_mention = True 
 
       return mention_emb, head_scores
 
@@ -295,8 +282,7 @@ class SentenceEncoder(ModelBase):
       mention_ends = tf.reshape(mention_ends, 
                                 [flattened_batch_size])
 
-    with tf.variable_scope(self.shared_scope or "SentenceEncoder", 
-                           reuse=self.reuse_mention) as scope:
+    with tf.variable_scope(self.shared_scope or "SentenceEncoder") as scope:
       with tf.variable_scope('get_mention_emb'):
         mention_emb_list = []
         mention_width = 1 + mention_ends - mention_starts # [num_mentions]
@@ -333,8 +319,6 @@ class SentenceEncoder(ModelBase):
             mention_emb_list.append(mention_head_emb)
         mention_emb = tf.concat(mention_emb_list, 1) # [num_mentions, emb]
       self.debug_ops = [mention_starts, mention_ends, mention_indices, mention_attention, mention_mask]
-      if self.shared_scope:
-        self.reuse_mention = True 
 
       # Reshape the flattened outputs to the expected shape for the original input.
       mention_emb = tf.reshape(mention_emb, 
@@ -358,8 +342,7 @@ class MultiEncoderWrapper(SentenceEncoder):
     self.is_training = encoders[0].is_training
     self.vocab = encoders[0].vocab
     self.word_encoder = encoders[0].word_encoder
-    self.embeddings.word = encoders[0].embeddings.word
-    self.embeddings.char = encoders[0].embeddings.char
+    self.embeddings = encoders[0].embeddings
     self.cbase = encoders[0].cbase
     self.wbase = encoders[0].wbase
     self.shared_scope = encoders[0].shared_scope
@@ -371,8 +354,7 @@ class MultiEncoderWrapper(SentenceEncoder):
     outputs = []
     state = []
     for i, e in enumerate(self.encoders):
-      word_repls, o, s = e.encode(wc_sentences, sequence_length,
-                                  merge_func=self.merge_func.birnn)
+      word_repls, o, s = e.encode(wc_sentences, sequence_length)
       if not prop_gradients:
         word_repls = tf.stop_gradient(word_repls)
         if i == 0:

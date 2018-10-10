@@ -97,6 +97,8 @@ def print_colored_text(raw_text, aligned, extracted_mentions,
     for gm in gold_cluster:
       mention_to_gold_cluster_id[gm] = i
 
+
+  # TODO: 2018/09/30 分け方変更。後で区分メモ変更する
   # Goldに存在するメンションについて
   ## Root のみ
   success_root = []        # 先行詞を持たず，predictionの対応するクラスタにも自身が存在 (blue)
@@ -156,12 +158,15 @@ def print_colored_text(raw_text, aligned, extracted_mentions,
 
   mentions_and_colors = [
     (success_root, BLUE),
-    (failure_root, MAGENTA),
+    #(failure_root, MAGENTA),
+    (failure_root, BLUE),
     (success_linked, BLUE),
     (failure_linked, RED),
-    (failure_unlinked, GREEN),
+    #(failure_unlinked, GREEN),
+    (failure_unlinked, RED),
     (failure_unextracted, CYAN),
-    (failure_irregular_mention, BOLD),
+    #(failure_irregular_mention, BOLD),
+    (failure_irregular_mention, MAGENTA),
     (others, YELLOW),
     (unknowns, UNDERLINE)
   ]
@@ -194,13 +199,21 @@ def print_colored_text(raw_text, aligned, extracted_mentions,
   print("".join(decorated_punctuated_text) + '\n')
 
   mention_groups = OrderedDict([
-    ('Success', success_root+ success_linked),
-    ('Wrong or No Anaphora (Root)', failure_root),
-    ('Wrong Antecedent', failure_linked), 
-    ('No Antecedent (Anaphora)', failure_unlinked),
+    ('Success', success_root+ success_linked + failure_root),
+    #('Wrong or No Anaphora (Root)', failure_root),
+    ('Wrong Antecedent', failure_linked + failure_unlinked), 
+    #('No Antecedent (Anaphora)', failure_unlinked),
     ('Not Extracted', failure_unextracted),
-    ('Only in Prediction', failure_irregular_mention),
+    ('Not in Gold', failure_irregular_mention),
   ])
+  # mention_groups = OrderedDict([
+  #   ('Success', success_root+ success_linked),
+  #   ('Wrong or No Anaphora (Root)', failure_root),
+  #   ('Wrong Antecedent', failure_linked), 
+  #   ('No Antecedent (Anaphora)', failure_unlinked),
+  #   ('Not Extracted', failure_unextracted),
+  #   ('Only in Prediction', failure_irregular_mention),
+  # ])
   return decorated_text, mention_groups
 
 
@@ -211,11 +224,11 @@ def print_results(results, vocab, print_mention_descs=True):
     '''
   color_notations = [
     ('Success', BLUE, ''),
-    ('Wrong or No Anaphora (Root)', MAGENTA, ''),
+    #('Wrong or No Anaphora (Root)', MAGENTA, ''),
     ('Wrong Antecedent', RED, ''), 
-    ('No Antecedent (Anaphora)', GREEN, ''),
+    #('No Antecedent (Anaphora)', GREEN, ''),
     ('Not Extracted', CYAN, ''),
-    ('Incorrect Mention', BOLD, ''),
+    ('Not in Gold', MAGENTA, ''),
     ('Unknown word', UNDERLINE, ''),
   ]
 
@@ -252,17 +265,20 @@ def print_results(results, vocab, print_mention_descs=True):
           print(' - ' + desc)
     print('')
 
+  # statistics[result_type][mention_type] = cnt
   statistics = get_statistics(results_by_mention_groups, vocab.word)
-  header = ['Category'] + list(list(statistics.values())[0].keys())
-    
+
+  mention_types = list(list(statistics.values())[0].keys())
+  header = ['Category'] + mention_types
+
+  # Get the sums of each mention type.
   n_mentions_by_type = defaultdict(int)
   for _, stat in statistics.items():
     for mention_type, n in stat.items():
       n_mentions_by_type[mention_type] += n
   data = [
-    [category] + ['%.2f' % (100.0 * n / n_mentions_by_type[mention_type]) 
-                  for mention_type, n in cnt_by_mention_type.items()] 
-    for category, cnt_by_mention_type in statistics.items()]
+    [category] + ['%.2f' % (100.0 * n / n_mentions_by_type[mention_type]) if n_mentions_by_type[mention_type] else '0.0' for mention_type, n in cnt_by_mention_type.items()]  for category, cnt_by_mention_type in statistics.items()]
+
   data.append(['# Mentions'] + [x for x in n_mentions_by_type.values()])
   pd.set_option("display.max_colwidth", 80)
   df = pd.DataFrame(data, columns=header).ix[:, header]

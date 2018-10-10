@@ -5,7 +5,7 @@ from pprint import pprint
 import tensorflow as tf
 from tensorflow.contrib.rnn import LSTMStateTuple
 
-from core.utils.tf_utils import shape, linear, make_summary
+from core.utils.tf_utils import shape, linear, make_summary, initialize_embeddings
 from core.utils.common import dbgprint, recDotDefaultDict, flatten, flatten_recdict, flatten_batch
 from core.models.base import ModelBase
 from core.seq2seq.rnn import setup_cell
@@ -27,11 +27,12 @@ class RNNDecoder(ModelBase):
     if embeddings:
       self.embeddings = embeddings 
     else:
-      w_initializer = tf.constant_initializer(vocab.word.embeddings)
-      w_emb_shape = vocab.word.embeddings.shape
-      w_trainable = vocab.trainable
       with tf.device('/cpu:0'):
-        self.embeddings = self.initialize_embeddings('word_emb', w_emb_shape, initializer=w_initializer, trainable=w_trainable)
+        self.embeddings = initialize_embeddings(
+          'word_emb', 
+          vocab.word.embeddings.shape, 
+          initializer=tf.constant_initializer(vocab.word.embeddings), 
+          trainable=vocab.word.trainable)
 
   def decode_train(self, init_state, dec_input_tokens, 
                    dec_input_lengths, dec_output_lengths):

@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow as tf
 
 from core.utils import evaluation, tf_utils
-from core.utils.common import dbgprint, dotDict
+from core.utils.common import dbgprint, dotDict, recDotDefaultDict
 from core.models.base import ModelBase, ManagerBase
 #import core.models.graph as graph
 #import core.models.wikiP2D.encoder as encoder
@@ -29,16 +29,6 @@ available_models = [
 ]
 available_models = dotDict({c.__name__:c for c in available_models})
 
-
-def get_multi_encoder(config, shared_sent_encoder, word_encoder, 
-                      is_training, scope):
-  with tf.variable_scope(scope):
-    private_sent_encoder = SentenceEncoder(config, is_training, word_encoder,
-                                           shared_scope=scope)
-    encoders = [shared_sent_encoder, private_sent_encoder]
-  return MultiEncoderWrapper(encoders)
-
-
 ##############################
 ##      MTL Manager
 ##############################
@@ -49,62 +39,58 @@ class MTLManager(ManagerBase):
     self.is_training = tf.placeholder(tf.bool, name='is_training', shape=[]) 
     self.vocab = vocab
 
-    # with tf >= 1.2, the scope where a RNNCell is called first is cached and the variables are automatically reused.
-    with tf.variable_scope("WordEncoder") as scope:
-      self.word_encoder = WordEncoder(config.encoder, self.is_training, 
-                                      vocab.encoder,
-                                      shared_scope=scope)
-    with tf.variable_scope("GlobalEncoder") as scope:
-      self.shared_sent_encoder = SentenceEncoder(config.encoder, self.is_training,
-                                                 self.word_encoder,
-                                                 shared_scope=scope)
-    ## Define each task
-    self.tasks = dotDict()
-    for i, (task_name, task_config) in enumerate(config.tasks.items()):
-      num_gpus = len(tf_utils.get_available_gpus())
-      if num_gpus:
-        device = '/gpu:%d' % (i % num_gpus)
-        sys.stderr.write('Building %s model to %s...\n' % (task_name, device))
-      else:
-        device = None
-        sys.stderr.write('Building %s model to cpu ...\n' % (task_name))
+    # Define shared layers (Encoder, Decoder, etc.)
+    self.shared_layers = self.setup_shared_layers(config, vocab)
 
-      with tf.variable_scope(task_name) as encoder_scope:
-        #with tf.variable_scope('SentenceEncoder') as encoder_scope:
-        encoder = self.get_sent_encoder(
-          config.encoder, task_config.use_local_rnn, encoder_scope)
-        if i != len(config.tasks) - 1 and available_models[task_config.model_type] == TaskAdversarial:
-          raise ValueError('Adversarial task must be on the last of tasks in the config.')
-        task = self.define_task(sess, task_config, encoder, device)
-      self.tasks[task_name] = task
-      print(self.tasks)
+    # Define each task
+    self.tasks = self.setup_tasks(sess, config)
+
     self.losses = [t.loss for t in self.tasks.values()]
     self.updates = self.get_updates()
 
-  def define_task(self, sess, task_config, encoder, device=None):
+  def setup_shared_layers(self, config, vocab):
+    with tf.variable_scope("Shared", reuse=tf.AUTO_REUSE) as scope:
+      shared_layers = recDotDefaultDict()
+      shared_layers.scope = scope
+      shared_layers.is_training = self.is_training
+      with tf.variable_scope("WordEncoder") as scope:
+        # Layers to encode a word to a word embedding, and characters to a representation via CNN..
+        word_encoder = WordEncoder(config.encoder, self.is_training, 
+                                   vocab.encoder, shared_scope=scope)
+
+      # Layers to encode a sequence of word embeddings and outputs from char CNN.
+      with tf.variable_scope("SentEncoder") as scope:
+        shared_layers.encoder = SentenceEncoder(
+          config.encoder, self.is_training, word_encoder, shared_scope=scope)
+    return shared_layers
+
+  def setup_tasks(self, sess, config):
+    num_gpus = len(tf_utils.get_available_gpus())
+    tasks = dotDict()
+    for i, (task_name, task_config) in enumerate(config.tasks.items()):
+      device = '/gpu:%d' % (i % num_gpus) if num_gpus else "/cpu:0"
+      sys.stderr.write('Building %s model to %s...\n' % (task_name, device))
+      with tf.variable_scope(task_name, reuse=tf.AUTO_REUSE):
+        task = self.define_task(sess, task_config, device)
+      tasks[task_name] = task
+
+    for i, (task_name, task_model) in enumerate(tasks.items()):
+      with tf.variable_scope(task_model.scope, reuse=tf.AUTO_REUSE):
+        device = '/gpu:%d' % (i % num_gpus) if num_gpus else "/cpu:0"
+        with tf.device(device):
+          other_models = [t for t in tasks.values() if task_model != t]
+          task_model.define_combination(other_models)
+    return tasks
+
+  def define_task(self, sess, task_config, device=None):
     task_class = available_models[task_config.model_type]
-    args = [sess, task_config, self, encoder]
-
-    if issubclass(task_class, TaskAdversarial):
-      args.append([t for t in self.tasks.values()
-                   if not isinstance(t, TaskAdversarial) ])
-      # To use adversarial MTL, training must be done simulteneously for now.
-      assert isinstance(self, MeanLoss)
-
+    args = [sess, task_config, self]
     if device:
       with tf.device(device):
         task = task_class(*args)
     else:
       task = task_class(*args)
     return task
-
-  def get_sent_encoder(self, config, use_local_rnn, scope):
-    if use_local_rnn:
-      encoder = get_multi_encoder(config, self.shared_sent_encoder, 
-                                  self.word_encoder, self.is_training, scope)
-    else:
-      encoder = self.shared_sent_encoder
-    return encoder
 
   def get_input_feed(self, batch, is_training):
     input_feed = {}
