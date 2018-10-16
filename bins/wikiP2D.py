@@ -301,6 +301,7 @@ def main(args):
 
   with tf.Graph().as_default(), tf.Session(config=tf_config) as sess:
     random.seed(0)
+    np.random.seed(0)
     tf.set_random_seed(0)
     manager = ExperimentManager(args, sess)
     getattr(manager, args.mode)()
