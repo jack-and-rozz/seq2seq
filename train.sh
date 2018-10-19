@@ -18,6 +18,6 @@ if [ $# -lt 4 ]; then
   cleanup=T
 fi
 
-select-gpu.sh $gpu_ids nohup python bins/wikiP2D.py $target_path train -ct $config_type --cleanup=$cleanup >> logs/$config_type.log 2>>logs/$config_type.err &
+select-gpu.sh $gpu_ids nohup python bins/wikiP2D.py $target_path train -ct $config_type --cleanup=$cleanup --log_device_placement=T >> logs/$config_type.log 2>>logs/$config_type.err &
 
 

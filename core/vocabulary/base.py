@@ -2,7 +2,7 @@
 import collections, os, time, re, sys, math
 from tensorflow.python.platform import gfile
 from orderedset import OrderedSet
-import core.utils.common as common
+from core.utils.common import flatten, colored, normalize_vector, dbgprint, timewatch
 import numpy as np
 #from sklearn.preprocessing import normalize
 
@@ -55,7 +55,7 @@ def char_tokenizer(special_words=START_VOCAB,
     words = sent.replace('\n', '').split()
     chars = [word2chars(w) for w in words]
     if flatten:
-      chars = common.flatten(chars)
+      chars = flatten(chars)
     return chars
   return _tokenizer
 
@@ -119,7 +119,7 @@ class WordVocabularyBase(VocabularyBase):
       sent_tokens = [self.id2token(word_id) for word_id in ids]
       if link_span:
         for i in range(link_span[0], link_span[1]+1):
-          sent_tokens[i] = common.colored(sent_tokens[i], 'link')
+          sent_tokens[i] = colored(sent_tokens[i], 'link')
       sent_tokens = [w for w in sent_tokens if w]
       return " ".join(sent_tokens)
     return _ids2tokens(ids, link_span)
@@ -145,6 +145,10 @@ class WordVocabularyBase(VocabularyBase):
       res = [self.token2id(word) if np.random.rand() <= word_dropout else self.vocab.get(_UNK) for word in tokens]
     else:
       res = [self.token2id(word) for word in tokens]
+      if [x for x in res if x > self.size]:
+          print(tokens)
+          print(res)
+          raise ValueError
 
     return res
 
@@ -185,7 +189,7 @@ class CharVocabularyBase(VocabularyBase):
                    for word in ids]
     if link_span:
       for i in range(link_span[0], link_span[1]+1):
-        sent_tokens[i] = common.colored(sent_tokens[i], 'link')
+        sent_tokens[i] = colored(sent_tokens[i], 'link')
       sent_tokens = [w for w in sent_tokens if w]
     return " ".join(sent_tokens)
 
@@ -210,11 +214,20 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     self.vocab, self.rev_vocab, self.embeddings = self.init_vocab(
       config.emb_configs, config.vocab_size)
 
-  @common.timewatch()
+  @timewatch()
   def init_vocab(self, emb_configs, vocab_size):
+    #if len(emb_configs) > 1 :
+    #  raise NotImplementedError
+
     # Load several pretrained embeddings and concatenate them.
     pretrained = [self.load(c['path'], vocab_size, c['size'], c['skip_first']) for c in emb_configs]
-    rev_vocab = common.flatten([list(e.keys()) for e in pretrained])
+    rev_vocab = OrderedSet()
+    for e in pretrained:
+      for w in e.keys():
+        if w not in rev_vocab:
+          rev_vocab.add(w)
+    rev_vocab = list(rev_vocab)
+    #rev_vocab = flatten([list(e.keys()) for e in pretrained])
     rev_vocab = self.start_vocab + rev_vocab[:vocab_size]
     vocab = collections.OrderedDict()
     for i,t in enumerate(rev_vocab):
@@ -223,9 +236,9 @@ class VocabularyWithEmbedding(WordVocabularyBase):
     # Merge pretrained embeddings.
     if self.normalize_embedding:
       # Normalize the pretrained embeddings for each of the embedding types.
-      embeddings = [common.flatten([common.normalize_vector(emb[w]) for emb in pretrained]) for w in vocab]
+      embeddings = [flatten([normalize_vector(emb[w]) for emb in pretrained]) for w in vocab]
     else:
-      embeddings = [common.flatten([emb[w] for emb in pretrained]) for w in vocab]
+      embeddings = [flatten([emb[w] for emb in pretrained]) for w in vocab]
 
     # tokens in START_VOCAB are randomly initialized.
     #rand_gen = random_embedding_generator(len(embeddings[0]))

@@ -24,6 +24,7 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
 
   def article2entries(self, article):
     entry = recDotDefaultDict()
+    entry.qid = article.qid
     entry.title.raw = article.title
 
     entry.desc.raw = self.vocab.decoder.word.tokenizer(article.desc)

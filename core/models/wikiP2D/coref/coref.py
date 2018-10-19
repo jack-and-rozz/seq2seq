@@ -378,7 +378,8 @@ class CoreferenceResolution(CorefModelBase):
 
   def test(self, batches, mode, logger, output_path):
     conll_eval_path = os.path.join(
-      self.config.dataset.source_dir, self.config.dataset['%s_gold' % mode])
+      self.config.dataset.gold_dir, 
+      self.config.dataset['%s_gold' % mode])
 
     with open(output_path + '.stat', 'w') as f:
       sys.stdout = f

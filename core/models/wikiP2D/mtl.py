@@ -9,21 +9,20 @@ import tensorflow as tf
 from core.utils import evaluation, tf_utils
 from core.utils.common import dbgprint, dotDict, recDotDefaultDict
 from core.models.base import ModelBase, ManagerBase
-#import core.models.graph as graph
-#import core.models.wikiP2D.encoder as encoder
+
 from core.models.wikiP2D.encoder import SentenceEncoder, WordEncoder, MultiEncoderWrapper
 from core.models.wikiP2D.desc.desc import DescriptionGeneration
-from core.models.wikiP2D.category.category import CategoryClassification
-from core.models.wikiP2D.graph.graph import GraphLinkPrediction
-from core.models.wikiP2D.relex.relex_base import RelationExtraction
+# from core.models.wikiP2D.category.category import CategoryClassification
+# from core.models.wikiP2D.graph.graph import GraphLinkPrediction
+# from core.models.wikiP2D.relex.relex_base import RelationExtraction
 from core.models.wikiP2D.coref.coref import CoreferenceResolution
 from core.models.wikiP2D.adversarial import TaskAdversarial
 
 available_models = [
-  CategoryClassification,
   DescriptionGeneration,
-  GraphLinkPrediction,
-  RelationExtraction,
+  # CategoryClassification,
+  # GraphLinkPrediction,
+  # RelationExtraction,
   CoreferenceResolution,
   TaskAdversarial,
 ]
@@ -156,18 +155,18 @@ class BatchIterative(MTLManager):
             output_feed.append(self.updates[task_name])
           t = time.time()
           outputs = self.sess.run(output_feed, input_feed)
-          t = time.time() - t
+          execution_time = time.time() - t
           step_loss = outputs[0]
 
           print('epoch: %d,' % self.epoch.eval(), 
                 'step: %d,' % num_steps_in_epoch[i],
                 'task: %s,' % task_name, 
                 'step_loss: %.3f,' % step_loss, 
-                'step_time: %f,' % t)
+                'step_time: %f,' % execution_time)
           sys.stdout.flush()
           if math.isnan(step_loss):
             raise ValueError(
-              "Nan loss detection ... (%s: step %d)" % (task_name, num_steps_in_epoch[i])
+              "Nan loss Nan loss has been detected... (%s: step %d)" % (task_name, num_steps_in_epoch[i])
             )
           num_steps_in_epoch[i] += 1
           loss[i] += step_loss
@@ -202,7 +201,7 @@ class MeanLoss(MTLManager):
   def run_epoch(self, batches, is_training):
     start_time = time.time()
     loss = np.array([0.0 for _ in self.tasks])
-
+    total_execution_time = 0.0
     num_steps = 0
     while True:
       t = time.time()
@@ -231,17 +230,25 @@ class MeanLoss(MTLManager):
         output_feed.append(self.updates)
       t = time.time()
       outputs = self.sess.run(output_feed, input_feed)
-      t = time.time() - t
+      execution_time = time.time() - t
+      total_execution_time += execution_time
       step_loss = outputs[:len(self.tasks)]
       loss += np.array(step_loss)
+      for i, l in enumerate(step_loss):
+        task_name = list(self.tasks.keys())[i]
+        if math.isnan(l):
+          if task_name == 'desc':
+            print(batch[task_name].qid)
+          raise ValueError("Nan loss has been detected... (%s: step %d)" % (task_name, self.global_step.eval()))
 
       print('epoch: %d,' % self.epoch.eval(), 
-            'step: %d,' % self.global_step.eval(),
+            'step: %d,' %  self.global_step.eval(),
             'task: %s,' % ' '.join(self.tasks.keys()),
             'step_loss: %s,' % ' '.join(["%.3f" % l for l in step_loss]), 
-            'step_time: %f,' % t)
+            'step_time: %f,' % execution_time)
       num_steps += 1
       sys.stdout.flush()
+    print('total execution time:', total_execution_time)
 
     epoch_time = (time.time() - start_time)
     loss = [l/num_steps for l in loss]
@@ -294,7 +301,8 @@ class OneByOne(MTLManager):
       #break # DEBUG
       if math.isnan(step_loss):
         raise ValueError(
-          "Nan loss detection ... (%s: step %d)" % (task_name, i))
+          "Nan loss Nan loss has been detected... (%s: step %d)" % (task_name, i))
+
     loss /= i
     mode = 'train' if is_training else 'valid'
     summary_dict = {'%s/%s/loss' % (task_name, mode): loss}

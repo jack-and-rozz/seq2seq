@@ -1,16 +1,26 @@
 #coding: utf-8
 import sys, os, random, copy, socket, time, re, argparse
+tt = time.time()
 sys.path.append(os.getcwd())
 from collections import OrderedDict
 from pprint import pprint
+t = time.time()
+
 import tensorflow as tf
+# from tensorflow import summary, global_variables, global_variables_initializer, ConfigProto, Graph, Session
+# from tensorflow.train import Saver, get_checkpoint_state
+# from tensorflow.summary import FileWriter 
+print('tf Lib import time: ', time.time() - t)
+t = time.time()
 import numpy as np
 from bins.base import ManagerBase
 from core.utils import common, tf_utils
 import core.dataset 
 import core.models.wikiP2D.mtl as mtl_model
-from core.models.wikiP2D.coref.demo import run_model
+print('mtl Lib import time: ', time.time() - t)
+t = time.time()
 from core.vocabulary.base import VocabularyWithEmbedding, PredefinedCharVocab
+print('Total Lib import time: ', time.time() - tt)
 
 BEST_CHECKPOINT_NAME = 'model.ckpt.best'
 class ExperimentManager(ManagerBase):
@@ -25,15 +35,14 @@ class ExperimentManager(ManagerBase):
     self.vocab.encoder.word = VocabularyWithEmbedding(config.vocab.encoder.word)
     self.vocab.encoder.char = PredefinedCharVocab(config.vocab.encoder.char)
     self.vocab.decoder.word = VocabularyWithEmbedding(config.vocab.decoder.word)
-
     # Load Dataset.
     self.dataset = common.recDotDict()
     for k, v in config.tasks.items():
+      print(k, v.dataset)
       if 'dataset' in v: # for tasks without data
         dataset_type = getattr(core.dataset, v.dataset.dataset_type)
       else:
         continue
-
       if dataset_type == core.dataset.CoNLL2012CorefDataset:
         self.dataset[k] = dataset_type(v.dataset, self.vocab)
         self.vocab.genre = self.dataset[k].genre_vocab
@@ -292,7 +301,7 @@ class ExperimentManager(ManagerBase):
 
 def main(args):
   tf_config = tf.ConfigProto(
-    log_device_placement=False,
+    log_device_placement=args.log_device_placement,
     allow_soft_placement=True, # GPU上で実行できない演算を自動でCPUに
     gpu_options=tf.GPUOptions(
       allow_growth=True, # True->必要になったら確保, False->全部
@@ -317,9 +326,11 @@ if __name__ == "__main__":
   parser.add_argument('-cp','--config_path', default='configs/experiments.conf',
                       type=str, help ='')
   parser.add_argument('-d', '--debug', default=False,
-                      type=common.str2bool, help ='')
+                      type=common.str2bool, help='')
   parser.add_argument('--cleanup', default=False,
-                      type=common.str2bool, help ='')
+                      type=common.str2bool, help='')
+  parser.add_argument('--log_device_placement', default=False,
+                      type=common.str2bool, help='')
   # parser.add_argument('-t', '--target_tasks', default=[],
   #                     type=common.str2arr, help ='The list of tasks to be tested.')
   #parser.add_argument('-le', '--log_error', default=False,
