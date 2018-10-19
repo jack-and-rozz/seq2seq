@@ -39,7 +39,8 @@ class MTLManager(ManagerBase):
     self.vocab = vocab
 
     # Define shared layers (Encoder, Decoder, etc.)
-    self.shared_layers = self.setup_shared_layers(config, vocab)
+    #self.shared_layers = self.setup_shared_layers(config, vocab)
+    self.restore_shared_layers = self.setup_shared_layers(config, vocab)
 
     # Define each task
     self.tasks = self.setup_tasks(sess, config)
@@ -48,20 +49,39 @@ class MTLManager(ManagerBase):
     self.updates = self.get_updates()
 
   def setup_shared_layers(self, config, vocab):
-    with tf.variable_scope("Shared", reuse=tf.AUTO_REUSE) as scope:
-      shared_layers = recDotDefaultDict()
-      shared_layers.scope = scope
-      shared_layers.is_training = self.is_training
-      with tf.variable_scope("WordEncoder") as scope:
-        # Layers to encode a word to a word embedding, and characters to a representation via CNN..
-        word_encoder = WordEncoder(config.encoder, self.is_training, 
-                                   vocab.encoder, shared_scope=scope)
+    self.scope = tf.get_variable_scope()
+    def restore_shared_layers():
+      with tf.variable_scope(self.scope):
+        with tf.variable_scope("Shared", reuse=tf.AUTO_REUSE) as scope:
+          shared_layers = recDotDefaultDict()
+          shared_layers.is_training = self.is_training
+          with tf.variable_scope("WordEncoder") as scope:
+          # Layers to encode a word to a word embedding, and characters to a representation via CNN..
+            word_encoder = WordEncoder(config.encoder, self.is_training, 
+                                       vocab.encoder, shared_scope=scope)
 
-      # Layers to encode a sequence of word embeddings and outputs from char CNN.
-      with tf.variable_scope("SentEncoder") as scope:
-        shared_layers.encoder = SentenceEncoder(
-          config.encoder, self.is_training, word_encoder, shared_scope=scope)
-    return shared_layers
+          # Layers to encode a sequence of word embeddings and outputs from char CNN.
+          with tf.variable_scope("SentEncoder") as scope:
+            shared_layers.encoder = SentenceEncoder(
+              config.encoder, self.is_training, word_encoder, shared_scope=scope)
+      return shared_layers
+    return restore_shared_layers
+
+  # def setup_shared_layers(self, config, vocab):
+  #   with tf.variable_scope("Shared", reuse=tf.AUTO_REUSE) as scope:
+  #     shared_layers = recDotDefaultDict()
+  #     shared_layers.scope = scope
+  #     shared_layers.is_training = self.is_training
+  #     with tf.variable_scope("WordEncoder") as scope:
+  #       # Layers to encode a word to a word embedding, and characters to a representation via CNN..
+  #       word_encoder = WordEncoder(config.encoder, self.is_training, 
+  #                                  vocab.encoder, shared_scope=scope)
+
+  #     # Layers to encode a sequence of word embeddings and outputs from char CNN.
+  #     with tf.variable_scope("SentEncoder") as scope:
+  #       shared_layers.encoder = SentenceEncoder(
+  #         config.encoder, self.is_training, word_encoder, shared_scope=scope)
+  #   return shared_layers
 
   def setup_tasks(self, sess, config):
     num_gpus = len(tf_utils.get_available_gpus())

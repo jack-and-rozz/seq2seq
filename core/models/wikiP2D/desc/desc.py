@@ -32,10 +32,11 @@ class DescriptionGeneration(DescModelBase):
     self.train_shared = config.train_shared
 
     # Encoder
-    self.is_training = manager.is_training
-    self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
     self.vocab = manager.vocab
-    self.encoder = self.setup_encoder(manager.shared_layers.encoder, 
+    shared_layers = manager.restore_shared_layers()
+    self.is_training = shared_layers.is_training
+    self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
+    self.encoder = self.setup_encoder(shared_layers.encoder, 
                                       config.use_local_rnn)
 
     # Placeholders

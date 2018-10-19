@@ -329,7 +329,7 @@ if __name__ == "__main__":
                       type=common.str2bool, help='')
   parser.add_argument('--cleanup', default=False,
                       type=common.str2bool, help='')
-  parser.add_argument('--log_device_placement', default=False,
+  parser.add_argument('-ldp', '--log_device_placement', default=False,
                       type=common.str2bool, help='')
   # parser.add_argument('-t', '--target_tasks', default=[],
   #                     type=common.str2arr, help ='The list of tasks to be tested.')

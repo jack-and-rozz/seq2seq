@@ -78,6 +78,15 @@ class dotDict(dict):
   __setattr__ = dict.__setitem__
   __delattr__ = dict.__delitem__
 
+  '''
+  __getattr__ must be overridden to enable it to apply copy.deepcopy, since the object to be copied has to raise AttributeError instead of KeyError when a key is not in itself. 
+  https://stackoverflow.com/questions/33387801/deep-copy-failure-when-copying-custom-object
+  '''
+  def __getattr__(self, key):
+    if key in self:
+      return self[key]
+    raise AttributeError
+
 class recDotDict(dict):
   __getattr__ = dict.__getitem__
   __setattr__ = dict.__setitem__
@@ -92,6 +101,10 @@ class recDotDict(dict):
             _dict[k][i] = dotDict(x)
     super(recDotDict, self).__init__(_dict)
 
+  def __getattr__(self, key):
+    if key in self:
+      return self[key]
+    raise AttributeError
 
 class rec_defaultdict(collections.defaultdict):
   def __init__(self):

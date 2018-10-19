@@ -57,15 +57,15 @@ class WordEncoder(object):
     w_initializer = tf.constant_initializer(vocab.word.embeddings)
     w_emb_shape = vocab.word.embeddings.shape
 
-    with tf.device('/cpu:0'):
-      self.embeddings = dotDict()
-      self.embeddings.word = initialize_embeddings('word_emb', w_emb_shape, initializer=w_initializer, trainable=w_trainable)
+    #with tf.device('/cpu:0'):
+    self.embeddings = dotDict()
+    self.embeddings.word = initialize_embeddings('word_emb', w_emb_shape, initializer=w_initializer, trainable=w_trainable)
 
     if self.cbase:
       c_emb_shape = [vocab.char.size, config.embedding_size.char] 
-      with tf.device('/cpu:0'):
-        self.embeddings.char = initialize_embeddings(
-          'char_emb', c_emb_shape, trainable=True)
+      #with tf.device('/cpu:0'):
+      self.embeddings.char = initialize_embeddings(
+        'char_emb', c_emb_shape, trainable=True)
 
   def word_encode(self, inputs):
     if inputs is None:

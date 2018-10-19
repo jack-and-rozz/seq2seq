@@ -58,6 +58,13 @@ class _WikiP2DDataset(object):
     data = [self.preprocess(d) for d in data]
     self.data = flatten([self.article2entries(d) for d in data])
 
+  def sample(self, example, is_random=True):
+    '''
+    A function to sample inputs when the example has several probable ones more than those which a model can realistically process.
+    (e.g. Multiple contexts where an entity appears.)
+    '''
+    return example
+
   def tensorize(self, data):
     batch = recDotDefaultDict()
     for d in data:
@@ -81,6 +88,7 @@ class _WikiP2DDataset(object):
     for i, b in itertools.groupby(enumerate(data), 
                                   lambda x: x[0] // (batch_size)):
       sliced_data = [x[1] for x in b] # (id, data) -> data
+      data = [self.sample(d, is_random=do_shuffle) for d in sliced_data]
       batch = self.tensorize(sliced_data)
       yield batch
 

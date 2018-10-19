@@ -81,7 +81,7 @@ class ModelBase(object):
     
     self.sess.run(self._update_max_score, feed_dict={self._next_score:score})
 
-  def setup_encoder(self, shared_encoder, use_local_rnn, scope=None):
+  def setup_encoder(self, shared_encoder, use_local_rnn):
     if use_local_rnn:
       private_encoder = SentenceEncoder(shared_encoder.config, 
                                         shared_encoder.is_training, 

@@ -23,27 +23,44 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
     return article
 
   def article2entries(self, article):
-    entry = recDotDefaultDict()
-    entry.qid = article.qid
-    entry.title.raw = article.title
+    example = recDotDefaultDict()
+    example.qid = article.qid
+    example.title.raw = article.title
 
-    entry.desc.raw = self.vocab.decoder.word.tokenizer(article.desc)
-    entry.desc.word = self.vocab.decoder.word.sent2ids(article.desc)
+    example.desc.raw = self.vocab.decoder.word.tokenizer(article.desc)
+    example.desc.word = self.vocab.decoder.word.sent2ids(article.desc)
 
-    entry.contexts.raw = []
-    entry.contexts.word = []
-    entry.contexts.char = []
-    entry.contexts.link = []
-    for context, link in article.contexts[:self.max_contexts]:
+    example.contexts.raw = []
+    example.contexts.word = []
+    example.contexts.char = []
+    example.contexts.link = []
+    #for context, link in article.contexts[:self.max_contexts]:
+    for context, link in article.contexts:
       context = context.split()
-      entry.contexts.raw.append(context)
+      example.contexts.raw.append(context)
 
       if self.mask_link:
         context = mask_span(context, link)
-      entry.contexts.word.append(self.vocab.encoder.word.sent2ids(context))
-      entry.contexts.char.append(self.vocab.encoder.char.sent2ids(context))
-      entry.contexts.link.append(link)
-    return [entry]
+      example.contexts.word.append(self.vocab.encoder.word.sent2ids(context))
+      example.contexts.char.append(self.vocab.encoder.char.sent2ids(context))
+      example.contexts.link.append(link)
+    return [example]
+  def sample(self, example, is_random=True):
+    assert len(example.contexts.word) == len(example.contexts.char)
+    assert len(example.contexts.word) == len(example.contexts.link)
+    print('-------------------------------')
+    example = copy.deepcopy(recDotDict(example))
+    print(len(example.contexts.word))
+    if is_random:
+      idxs = random.sample(range(0, len(example.contexts.link)), self.max_contexts)
+    else:
+      idxs = range(0, self.max_contexts) # Use the first 'self.max_contexts' ones.
+    example.contexts.raw = [example.contexts.raw[idx] for idx in idxs]
+    example.contexts.word = [example.contexts.word[idx] for idx in idxs]
+    example.contexts.char = [example.contexts.char[idx] for idx in idxs]
+    example.contexts.link = [example.contexts.link[idx] for idx in idxs]
+    print(len(example.contexts.word))
+    return example
 
   def padding(self, batch):
     '''
@@ -51,6 +68,7 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
     batch.contexts.char: [batch_size, max_contexts, max_words, max_chars]
     batch.link: [batch_size, max_contexts, 2]
     '''
+
     # [batch_size, max_num_sent, max_num_word_in_sent]
     batch.contexts.word = padding(
       batch.contexts.word, 
