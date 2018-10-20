@@ -34,8 +34,8 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
     example.contexts.word = []
     example.contexts.char = []
     example.contexts.link = []
-    #for context, link in article.contexts[:self.max_contexts]:
-    for context, link in article.contexts:
+    for context, link in article.contexts[:self.max_contexts]:
+    #for context, link in article.contexts:
       context = context.split()
       example.contexts.raw.append(context)
 
@@ -46,6 +46,7 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
       example.contexts.link.append(link)
     return [example]
   def sample(self, example, is_random=True):
+    return example
     assert len(example.contexts.word) == len(example.contexts.char)
     assert len(example.contexts.word) == len(example.contexts.link)
     print('-------------------------------')
@@ -59,7 +60,6 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
     example.contexts.word = [example.contexts.word[idx] for idx in idxs]
     example.contexts.char = [example.contexts.char[idx] for idx in idxs]
     example.contexts.link = [example.contexts.link[idx] for idx in idxs]
-    print(len(example.contexts.word))
     return example
 
   def padding(self, batch):

@@ -27,12 +27,12 @@ class RNNDecoder(ModelBase):
     if embeddings:
       self.embeddings = embeddings 
     else:
-      with tf.device('/cpu:0'):
-        self.embeddings = initialize_embeddings(
-          'word_emb', 
-          vocab.word.embeddings.shape, 
-          initializer=tf.constant_initializer(vocab.word.embeddings), 
-          trainable=vocab.word.trainable)
+      #with tf.device('/cpu:0'):
+      self.embeddings = initialize_embeddings(
+        'word_emb', 
+        vocab.word.embeddings.shape, 
+        initializer=tf.constant_initializer(vocab.word.embeddings), 
+        trainable=vocab.word.trainable)
 
   def decode_train(self, init_state, dec_input_tokens, 
                    dec_input_lengths, dec_output_lengths):

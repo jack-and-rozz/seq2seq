@@ -134,6 +134,7 @@ class CoreferenceResolution(CorefModelBase):
     # Combined tests with coref task.
     desc_model = [x for x in other_models
                   if isinstance(x, DescModelBase)]
+    return False # DEBUG
     if not desc_model:
       return 
 

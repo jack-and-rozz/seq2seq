@@ -222,6 +222,8 @@ class MeanLoss(MTLManager):
     start_time = time.time()
     loss = np.array([0.0 for _ in self.tasks])
     total_execution_time = 0.0
+    forward_execution_time = 0.0
+    batch_creation_time = 0.0
     num_steps = 0
     while True:
       t = time.time()
@@ -242,10 +244,13 @@ class MeanLoss(MTLManager):
       # Once one of the batches of a task stops iteration in an epoch, go to the next epoch.
       if False in [task_name in batch for task_name in self.tasks]:
         break
-
+      batch_creation_time += time.time() - t
       input_feed = self.get_input_feed(batch, is_training)
       output_feed = []
       output_feed += self.losses
+      #t = time.time()
+      #outputs = self.sess.run(output_feed, input_feed)
+      #forward_execution_time += time.time() - t
       if is_training:
         output_feed.append(self.updates)
       t = time.time()
@@ -268,7 +273,13 @@ class MeanLoss(MTLManager):
             'step_time: %f,' % execution_time)
       num_steps += 1
       sys.stdout.flush()
+      #if num_steps == 19:
+      #  break
+    print('batch creation time:', batch_creation_time)
+    print('forward execution time:', forward_execution_time)
     print('total execution time:', total_execution_time)
+    print('============================')
+    #exit(1)
 
     epoch_time = (time.time() - start_time)
     loss = [l/num_steps for l in loss]
