@@ -33,6 +33,7 @@ class DescriptionGeneration(DescModelBase):
 
     # Encoder
     self.vocab = manager.vocab
+    print('restoring shared layers in desc')
     shared_layers = manager.restore_shared_layers()
     self.is_training = shared_layers.is_training
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
@@ -64,6 +65,16 @@ class DescriptionGeneration(DescModelBase):
     # Aggregate context representations.
     init_state = tf.reduce_sum(mention_repls, axis=1)
     init_state = init_state / tf.expand_dims(enc_context_length, -1)
+
+    with tf.variable_scope('Intermediate'):
+      if config.decoder.num_layers > 1:
+        for i in range(config.decoder.num_layers):
+          init_states = []
+          with tf.variable_scope('L%d' % (i+i)):
+            init_states.append(linear(init_state, config.decoder.rnn_size))
+        init_state = init_states
+      else:
+        init_state = linear(init_state, config.decoder.rnn_size)
 
     # Add BOS and EOS to the decoder's inputs and outputs.
     batch_size = shape(self.ph.target, 0)

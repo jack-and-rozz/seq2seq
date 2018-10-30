@@ -35,6 +35,9 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
     example.contexts.char = []
     example.contexts.link = []
     for context, link in article.contexts[:self.max_contexts]:
+      if not link[1] >= link[0]:
+        continue
+      
     #for context, link in article.contexts:
       context = context.split()
       example.contexts.raw.append(context)
@@ -44,7 +47,10 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
       example.contexts.word.append(self.vocab.encoder.word.sent2ids(context))
       example.contexts.char.append(self.vocab.encoder.char.sent2ids(context))
       example.contexts.link.append(link)
+    if not example.contexts.raw:
+      return []
     return [example]
+
   def sample(self, example, is_random=True):
     return example
     assert len(example.contexts.word) == len(example.contexts.char)

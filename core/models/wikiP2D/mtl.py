@@ -186,7 +186,7 @@ class BatchIterative(MTLManager):
           sys.stdout.flush()
           if math.isnan(step_loss):
             raise ValueError(
-              "Nan loss Nan loss has been detected... (%s: step %d)" % (task_name, num_steps_in_epoch[i])
+              "Nan loss has been detected... (%s: step %d)" % (task_name, num_steps_in_epoch[i])
             )
           num_steps_in_epoch[i] += 1
           loss[i] += step_loss
@@ -248,9 +248,9 @@ class MeanLoss(MTLManager):
       input_feed = self.get_input_feed(batch, is_training)
       output_feed = []
       output_feed += self.losses
-      #t = time.time()
-      #outputs = self.sess.run(output_feed, input_feed)
-      #forward_execution_time += time.time() - t
+      # t = time.time()
+      # outputs = self.sess.run(output_feed, input_feed)
+      # forward_execution_time += time.time() - t
       if is_training:
         output_feed.append(self.updates)
       t = time.time()
@@ -273,15 +273,15 @@ class MeanLoss(MTLManager):
             'step_time: %f,' % execution_time)
       num_steps += 1
       sys.stdout.flush()
-      #if num_steps == 19:
-      #  break
-    print('batch creation time:', batch_creation_time)
-    print('forward execution time:', forward_execution_time)
-    print('total execution time:', total_execution_time)
-    print('============================')
-    #exit(1)
-
     epoch_time = (time.time() - start_time)
+
+    print('batch creation time:', batch_creation_time)
+    # print('forward execution time:', forward_execution_time)
+    print('execution time:', total_execution_time)
+    print('epoch time:', epoch_time)
+    print('============================')
+    # exit(1)
+
     loss = [l/num_steps for l in loss]
     mode = 'train' if is_training else 'valid'
     summary_dict = {'%s/%s/loss' % (task_name, mode): l for task_name, l in zip(self.tasks, loss)}
@@ -293,6 +293,55 @@ class SumLoss(MeanLoss):
     loss = tf.reduce_sum([t.loss_weight * t.loss for t in self.tasks.values()])
     updates = super(MTLManager, self).get_updates(loss, self.global_step)
     return updates
+
+
+class SeparatelyUpdate(MeanLoss):
+  # NOTE: Only one of these several update ops is executed and other updates are overwritten. This can cause a failure in training. (https://stackoverflow.com/questions/49953379/tensorflow-multiple-loss-functions-vs-multiple-training-ops)
+  
+  def get_updates(self):
+    updates = []
+    num_gpus = len(tf_utils.get_available_gpus())
+
+    for i, t in enumerate(self.tasks.values()):
+      device = '/gpu:%d' % (i % num_gpus) if num_gpus else "/cpu:0"
+      with tf.device(device):
+        loss = t.loss_weight * t.loss
+        update = super(MTLManager, self).get_updates(loss, self.global_step)
+        updates.append(update)
+    return updates
+
+class GradientSum(MeanLoss):
+  def get_updates(self):
+    with tf.name_scope("update"):
+      losses = [t.loss_weight * t.loss for t in self.tasks.values()]
+      learning_rate = tf.train.exponential_decay(
+        self.learning_rate, self.global_step,
+        self.decay_frequency, self.decay_rate, staircase=True)
+
+      opt = getattr(tf.train, self.optimizer_type)(learning_rate)
+      num_gpus = len(tf_utils.get_available_gpus())
+      params = tf.contrib.framework.get_trainable_variables()
+
+      # https://stackoverflow.com/questions/37074077/fail-to-average-indexedslices-on-porting-ptb-word-lm-py-to-multi-gpu-towers
+      # Some of the results from tf.compute_gradients(...) can be IndexedSlice, it requires a trick to combute the sum.
+      def _calc_gradients(i, loss):
+        device = '/gpu:%d' % (i % num_gpus) if num_gpus else '/cpu:0'
+        with tf.device(device):
+          return [tf.expand_dims(g, 0) if g is not None else g for g in tf.gradients(loss, params)]
+      gradients = [_calc_gradients(i, loss) for i, loss in enumerate(losses)]
+
+      summed_gradients = []
+      for i, grads in enumerate(zip(*gradients)):
+        grads = [g for g in grads if g is not None]
+        grads = tf.concat(grads, axis=0)
+        summed_gradients.append(tf.reduce_sum(grads, axis=0))
+      clipped_gradients, _ = tf.clip_by_global_norm(summed_gradients, 
+                                                    self.max_gradient_norm)
+      grad_and_vars = [(g, v) for g, v in zip(clipped_gradients, params)]
+      updates = opt.apply_gradients(
+        grad_and_vars, global_step=self.global_step)
+    return updates
+
 
 
 class OneByOne(MTLManager):

@@ -283,9 +283,10 @@ def print_results(results, vocab, print_mention_descs=True):
   pd.set_option("display.max_colwidth", 80)
   df = pd.DataFrame(data, columns=header).ix[:, header]
   df = df.set_index('Category')
+  print ('<Mention group statistics (csv)>')
+  print(df.to_csv())
+  print()
+
   print ('<Mention group statistics>')
   print(df)
-  print()
-  print ('<csv ver>')
-  print(df.to_csv())
   return df

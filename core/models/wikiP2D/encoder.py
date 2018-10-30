@@ -9,7 +9,7 @@ from tensorflow.python.ops import rnn
 from tensorflow.contrib.rnn import LSTMStateTuple
 
 from core.utils.common import dbgprint, dotDict
-from core.utils.tf_utils import shape, cnn, linear, projection, batch_gather, batch_loop, initialize_embeddings
+from core.utils.tf_utils import shape, cnn, linear, projection, batch_gather, batch_loop, initialize_embeddings, get_available_gpus
 from core.seq2seq.rnn import setup_cell
 from core.vocabulary.base import VocabularyWithEmbedding
 
@@ -41,31 +41,34 @@ def merge_state(state, merge_func=tf.concat):
 class WordEncoder(object):
   def __init__(self, config, is_training, vocab,
                activation=tf.nn.relu, shared_scope=None):
-    self.vocab = vocab.encoder
+    self.vocab = vocab
     self.is_training = is_training
     self.activation = activation
     self.shared_scope = shared_scope # to reuse variables
 
     self.wbase = True if vocab.word.size else False
     self.cbase = True if vocab.char.size else False
+
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.lexical_dropout_rate
     self.cnn_filter_widths = config.cnn.filter_widths
     self.cnn_filter_size = config.cnn.filter_size
 
     sys.stderr.write("Initialize word embeddings with pretrained ones.\n")
-    w_trainable = vocab.trainable
-    w_initializer = tf.constant_initializer(vocab.word.embeddings)
-    w_emb_shape = vocab.word.embeddings.shape
 
-    #with tf.device('/cpu:0'):
-    self.embeddings = dotDict()
-    self.embeddings.word = initialize_embeddings('word_emb', w_emb_shape, initializer=w_initializer, trainable=w_trainable)
+    device = '/cpu:0' if len(get_available_gpus()) > 1 else None
+    with tf.device(device):
+      self.embeddings = dotDict()
+      self.embeddings.word = initialize_embeddings(
+        'word_emb', 
+        vocab.word.embeddings.shape,
+        initializer=tf.constant_initializer(vocab.word.embeddings), 
+        trainable=vocab.word.trainable)
 
-    #if self.cbase:
-    c_emb_shape = [vocab.char.size, config.embedding_size.char] 
-    #with tf.device('/cpu:0'):
-    self.embeddings.char = initialize_embeddings(
-      'char_emb', c_emb_shape, trainable=True)
+    if self.cbase:
+      c_emb_shape = [vocab.char.size, config.embedding_size.char] 
+      with tf.device(device):
+        self.embeddings.char = initialize_embeddings(
+          'char_emb', c_emb_shape, trainable=True)
 
   def word_encode(self, inputs):
     if inputs is None:
@@ -169,7 +172,7 @@ class SentenceEncoder(object):
       flattened_sequence_length = tf.reshape(sequence_length, [flattened_batch_size])
 
       initial_state_fw = self.cell_fw.initial_state(flattened_batch_size) if hasattr(self.cell_fw, 'initial_state') else None
-      initial_state_bw = self.cell_fw.initial_state(flattened_batch_size) if hasattr(self.cell_bw, 'initial_state') else None
+      initial_state_bw = self.cell_bw.initial_state(flattened_batch_size) if hasattr(self.cell_bw, 'initial_state') else None
 
       outputs, state = rnn.bidirectional_dynamic_rnn(
         self.cell_fw, self.cell_bw, flattened_inputs,

@@ -56,14 +56,19 @@ class CoreferenceResolution(CorefModelBase):
     with tf.variable_scope('Embeddings'):
       self.same_speaker_emb = initialize_embeddings(
         'same_speaker', [2, self.feature_size]) # True or False.
-      self.genre_emb = initialize_embeddings('genre', [self.vocab.genre.size, self.feature_size])
-      self.mention_width_emb = initialize_embeddings("mention_width", [self.max_mention_width, self.feature_size])
-      self.mention_distance_emb = initialize_embeddings("mention_distance", [10, self.feature_size])
+      if self.use_genre_feature:
+        self.genre_emb = initialize_embeddings('genre', [self.vocab.genre.size, self.feature_size])
+      if self.use_width_feature:
+        self.mention_width_emb = initialize_embeddings("mention_width", [self.max_mention_width, self.feature_size])
 
-    word_repls = self.encoder.word_encoder.word_encode(self.ph.text.word)
-    char_repls = self.encoder.word_encoder.char_encode(self.ph.text.char)
-    text_emb, text_outputs, state = self.encoder.encode(
-      [word_repls, char_repls], self.ph.sentence_length) 
+      if self.use_distance_feature:
+        self.mention_distance_emb = initialize_embeddings("mention_distance", [10, self.feature_size])
+
+    with tf.name_scope('Encode'):
+      word_repls = self.encoder.word_encoder.word_encode(self.ph.text.word)
+      char_repls = self.encoder.word_encoder.char_encode(self.ph.text.char)
+      text_emb, text_outputs, state = self.encoder.encode(
+        [word_repls, char_repls], self.ph.sentence_length) 
 
     with tf.name_scope('candidates_and_mentions'):
       flattened_text_emb, flattened_text_outputs, flattened_sentence_indices = self.flatten_doc_to_sent(text_emb, text_outputs, self.ph.sentence_length)
@@ -216,9 +221,8 @@ class CoreferenceResolution(CorefModelBase):
       return tf.reshape(scores, [shape(scores, 0)])
 
   def get_antecedents(self, mention_scores, mention_starts, mention_ends, 
-                      mention_emb, speaker_ids, genre, 
+                      mention_emb, speaker_ids, genre_ids, 
                       gold_starts, gold_ends, cluster_ids):
-    genre_emb = tf.nn.embedding_lookup(self.genre_emb, genre)
     mention_speaker_ids = tf.gather(speaker_ids, mention_starts) # [num_mentions]
 
     with tf.name_scope('Antecedents'):
@@ -229,11 +233,11 @@ class CoreferenceResolution(CorefModelBase):
 
       antecedent_scores = self.get_antecedent_scores(
         mention_emb, mention_scores, antecedents, antecedents_len, 
-        mention_starts, mention_ends, mention_speaker_ids, genre_emb) # [num_mentions, max_ant + 1]
+        mention_starts, mention_ends, mention_speaker_ids, genre_ids) # [num_mentions, max_ant + 1]
 
     return antecedents, antecedent_scores, antecedent_labels
 
-  def get_antecedent_scores(self, mention_emb, mention_scores, antecedents, antecedents_len, mention_starts, mention_ends, mention_speaker_ids, genre_emb):
+  def get_antecedent_scores(self, mention_emb, mention_scores, antecedents, antecedents_len, mention_starts, mention_ends, mention_speaker_ids, genre_ids):
     num_mentions = shape(mention_emb, 0)
     max_antecedents = shape(antecedents, 1)
 
@@ -246,6 +250,8 @@ class CoreferenceResolution(CorefModelBase):
       feature_emb_list.append(speaker_pair_emb)
 
     if self.use_genre_feature:
+      genre_emb = tf.nn.embedding_lookup(self.genre_emb, genre_ids)
+
       tiled_genre_emb = tf.tile(tf.expand_dims(tf.expand_dims(genre_emb, 0), 0), [num_mentions, max_antecedents, 1]) # [num_mentions, max_ant, emb]
       feature_emb_list.append(tiled_genre_emb)
 

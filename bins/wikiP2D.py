@@ -28,7 +28,9 @@ class ExperimentManager(ManagerBase):
   def __init__(self, args, sess):
     super().__init__(args, sess)
     self.config = config = self.load_config(args)
-    self.vocab = common.recDotDefaultDict()
+    self.vocab = common.recDotDict()
+    self.vocab.encoder = common.recDotDict()
+    self.vocab.decoder = common.recDotDict()
     self.model = None
 
     # Load pretrained embeddings.
@@ -87,7 +89,7 @@ class ExperimentManager(ManagerBase):
     else:
       sys.stdout.write("Created model with fresh parameters.\n")
       tf.global_variables_initializer().run()
-
+    #tf.get_default_graph().finalize()
     # Store variable names and vocabulary for debug.
     variables_path = self.root_path + '/variables.list'
     if not os.path.exists(variables_path):
@@ -95,29 +97,33 @@ class ExperimentManager(ManagerBase):
         variable_names = sorted([v.name + ' ' + str(v.get_shape()) for v in tf.global_variables()])
         variable_names = [name for name in variable_names if not re.search('Adam', name)]
         f.write('\n'.join(variable_names) + '\n')
-    vocab_path = self.root_path + '/vocab.word.list'
+    vocab_path = self.root_path + '/vocab.encoder.word'
     if not os.path.exists(vocab_path):
       with open(vocab_path, 'w') as f:
-        f.write('\n'.join(self.vocab.word.rev_vocab) + '\n')
+        f.write('\n'.join(self.vocab.encoder.word.rev_vocab) + '\n')
+
+    vocab_path = self.root_path + '/vocab.decoder.word'
+    if not os.path.exists(vocab_path):
+      with open(vocab_path, 'w') as f:
+        f.write('\n'.join(self.vocab.decoder.word.rev_vocab) + '\n')
     return self.model
 
   def debug(self):
-    m = self.create_model(self.config, load_best=True)
-    exit(1)
+    # m = self.create_model(self.config, load_best=True)
     task_name = [k for k in self.config.tasks][0]
     batches = self.dataset[task_name].train.get_batch(
       self.config.tasks[task_name].batch_size, do_shuffle=True)
     print(self.vocab.rel.rev_names)
-    exit(1)
+
+    from core.models.wikiP2D.desc.evaluation import print_example
     rels = []
     for i, batch in enumerate(batches):
+      # if batch.qid != ['Q3283786']:
+      #   continue
       for j, b in enumerate(common.flatten_batch(batch)):
         print('<%03d-%03d>' % (i,j))
-        self.dataset[task_name].print_example(b)
-        #exit(1)
-        print('')
-      
-
+        print_example(b, self.vocab)
+    exit(1)
     common.dbgprint(self.dataset[task_name].valid.size)
     exit(1)
     for i, batch in enumerate(batches):
