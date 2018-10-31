@@ -37,7 +37,7 @@ def define_length(batch, minlen=None, maxlen=None):
     minlen = 0
 
   if maxlen:
-    return max(maxlen, minlen) 
+    return min(maxlen, max([len(b) for b in batch] + [minlen]))
   else:
     return max([len(b) for b in batch] + [minlen])
 
