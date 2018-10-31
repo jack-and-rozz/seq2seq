@@ -57,6 +57,7 @@ class _WikiP2DDataset(object):
     data = read_jsonlines(self.source_path, max_rows=self.max_rows)
     data = [self.preprocess(d) for d in data]
     self.data = flatten([self.article2entries(d) for d in data])
+    return self.data
 
   def sample(self, example, is_random=True):
     '''
@@ -88,7 +89,6 @@ class _WikiP2DDataset(object):
     for i, b in itertools.groupby(enumerate(data), 
                                   lambda x: x[0] // (batch_size)):
       sliced_data = [x[1] for x in b] # (id, data) -> data
-      data = [self.sample(d, is_random=do_shuffle) for d in sliced_data]
       batch = self.tensorize(sliced_data)
       yield batch
 

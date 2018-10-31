@@ -7,9 +7,6 @@ from pprint import pprint
 t = time.time()
 
 import tensorflow as tf
-# from tensorflow import summary, global_variables, global_variables_initializer, ConfigProto, Graph, Session
-# from tensorflow.train import Saver, get_checkpoint_state
-# from tensorflow.summary import FileWriter 
 print('tf Lib import time: ', time.time() - t)
 t = time.time()
 import numpy as np
@@ -37,10 +34,11 @@ class ExperimentManager(ManagerBase):
     self.vocab.encoder.word = VocabularyWithEmbedding(config.vocab.encoder.word)
     self.vocab.encoder.char = PredefinedCharVocab(config.vocab.encoder.char)
     self.vocab.decoder.word = VocabularyWithEmbedding(config.vocab.decoder.word)
+    
     # Load Dataset.
     self.dataset = common.recDotDict()
     for k, v in config.tasks.items():
-      print(k, v.dataset)
+      t = time.time()
       if 'dataset' in v: # for tasks without data
         dataset_type = getattr(core.dataset, v.dataset.dataset_type)
       else:
@@ -50,6 +48,8 @@ class ExperimentManager(ManagerBase):
         self.vocab.genre = self.dataset[k].genre_vocab
       else:
         self.dataset[k] = dataset_type(v.dataset, self.vocab)
+      self.logger.info("Loading %s data: %.2f sec" % (k, time.time() - t))
+
 
   def get_batch(self, batch_type):
     batches = common.recDotDefaultDict()
@@ -111,9 +111,12 @@ class ExperimentManager(ManagerBase):
   def debug(self):
     # m = self.create_model(self.config, load_best=True)
     task_name = [k for k in self.config.tasks][0]
-    batches = self.dataset[task_name].train.get_batch(
-      self.config.tasks[task_name].batch_size, do_shuffle=True)
-    print(self.vocab.rel.rev_names)
+    dataset = self.dataset[task_name].train.dataset
+    print(dataset)
+    exit(1)
+    # batches = self.dataset[task_name].train.get_batch(
+    #   self.config.tasks[task_name].batch_size, do_shuffle=True)
+    # print(self.vocab.rel.rev_names)
 
     from core.models.wikiP2D.desc.evaluation import print_example
     rels = []

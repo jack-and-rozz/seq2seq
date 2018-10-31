@@ -283,7 +283,7 @@ class VocabularyWithEmbedding(WordVocabularyBase):
           embedding_dict[word] = vector
         elif word not in embedding_dict: 
           embedding_dict[word] = vector
-    sys.stderr.write("Loading %s has done.\n" % embedding_path)
+    sys.stderr.write("Loading %s has been done.\n" % embedding_path)
 
     return embedding_dict
 
@@ -298,7 +298,7 @@ class PredefinedCharVocab(CharVocabularyBase):
   def init_vocab(self, vocab_path, vocab_size):
     with open(vocab_path) as f:
       rev_vocab = [l.split()[0] for i, l in enumerate(f) if i < vocab_size]
-      sys.stderr.write("Loading %s has done.\n" % vocab_path)
+      sys.stderr.write("Loading %s has been done.\n" % vocab_path)
     rev_vocab = self.start_vocab + rev_vocab
     vocab = collections.OrderedDict({t:i for i,t in enumerate(rev_vocab)})
     return vocab, rev_vocab
