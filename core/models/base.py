@@ -86,7 +86,7 @@ class ModelBase(object):
       private_encoder = SentenceEncoder(shared_encoder.config, 
                                         shared_encoder.is_training, 
                                         shared_encoder.word_encoder,
-                                        shared_scope=scope)
+                                        )
       encoders = [shared_encoder, private_encoder]
       return MultiEncoderWrapper(encoders)
     else:

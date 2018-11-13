@@ -61,6 +61,9 @@ def linear(inputs, output_size=None,
     inputs : Rank 2 or 3 Tensor of shape [batch_size, (sequence_size,) hidden_size].
     output_size : An integer.
   """
+  if activation is None:
+    activation = lambda x: x
+
   if output_size is None:
     output_size = shape(inputs, -1)
   with tf.variable_scope(scope or "linear"):

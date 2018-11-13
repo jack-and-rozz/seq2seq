@@ -55,18 +55,11 @@ class TaskAdversarial(ModelBase):
       task_ids = tf.one_hot(task_ids, n_tasks)
       adv_inputs = flip_gradient(shared_repls)
 
-      logits = tf.nn.softmax(linear(adv_inputs, n_tasks))
+      logits = tf.nn.softmax(linear(adv_inputs, n_tasks, activation=None))
       l_adv += tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
         logits=logits, labels=task_ids))
       l_diff += squared_frobenius_norm(similarities) # ここはflip_gradientなしでok?
-    # adv_inputs = flip_gradient(tf.concat(adv_inputs, axis=0))
-    # task_ids = tf.concat(task_ids, axis=0)
-    # task_ids = tf.one_hot(task_ids, len(other_models))
 
-    # self.outputs = tf.nn.softmax(linear(adv_inputs, len(other_models)))
-    # l_adv = tf.nn.softmax_cross_entropy_with_logits(
-    #   logits=self.outputs, labels=task_ids)
-    # l_adv = tf.reduce_sum(l_adv)
     l_adv /= n_tasks
     l_diff /= n_tasks
     self.loss = self.adv_weight * l_adv + self.diff_weight * l_diff

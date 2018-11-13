@@ -39,19 +39,25 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
     example.contexts.word = []
     example.contexts.char = []
     example.contexts.link = []
-    for context, link in article.contexts[:self.max_contexts]:
+    cnt = 0
+    for context, link in article.contexts:
+      if cnt >= self.max_contexts:
+        break
+
       if not link[1] >= link[0]:
         continue
-      
-    #for context, link in article.contexts:
-      context = context.split()
-      example.contexts.raw.append(context)
 
+      context = context.split()
+      if len(context) > self.config.maxlen.word:
+        continue
+
+      example.contexts.raw.append(context)
       if self.mask_link:
         context = mask_span(context, link)
       example.contexts.word.append(self.vocab.encoder.word.sent2ids(context))
       example.contexts.char.append(self.vocab.encoder.char.sent2ids(context))
       example.contexts.link.append(link)
+      cnt += 1
     if not example.contexts.raw:
       return []
     return [example]
@@ -105,44 +111,44 @@ class _WikiP2DDescDataset(_WikiP2DDataset):
       maxlen=[self.config.maxlen.word])
     return batch
 
-  # (DEBUG) ####################################
-  def get_batch(self, batch_size, do_shuffle=False):
-    while True:
-      yield {}
+  # # (DEBUG) ####################################
+  # def get_batch(self, batch_size, do_shuffle=False):
+  #   while True:
+  #     yield {}
 
 
-  def setup_dataset(self):
-    if not self.data:
-      self.load_data()
+  # def setup_dataset(self):
+  #   if not self.data:
+  #     self.load_data()
 
-    # Create lists containing all examples by keys.
-    data = recDotDefaultDict()
-    for d in self.data:
-      data = batching_dicts(data, d)
-    data = (data.contexts.word, data.contexts.char, data.contexts.link, data.desc.word)
-    data = (np.array(d) for d in data)
-    print([type(d) for d in data])
-    #exit(1)
-    output_types = (tf.int32 for _ in data)
-    dataset = tf.data.Dataset.from_generator(
-      lambda: zip(data),
-      output_types=output_types)
-    if self.is_training:
-      dataset = dataset.shuffle(10000)
-    padded_shapes = (
-      [None, self.config.maxlen.word],
-      [None,  self.config.maxlen.word, self.config.maxlen.char],
-      [None, 2],
-      [self.config.maxlen.word]
-    )
-    dataset = dataset.padded_batch(self.batch_size, padded_shapes)
-    return dataset
+  #   # Create lists containing all examples by keys.
+  #   data = recDotDefaultDict()
+  #   for d in self.data:
+  #     data = batching_dicts(data, d)
+  #   data = (data.contexts.word, data.contexts.char, data.contexts.link, data.desc.word)
+  #   data = (np.array(d) for d in data)
+  #   print([type(d) for d in data])
+  #   #exit(1)
+  #   output_types = (tf.int32 for _ in data)
+  #   dataset = tf.data.Dataset.from_generator(
+  #     lambda: zip(data),
+  #     output_types=output_types)
+  #   if self.is_training:
+  #     dataset = dataset.shuffle(10000)
+  #   padded_shapes = (
+  #     [None, self.config.maxlen.word],
+  #     [None,  self.config.maxlen.word, self.config.maxlen.char],
+  #     [None, 2],
+  #     [self.config.maxlen.word]
+  #   )
+  #   dataset = dataset.padded_batch(self.batch_size, padded_shapes)
+  #   return dataset
 
-  @property
-  def dataset(self):
-    if not self._dataset:
-      self._dataset = self.setup_dataset()
-    return self._dataset
+  # @property
+  # def dataset(self):
+  #   if not self._dataset:
+  #     self._dataset = self.setup_dataset()
+  #   return self._dataset
 
   # (DEBUG) ####################################
 

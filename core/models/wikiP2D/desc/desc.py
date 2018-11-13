@@ -35,10 +35,12 @@ class DescriptionGeneration(DescModelBase):
     self.vocab = manager.vocab
     print('restoring shared layers in desc')
     shared_layers = manager.restore_shared_layers()
+    #shared_layers = manager.shared_layers
+
     self.is_training = shared_layers.is_training
     self.keep_prob = 1.0 - tf.to_float(self.is_training) * config.dropout_rate
     self.encoder = self.setup_encoder(shared_layers.encoder, 
-                                      config.use_local_rnn)
+                                      manager.use_local_rnn)
 
     # Placeholders
     self.ph = self.setup_placeholders()

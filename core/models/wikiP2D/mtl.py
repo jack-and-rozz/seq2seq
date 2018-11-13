@@ -37,11 +37,12 @@ class MTLManager(ManagerBase):
     super(MTLManager, self).__init__(sess, config)
     self.is_training = tf.placeholder(tf.bool, name='is_training', shape=[]) 
     self.vocab = vocab
+    self.use_local_rnn = config.use_local_rnn
 
     # Define shared layers (Encoder, Decoder, etc.)
     #self.shared_layers = self.setup_shared_layers(config, vocab)
     self.restore_shared_layers = self.setup_shared_layers(config, vocab)
-
+    
     # Define each task
     self.tasks = self.setup_tasks(sess, config)
 
@@ -119,8 +120,8 @@ class MTLManager(ManagerBase):
         input_feed.update(task_model.get_input_feed(batch[task_name], is_training))
     return input_feed
 
-  def train(self, *args):
-    return self.run_epoch(*args, True)
+  def train(self, *args, summary_writer=None):
+    return self.run_epoch(*args, True, summary_writer=summary_writer)
 
   def valid(self, *args):
     return self.run_epoch(*args, False)
@@ -218,7 +219,7 @@ class MeanLoss(MTLManager):
     updates = super(MTLManager, self).get_updates(loss, self.global_step)
     return updates
  
-  def run_epoch(self, batches, is_training):
+  def run_epoch(self, batches, is_training, summary_writer=None):
     start_time = time.time()
     loss = np.array([0.0 for _ in self.tasks])
     total_execution_time = 0.0
@@ -254,7 +255,16 @@ class MeanLoss(MTLManager):
       if is_training:
         output_feed.append(self.updates)
       t = time.time()
-      outputs = self.sess.run(output_feed, input_feed)
+      if summary_writer and self.global_step.eval() % 500 == 0:
+        run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+        run_metadata = tf.RunMetadata()
+        outputs = self.sess.run(output_feed, input_feed,
+                                options=run_options,
+                                run_metadata=run_metadata)
+        summary_writer.add_run_metadata(run_metadata, 
+                                        'step%d' % self.global_step.eval())
+      else:
+        outputs = self.sess.run(output_feed, input_feed)
       execution_time = time.time() - t
       total_execution_time += execution_time
       step_loss = outputs[:len(self.tasks)]

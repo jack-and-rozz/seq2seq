@@ -55,20 +55,20 @@ class WordEncoder(object):
 
     sys.stderr.write("Initialize word embeddings with pretrained ones.\n")
 
-    device = '/cpu:0' if len(get_available_gpus()) > 1 else None
-    with tf.device(device):
-      self.embeddings = dotDict()
-      self.embeddings.word = initialize_embeddings(
-        'word_emb', 
-        vocab.word.embeddings.shape,
-        initializer=tf.constant_initializer(vocab.word.embeddings), 
-        trainable=vocab.word.trainable)
+    #device = '/cpu:0' if len(get_available_gpus()) > 1 else None
+    #with tf.device(device):
+    self.embeddings = dotDict()
+    self.embeddings.word = initialize_embeddings(
+      'word_emb', 
+      vocab.word.embeddings.shape,
+      initializer=tf.constant_initializer(vocab.word.embeddings), 
+      trainable=vocab.word.trainable)
 
     if self.cbase:
       c_emb_shape = [vocab.char.size, config.embedding_size.char] 
-      with tf.device(device):
-        self.embeddings.char = initialize_embeddings(
-          'char_emb', c_emb_shape, trainable=True)
+      #with tf.device(device):
+      self.embeddings.char = initialize_embeddings(
+        'char_emb', c_emb_shape, trainable=True)
 
   def word_encode(self, inputs):
     if inputs is None:
