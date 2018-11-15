@@ -4,6 +4,33 @@ import shutil
 import tensorflow as tf
 from tensorflow.python.client import device_lib
 from core.utils.common import dbgprint
+from collections import defaultdict
+
+def compute_gradients(loss):
+  #gradients = [tf.expand_dims(g, 0) if g is not None else g for g in tf.gradients(loss, params)]
+  params = tf.contrib.framework.get_trainable_variables()
+  gradients = defaultdict(lambda: None)
+  for p, g in zip(params, tf.gradients(loss, params)):
+    #gradients[p] = tf.expand_dims(g, 0) if g is not None else g
+    gradients[p] = g
+  return gradients
+
+def sum_gradients(gradients):
+  summed_gradients = defaultdict(lambda: None)
+  params = tf.contrib.framework.get_trainable_variables()
+  for grad in gradients:
+    assert type(grad) == defaultdict
+
+  # https://stackoverflow.com/questions/37074077/fail-to-average-indexedslices-on-porting-ptb-word-lm-py-to-multi-gpu-towers
+  # Some of the values returned from tf.compute_gradients(...) can be IndexedSlice, which require a trick to compute the sum.
+  for p in params:
+    grads = [tf.expand_dims(grad[p], 0) for grad in gradients if grad[p] is not None]
+    if not grads:
+      continue
+    grads = tf.concat(grads, axis=0)
+    summed_gradients[p] = tf.reduce_sum(grads, axis=0)
+    #summed_gradients.append(tf.reduce_sum(grads, axis=0))
+  return summed_gradients
 
 def get_available_gpus():
     local_device_protos = device_lib.list_local_devices()

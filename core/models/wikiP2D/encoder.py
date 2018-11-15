@@ -365,10 +365,9 @@ class MultiEncoderWrapper(SentenceEncoder):
           s = tf.stop_gradient(s)
       outputs.append(o)
       state.append(s)
-    self.shared_outputs = outputs[0]
-    self.private_outputs = outputs[1]
 
-    merge_func = self.merge_func.shared_private
+    #merge_func = self.merge_func.shared_private
+    merge_func = tf.concat
     axis = get_axis(merge_func)
     outputs = merge_func(outputs, axis=axis)
     state = merge_state(state, merge_func=merge_func)

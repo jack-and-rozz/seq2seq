@@ -5,7 +5,7 @@ from pprint import pprint
 import tensorflow as tf
 from tensorflow.contrib.rnn import LSTMStateTuple
 
-from core.utils.tf_utils import shape, linear, make_summary
+from core.utils.tf_utils import shape, linear, make_summary, compute_gradients
 from core.utils.common import dbgprint, recDotDefaultDict, flatten, flatten_recdict, flatten_batch
 from core.models.base import ModelBase
 from core.models.wikiP2D.desc.evaluation import evaluate_and_print
@@ -45,47 +45,71 @@ class DescriptionGeneration(DescModelBase):
     # Placeholders
     self.ph = self.setup_placeholders()
 
-    enc_sentence_length = tf.count_nonzero(self.ph.text.word, 
-                                           axis=-1, dtype=tf.int32)
-    enc_context_length =  tf.count_nonzero(enc_sentence_length, 
-                                           axis=-1, dtype=tf.float32)
+    with tf.name_scope('count_length'):
+      enc_sentence_length = tf.count_nonzero(self.ph.text.word, 
+                                             axis=-1, dtype=tf.int32)
+      enc_context_length =  tf.count_nonzero(enc_sentence_length, 
+                                             axis=-1, dtype=tf.float32)
 
-    word_repls = self.encoder.word_encoder.word_encode(self.ph.text.word)
-    char_repls = self.encoder.word_encoder.char_encode(self.ph.text.char)
-    enc_inputs = [word_repls, char_repls]
-    # Encode input text
-    enc_inputs, enc_outputs, enc_state = self.encoder.encode(
-      enc_inputs, enc_sentence_length, prop_gradients=self.train_shared)
+    with tf.name_scope('Encoder'):
+      word_repls = self.encoder.word_encoder.word_encode(self.ph.text.word)
+      char_repls = self.encoder.word_encoder.char_encode(self.ph.text.char)
+      enc_inputs = [word_repls, char_repls]
+      # Encode input text
+      enc_inputs, enc_outputs, enc_state = self.encoder.encode(
+        enc_inputs, enc_sentence_length, prop_gradients=self.train_shared)
 
-    mention_starts, mention_ends = tf.unstack(self.ph.link, axis=-1)
-    mention_repls, head_scores = self.encoder.get_batched_mention_emb(
+      with tf.name_scope('AdversarialInputs'):
+        self.adv_inputs = tf.reshape(
+          enc_outputs,
+          [-1, shape(enc_outputs, -2), shape(enc_outputs, -1)])
+        # self.adv_inputs = tf.reshape(tf.reduce_mean(enc_outputs, axis=1), 
+        #                              [-1, shape(enc_outputs, -1)])
+        # print('desc_adv', self.adv_inputs)
+
+    with tf.name_scope('ExtractMentionRepls'):
+      mention_starts, mention_ends = tf.unstack(self.ph.link, axis=-1)
+      mention_repls, head_scores = self.encoder.get_batched_mention_emb(
       enc_inputs, enc_outputs, mention_starts, mention_ends) # [batch_size, max_n_contexts, mention_size]
-    if not self.train_shared:
-      mention_repls = tf.stop_gradient(mention_repls)
-      head_scores = tf.stop_gradient(head_scores)
+      if not self.train_shared:
+        mention_repls = tf.stop_gradient(mention_repls)
+        head_scores = tf.stop_gradient(head_scores)
 
-    # Aggregate context representations.
-    init_state = tf.reduce_sum(mention_repls, axis=1)
-    init_state = init_state / tf.expand_dims(enc_context_length, -1)
+      # Aggregate context representations.
+      init_state = tf.reduce_sum(mention_repls, axis=1)
+      init_state = init_state / tf.expand_dims(enc_context_length, -1)
 
+    # A task-specific layer where the init_state, which is a concatenated outputs from shared-RNN and private-RNN, is mixed. 
     with tf.variable_scope('Intermediate'):
       if config.decoder.num_layers > 1:
         for i in range(config.decoder.num_layers):
           init_states = []
           with tf.variable_scope('L%d' % (i+i)):
-            init_states.append(linear(init_state, config.decoder.rnn_size))
+            init_state = tf.nn.dropout(
+              linear(init_state, config.decoder.rnn_size, self.activation), 
+              self.keep_prob)
+            init_states.append(init_state)
         init_state = init_states
       else:
-        init_state = linear(init_state, config.decoder.rnn_size)
+        init_state = tf.nn.dropout(
+          linear(init_state, config.decoder.rnn_size, self.activation),
+          self.keep_prob)
 
-    # Add BOS and EOS to the decoder's inputs and outputs.
-    batch_size = shape(self.ph.target, 0)
-    with tf.name_scope('start_tokens'):
-      start_tokens = tf.tile(tf.constant([START_TOKEN], dtype=tf.int32), [batch_size])
-    with tf.name_scope('end_tokens'):
-      end_tokens = tf.tile(tf.constant([END_TOKEN], dtype=tf.int32), [batch_size])
-    dec_input_tokens = tf.concat([tf.expand_dims(start_tokens, 1), self.ph.target], axis=1)
-    dec_output_tokens = tf.concat([self.ph.target, tf.expand_dims(end_tokens, 1)], axis=1)
+    with tf.name_scope('add_bos_and_eos'):
+      # Add BOS and EOS to the decoder's inputs and outputs.
+      batch_size = shape(self.ph.target, 0)
+      with tf.name_scope('start_tokens'):
+        start_tokens = tf.tile(tf.constant([START_TOKEN], dtype=tf.int32), [batch_size])
+      with tf.name_scope('end_tokens'):
+        end_tokens = tf.tile(tf.constant([END_TOKEN], dtype=tf.int32), [batch_size])
+      dec_input_tokens = tf.concat([
+        tf.expand_dims(start_tokens, 1), 
+        self.ph.target
+      ], axis=1)
+      dec_output_tokens = tf.concat([
+        self.ph.target, 
+        tf.expand_dims(end_tokens, 1)
+      ], axis=1)
 
     # Length of description + end_token (or start_token)
     dec_input_lengths = dec_output_lengths = tf.count_nonzero(
@@ -99,18 +123,17 @@ class DescriptionGeneration(DescModelBase):
                                               dec_output_lengths)
       self.predictions = self.decoder.decode_test(init_state)
 
-    # Convert dec_output_lengths to binary masks
-    dec_output_weights = tf.sequence_mask(dec_output_lengths, dtype=tf.float32)
+    with tf.name_scope('loss'):
+      # Convert dec_output_lengths to binary masks
+      dec_output_weights = tf.sequence_mask(dec_output_lengths, dtype=tf.float32)
 
-    # Compute loss
-    self.loss = tf.contrib.seq2seq.sequence_loss(
-      self.logits, dec_output_tokens, dec_output_weights,
-      average_across_timesteps=True, average_across_batch=True)
+      # Compute loss
+      self.loss = tf.contrib.seq2seq.sequence_loss(
+        self.logits, dec_output_tokens, dec_output_weights,
+        average_across_timesteps=True, average_across_batch=True)
+      self.gradients = compute_gradients(self.loss)
+      #self.gradients = 
     #self.debug_ops = [self.ph.text.word, enc_sentence_length, enc_context_length]
-
-    with tf.name_scope('AdversarialInputs'):
-      self.adv_inputs = tf.reshape(tf.reduce_mean(enc_outputs, axis=1), 
-                                   [-1, shape(enc_outputs, -1)])
 
   def setup_placeholders(self):
     # Placeholders

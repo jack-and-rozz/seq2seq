@@ -94,8 +94,9 @@ def official_conll_eval(gold_path, predicted_path, metric, scorer_path,
   f1 = float(coref_results_match.group(3))
   return { "r": recall, "p": precision, "f": f1 }
 
-def evaluate_conll(gold_path, predictions, scorer_path, official_stdout=False):
-  with tempfile.NamedTemporaryFile(delete=False) as prediction_file:
+def evaluate_conll(predictions, gold_path, prediction_path, scorer_path, official_stdout=False):
+  with open(prediction_path, 'wb') as prediction_file:
+  #with tempfile.NamedTemporaryFile(delete=False) as prediction_file:
     sys.stderr.write(prediction_file.name + '\n')
     with open(gold_path, "r") as gold_file:
       output_conll(gold_file, prediction_file, predictions)

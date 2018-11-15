@@ -6,7 +6,7 @@ from pprint import pprint
 import numpy as np
 import tensorflow as tf
 
-from core.utils import evaluation, tf_utils
+from core.utils.tf_utils import get_available_gpus, make_summary, sum_gradients
 from core.utils.common import dbgprint, dotDict, recDotDefaultDict
 from core.models.base import ModelBase, ManagerBase
 
@@ -85,7 +85,7 @@ class MTLManager(ManagerBase):
   #   return shared_layers
 
   def setup_tasks(self, sess, config):
-    num_gpus = len(tf_utils.get_available_gpus())
+    num_gpus = len(get_available_gpus())
     tasks = dotDict()
     for i, (task_name, task_config) in enumerate(config.tasks.items()):
       device = '/gpu:%d' % (i % num_gpus) if num_gpus else "/cpu:0"
@@ -145,73 +145,6 @@ class MTLManager(ManagerBase):
           task_model.loss, task_model.global_step) 
       reuse = True
     return updates
-
-
-class BatchIterative(MTLManager):
-  def get_updates(self):
-    return self.get_updates_by_task()
-
-  def run_epoch(self, batches, is_training):
-    start_time = time.time()
-    num_steps_in_epoch = [0 for _ in self.tasks]
-    loss = [0.0 for _ in self.tasks]
-    is_uncomplete = True
-    while is_uncomplete:
-      is_uncomplete = False
-      t = time.time()
-      for i, (task_name, task_model) in enumerate(self.tasks.items()):
-        try:
-          raw_batch = batches[task_name].__next__()
-          batch = {task_name:raw_batch}
-          input_feed = self.get_input_feed(batch, is_training)
-          if task_model.debug_ops:
-            for ops, res in zip(task_model.debug_ops, 
-                                self.sess.run(task_model.debug_ops, input_feed)):
-              #print(ops, res.shape)
-              print(ops)
-              print(res)
-            #exit(1)
-          output_feed = [task_model.loss]
-          if is_training:
-            output_feed.append(self.updates[task_name])
-          t = time.time()
-          outputs = self.sess.run(output_feed, input_feed)
-          execution_time = time.time() - t
-          step_loss = outputs[0]
-
-          print('epoch: %d,' % self.epoch.eval(), 
-                'step: %d,' % num_steps_in_epoch[i],
-                'task: %s,' % task_name, 
-                'step_loss: %.3f,' % step_loss, 
-                'step_time: %f,' % execution_time)
-          sys.stdout.flush()
-          if math.isnan(step_loss):
-            raise ValueError(
-              "Nan loss has been detected... (%s: step %d)" % (task_name, num_steps_in_epoch[i])
-            )
-          num_steps_in_epoch[i] += 1
-          loss[i] += step_loss
-          is_uncomplete = True
-        except StopIteration as e:
-          pass
-        except ValueError as e:
-          print (e)
-          # print('subj.position\n', raw_batch.subj.position)
-          # print('obj.position\n', raw_batch.obj.position)
-          # print('text.raw\n', raw_batch.text.raw)
-          # print('text.word\n', raw_batch.text.word)
-          # print('text.char\n', raw_batch.text.char)
-          # print('rel.word\n', raw_batch.rel.word)
-          # print('rel.char\n', raw_batch.rel.char)
-          exit(1)
-
-    epoch_time = (time.time() - start_time)
-    loss = [l/num_steps for l, num_steps in zip(loss, num_steps_in_epoch)]
-    mode = 'train' if is_training else 'valid'
-    summary_dict = {'%s/%s/loss' % (task_name, mode): l for task_name, l in zip(self.tasks, loss)}
-    summary = tf_utils.make_summary(summary_dict)
-    return epoch_time, loss, summary
-
 
 class MeanLoss(MTLManager):
   def get_updates(self):
@@ -295,30 +228,8 @@ class MeanLoss(MTLManager):
     loss = [l/num_steps for l in loss]
     mode = 'train' if is_training else 'valid'
     summary_dict = {'%s/%s/loss' % (task_name, mode): l for task_name, l in zip(self.tasks, loss)}
-    summary = tf_utils.make_summary(summary_dict)
+    summary = make_summary(summary_dict)
     return epoch_time, loss, summary
-
-class SumLoss(MeanLoss):
-  def get_updates(self):
-    loss = tf.reduce_sum([t.loss_weight * t.loss for t in self.tasks.values()])
-    updates = super(MTLManager, self).get_updates(loss, self.global_step)
-    return updates
-
-
-class SeparatelyUpdate(MeanLoss):
-  # NOTE: Only one of these several update ops is executed and other updates are overwritten. This can cause a failure in training. (https://stackoverflow.com/questions/49953379/tensorflow-multiple-loss-functions-vs-multiple-training-ops)
-  
-  def get_updates(self):
-    updates = []
-    num_gpus = len(tf_utils.get_available_gpus())
-
-    for i, t in enumerate(self.tasks.values()):
-      device = '/gpu:%d' % (i % num_gpus) if num_gpus else "/cpu:0"
-      with tf.device(device):
-        loss = t.loss_weight * t.loss
-        update = super(MTLManager, self).get_updates(loss, self.global_step)
-        updates.append(update)
-    return updates
 
 class GradientSum(MeanLoss):
   def get_updates(self):
@@ -329,30 +240,27 @@ class GradientSum(MeanLoss):
         self.decay_frequency, self.decay_rate, staircase=True)
 
       opt = getattr(tf.train, self.optimizer_type)(learning_rate)
-      num_gpus = len(tf_utils.get_available_gpus())
+      num_gpus = len(get_available_gpus())
+
       params = tf.contrib.framework.get_trainable_variables()
 
-      # https://stackoverflow.com/questions/37074077/fail-to-average-indexedslices-on-porting-ptb-word-lm-py-to-multi-gpu-towers
-      # Some of the results from tf.compute_gradients(...) can be IndexedSlice, it requires a trick to combute the sum.
-      def _calc_gradients(i, loss):
-        device = '/gpu:%d' % (i % num_gpus) if num_gpus else '/cpu:0'
-        with tf.device(device):
-          return [tf.expand_dims(g, 0) if g is not None else g for g in tf.gradients(loss, params)]
-      gradients = [_calc_gradients(i, loss) for i, loss in enumerate(losses)]
+      # gradients = [t.gradients for t in self.tasks.values()]
+      # for p in params:
+      #   grads = [grad[p] for grad in gradients 
+      #            if grad[p] is not None]
+      #   print('=================')
+      #   print(p, len(grads))
+      #   print(grads)
+      # #exit(1)
 
-      summed_gradients = []
-      for i, grads in enumerate(zip(*gradients)):
-        grads = [g for g in grads if g is not None]
-        grads = tf.concat(grads, axis=0)
-        summed_gradients.append(tf.reduce_sum(grads, axis=0))
-      clipped_gradients, _ = tf.clip_by_global_norm(summed_gradients, 
+      gradients = sum_gradients([t.gradients for t in self.tasks.values()])
+      gradients = [gradients[p] for p in params]
+      clipped_gradients, _ = tf.clip_by_global_norm(gradients, 
                                                     self.max_gradient_norm)
       grad_and_vars = [(g, v) for g, v in zip(clipped_gradients, params)]
       updates = opt.apply_gradients(
         grad_and_vars, global_step=self.global_step)
     return updates
-
-
 
 class OneByOne(MTLManager):
   def get_updates(self):
@@ -396,49 +304,136 @@ class OneByOne(MTLManager):
     loss /= i
     mode = 'train' if is_training else 'valid'
     summary_dict = {'%s/%s/loss' % (task_name, mode): loss}
-    summary = tf_utils.make_summary(summary_dict)
+    summary = make_summary(summary_dict)
     epoch_time = (time.time() - start_time)
     return epoch_time, loss, summary
 
-class EWC(OneByOne):
-  '''
-  https://arxiv.org/pdf/1612.00796.pdf
-  '''
-  def __init__(self, sess, config, vocab, activation=tf.nn.relu):
-    super().__init__(sess, config, vocab, activation=activation)
+##########################################
+##              Legacy
+##########################################
 
-  # def compute_fisher(self,  num_samples=200, ):
+# class BatchIterative(MTLManager):
+#   def get_updates(self):
+#     return self.get_updates_by_task()
 
-  #   # initialize Fisher information for most recent task
-  #   self.F_accum = []
-  #   for v in range(len(self.var_list)):
-  #     self.F_accum.append(np.zeros(self.var_list[v].get_shape().as_list()))
-  #   # sampling a random class from softmax
-  #   probs = tf.nn.softmax(self.y)
-  #   class_ind = tf.to_int32(tf.multinomial(tf.log(probs), 1)[0][0])
+#   def run_epoch(self, batches, is_training):
+#     start_time = time.time()
+#     num_steps_in_epoch = [0 for _ in self.tasks]
+#     loss = [0.0 for _ in self.tasks]
+#     is_uncomplete = True
+#     while is_uncomplete:
+#       is_uncomplete = False
+#       t = time.time()
+#       for i, (task_name, task_model) in enumerate(self.tasks.items()):
+#         try:
+#           raw_batch = batches[task_name].__next__()
+#           batch = {task_name:raw_batch}
+#           input_feed = self.get_input_feed(batch, is_training)
+#           if task_model.debug_ops:
+#             for ops, res in zip(task_model.debug_ops, 
+#                                 self.sess.run(task_model.debug_ops, input_feed)):
+#               #print(ops, res.shape)
+#               print(ops)
+#               print(res)
+#             #exit(1)
+#           output_feed = [task_model.loss]
+#           if is_training:
+#             output_feed.append(self.updates[task_name])
+#           t = time.time()
+#           outputs = self.sess.run(output_feed, input_feed)
+#           execution_time = time.time() - t
+#           step_loss = outputs[0]
 
-  #   for i in range(num_samples):
-  #     # select random input image
-  #     im_ind = np.random.randint(imgset.shape[0])
-  #     # compute first-order derivatives
-  #     ders = self.sess.run(tf.gradients(tf.log(probs[0,class_ind]), self.var_list), feed_dict={self.x: imgset[im_ind:im_ind+1]})
-  #     # square the derivatives and add to total
-  #     for v in range(len(self.F_accum)):
-  #       self.F_accum[v] += np.square(ders[v])
+#           print('epoch: %d,' % self.epoch.eval(), 
+#                 'step: %d,' % num_steps_in_epoch[i],
+#                 'task: %s,' % task_name, 
+#                 'step_loss: %.3f,' % step_loss, 
+#                 'step_time: %f,' % execution_time)
+#           sys.stdout.flush()
+#           if math.isnan(step_loss):
+#             raise ValueError(
+#               "Nan loss has been detected... (%s: step %d)" % (task_name, num_steps_in_epoch[i])
+#             )
+#           num_steps_in_epoch[i] += 1
+#           loss[i] += step_loss
+#           is_uncomplete = True
+#         except StopIteration as e:
+#           pass
+#         except ValueError as e:
+#           print (e)
+#           # print('subj.position\n', raw_batch.subj.position)
+#           # print('obj.position\n', raw_batch.obj.position)
+#           # print('text.raw\n', raw_batch.text.raw)
+#           # print('text.word\n', raw_batch.text.word)
+#           # print('text.char\n', raw_batch.text.char)
+#           # print('rel.word\n', raw_batch.rel.word)
+#           # print('rel.char\n', raw_batch.rel.char)
+#           exit(1)
 
-  #     # divide totals by number of samples
-  #     for v in range(len(self.F_accum)):
-  #       self.F_accum[v] /= num_samples
+#     epoch_time = (time.time() - start_time)
+#     loss = [l/num_steps for l, num_steps in zip(loss, num_steps_in_epoch)]
+#     mode = 'train' if is_training else 'valid'
+#     summary_dict = {'%s/%s/loss' % (task_name, mode): l for task_name, l in zip(self.tasks, loss)}
+#     summary = make_summary(summary_dict)
+#     return epoch_time, loss, summary
 
-  def get_updates_by_task(self):
-    updates = dotDict()
-    reuse = False
 
-    for task_name, task_model in self.tasks.items():
-      with tf.variable_scope(task_name):
-        updates[task_name] = super().get_updates(task_model.loss, 
-                                                 task_model.global_step) 
-      reuse = True
-    return updates
+# class SeparatelyUpdate(MeanLoss):
+#   # NOTE: Only one of these several update ops is executed and other updates are overwritten. This can cause a failure in training. (https://stackoverflow.com/questions/49953379/tensorflow-multiple-loss-functions-vs-multiple-training-ops)
+  
+#   def get_updates(self):
+#     updates = []
+#     num_gpus = len(get_available_gpus())
+
+#     for i, t in enumerate(self.tasks.values()):
+#       device = '/gpu:%d' % (i % num_gpus) if num_gpus else "/cpu:0"
+#       with tf.device(device):
+#         loss = t.loss_weight * t.loss
+#         update = super(MTLManager, self).get_updates(loss, self.global_step)
+#         updates.append(update)
+#     return updates
+
+
+
+# class EWC(OneByOne):
+#   '''
+#   https://arxiv.org/pdf/1612.00796.pdf
+#   '''
+#   def __init__(self, sess, config, vocab, activation=tf.nn.relu):
+#     super().__init__(sess, config, vocab, activation=activation)
+
+#   # def compute_fisher(self,  num_samples=200, ):
+
+#   #   # initialize Fisher information for most recent task
+#   #   self.F_accum = []
+#   #   for v in range(len(self.var_list)):
+#   #     self.F_accum.append(np.zeros(self.var_list[v].get_shape().as_list()))
+#   #   # sampling a random class from softmax
+#   #   probs = tf.nn.softmax(self.y)
+#   #   class_ind = tf.to_int32(tf.multinomial(tf.log(probs), 1)[0][0])
+
+#   #   for i in range(num_samples):
+#   #     # select random input image
+#   #     im_ind = np.random.randint(imgset.shape[0])
+#   #     # compute first-order derivatives
+#   #     ders = self.sess.run(tf.gradients(tf.log(probs[0,class_ind]), self.var_list), feed_dict={self.x: imgset[im_ind:im_ind+1]})
+#   #     # square the derivatives and add to total
+#   #     for v in range(len(self.F_accum)):
+#   #       self.F_accum[v] += np.square(ders[v])
+
+#   #     # divide totals by number of samples
+#   #     for v in range(len(self.F_accum)):
+#   #       self.F_accum[v] /= num_samples
+
+#   def get_updates_by_task(self):
+#     updates = dotDict()
+#     reuse = False
+
+#     for task_name, task_model in self.tasks.items():
+#       with tf.variable_scope(task_name):
+#         updates[task_name] = super().get_updates(task_model.loss, 
+#                                                  task_model.global_step) 
+#       reuse = True
+#     return updates
 
 

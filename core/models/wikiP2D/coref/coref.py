@@ -8,7 +8,7 @@ from pprint import pprint
 from collections import OrderedDict, defaultdict
 from copy import deepcopy
 
-from core.utils.tf_utils import shape, ffnn, make_summary, initialize_embeddings
+from core.utils.tf_utils import shape, ffnn, make_summary, initialize_embeddings, compute_gradients, linear
 from core.utils.common import RED, BLUE, GREEN, YELLOW, MAGENTA, CYAN, WHITE, BOLD, BLACK, UNDERLINE, RESET
 from core.utils.common import dbgprint, flatten, dotDict, recDotDefaultDict, flatten_recdict
 from core.models.base import ModelBase
@@ -71,12 +71,23 @@ class CoreferenceResolution(CorefModelBase):
       text_emb, text_outputs, state = self.encoder.encode(
         [word_repls, char_repls], self.ph.sentence_length) 
 
+      # for adversarial MTL, it has to be a rank 2 Tensor [batch_size, emb_size]
+      with tf.name_scope('AdversarialInputs'):
+        self.adv_inputs = text_outputs #tf.reduce_mean(text_outputs, axis=1)
+
+
     with tf.name_scope('candidates_and_mentions'):
       flattened_text_emb, flattened_text_outputs, flattened_sentence_indices = self.flatten_doc_to_sent(text_emb, text_outputs, self.ph.sentence_length)
+
+      # A task-specific layer where the init_state, which is a concatenated outputs from shared-RNN and private-RNN, is mixed. 
+      with tf.variable_scope('Intermediate'):
+        flattened_text_outputs = tf.nn.dropout(linear(flattened_text_outputs, shape(flattened_text_outputs, -1)), self.keep_prob)
+
 
       candidate_starts, candidate_ends, candidate_mention_scores, mention_starts, mention_ends, mention_scores, mention_emb = self.get_mentions(
         flattened_text_emb, flattened_text_outputs, flattened_sentence_indices)
 
+      # For desc generation from mention_embs.
       with tf.name_scope('keep_mention_embs'):
         self.pred_mention_emb = self.get_mention_emb(
           flattened_text_emb, flattened_text_outputs, 
@@ -105,10 +116,7 @@ class CoreferenceResolution(CorefModelBase):
     with tf.name_scope('loss'):
       loss = self.softmax_loss(antecedent_scores, antecedent_labels) # [num_mentions]
       self.loss = tf.reduce_sum(loss) # []
-
-    # for adversarial MTL, it has to be a rank 2 Tensor [batch_size, emb_size]
-    with tf.name_scope('AdversarialInputs'):
-      self.adv_inputs = tf.reduce_mean(text_outputs, axis=1)
+      self.gradients = compute_gradients(self.loss)
 
   def setup_placeholders(self):
     with tf.name_scope('Placeholder'):
@@ -214,7 +222,6 @@ class CoreferenceResolution(CorefModelBase):
       mention_emb = tf.concat([mention_emb, mention_width_emb], axis=-1)
 
     return mention_emb
-
 
   def get_mention_scores(self, mention_emb):
     with tf.variable_scope("mention_scores"):
@@ -386,14 +393,16 @@ class CoreferenceResolution(CorefModelBase):
   ##############################################
 
   def test(self, batches, mode, logger, output_path):
-    conll_eval_path = os.path.join(
+    gold_path = os.path.join(
       self.config.dataset.gold_dir, 
       self.config.dataset['%s_gold' % mode])
+
+    prediction_path = output_path + '.conll'
 
     with open(output_path + '.stat', 'w') as f:
       sys.stdout = f
       eval_summary, f1, results = self.evaluate(
-        batches, conll_eval_path, mode)
+        batches, gold_path, prediction_path, mode)
       sys.stdout = sys.__stdout__
 
     with open(output_path + '.detail', 'w') as f:
@@ -410,7 +419,7 @@ class CoreferenceResolution(CorefModelBase):
 
     return f1, eval_summary
 
-  def evaluate(self, batches, gold_path, mode, official_stdout=False):
+  def evaluate(self, batches, gold_path, prediction_path, mode, official_stdout=False):
     def _k_to_tag(k):
       if k == -3:
         return "oracle" # use only gold spans.
@@ -484,7 +493,7 @@ class CoreferenceResolution(CorefModelBase):
         summary_dict["coref/%s/" % mode + t] = v
       print(", ".join(results_to_print))
 
-    conll_results = conll.evaluate_conll(gold_path, coref_predictions, self.scorer_path, official_stdout)
+    conll_results = conll.evaluate_conll(coref_predictions, gold_path, prediction_path, self.scorer_path, official_stdout)
     val_types = ('p', 'r', 'f')
     for metric in conll_results:
       for val_type in val_types:

@@ -74,7 +74,6 @@ class ExperimentManager(ManagerBase):
 
     if not self.model:
       self.model = m = mtl_model_type(self.sess, config, self.vocab) # Define computation graph
-
     if not checkpoint_path or not os.path.exists(checkpoint_path + '.index'):
       ckpt = tf.train.get_checkpoint_state(self.checkpoints_path)
       checkpoint_path = ckpt.model_checkpoint_path if ckpt else None
@@ -109,10 +108,10 @@ class ExperimentManager(ManagerBase):
     return self.model
 
   def debug(self):
-    # m = self.create_model(self.config, load_best=True)
+    m = self.create_model(self.config, load_best=True)
     task_name = [k for k in self.config.tasks][0]
-    dataset = self.dataset[task_name].train.dataset
-    print(dataset)
+    #dataset = self.dataset[task_name].train.dataset
+    #print(dataset)
     exit(1)
     # batches = self.dataset[task_name].train.get_batch(
     #   self.config.tasks[task_name].batch_size, do_shuffle=True)
